@@ -63,9 +63,13 @@
 ### 1. リポジトリをクローン
 
 ```bash
-git clone https://github.com/yourname/tk_chat_local.git
+git clone https://github.com/shinosan1/tk_chat_local.git
 cd tk_chat_local
 ```
+
+> **⚠️ Privateリポジトリの場合：**  
+> git cloneの際にGitHubのユーザー名とパスワード（Personal Access Token）の入力を求められる場合があります。  
+> その場合はGitHubにログインした状態でクローンするか、作者に直接お問い合わせください。
 
 ### 2. 仮想環境の作成（推奨）
 
@@ -120,6 +124,10 @@ pip install -r requirements.txt --no-cache-dir
 
 [Hugging Face](https://huggingface.co/) から `.gguf` 形式のモデルをダウンロードして `models/` フォルダに配置してください。  
 動作確認済み：`gemma-3-4b-it-q4_k_m.gguf`
+
+> **⚠️ 初回起動時の注意：**  
+> 音声認識（Whisper）のモデルが初回起動時に自動ダウンロードされます（約1.5GB）。  
+> ダウンロード完了まで時間がかかる場合があります。インターネット接続が必要です。
 
 ---
 
@@ -199,19 +207,7 @@ copy chat_settings.json.example chat_settings.json
 ```
 
 
-### 7. パスを設定する
-
-`tk_chat_local.py` の冒頭にある以下の定数を**ご自身の環境に合わせて変更**してください：
-
-```python
-DEFAULT_MODEL_PATH = r"C:\path\to\your\model.gguf"
-AVATAR_DEFAULT     = r"C:\path\to\avatars\default_avatar.png"
-AVATAR_SPEAKING    = r"C:\path\to\avatars\speaking_avatar.png"
-AVATAR_BLINK       = r"C:\path\to\avatars\blink_avatar.png"
-AVATAR_BLINK_SPK   = r"C:\path\to\avatars\blink_speaking_avatar.png"
-```
-
-### 8. 起動
+### 7. 起動
 
 ```bash
 python tk_chat_local.py
