@@ -69,7 +69,8 @@ cd tk_chat_local
 
 > **⚠️ Privateリポジトリの場合：**  
 > git cloneの際にGitHubのユーザー名とパスワード（Personal Access Token）の入力を求められる場合があります。  
-> その場合はGitHubにログインした状態でクローンするか、作者に直接お問い合わせください。
+> その場合はGitHubにログインした状態でクローンするか、Personal Access Token（PAT）を発行してご利用ください。  
+> PATの発行方法は [GitHub公式ドキュメント](https://docs.github.com/ja) をご参照ください。
 
 ### 2. 仮想環境の作成（推奨）
 
