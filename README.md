@@ -137,6 +137,11 @@ pip install -r requirements.txt --no-cache-dir
 すべて [Hugging Face](https://huggingface.co/) からダウンロードできます。  
 ファイルは `models/` フォルダに配置してください。
 
+> **⚠️ 免責：**  
+> 各モデルの利用規約・ライセンスはモデルごとに異なります。  
+> ダウンロード前に必ず各モデルのHugging Faceページで利用規約を確認してください。  
+> 本アプリはモデルの利用に関して一切の責任を負いません。
+
 > **推奨量子化形式：** `Q4_K_M`（品質と速度のバランスが最良）
 
 ### 軽量モデル（4B以下・VRAM 4GB〜・低スペックPC向け）
@@ -151,7 +156,7 @@ pip install -r requirements.txt --no-cache-dir
 
 | モデル名 | パラメータ | 特徴 | ダウンロード |
 |---|---|---|---|
-| phi-4 | 14B | 動作確認済み。高品質な応答 | [リンク](https://huggingface.co/lmstudio-community/phi-4-GGUF) |
+| phi-3.5 | 3.8B | 動作確認済み。高品質な応答 | [リンク](https://huggingface.co/lmstudio-community/Phi-3.5-mini-instruct-GGUF) |
 | Qwen2.5-7B-Instruct | 7B | 多言語対応・日本語品質高い | [リンク](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF) |
 | japanese-stablelm-instruct-gamma-7B | 7B | 日本語特化のStableLM | [リンク](https://huggingface.co/TheBloke/japanese-stablelm-instruct-gamma-7B-GGUF) |
 | NVIDIA-Nemotron-Nano-9B-v2-Japanese | 9B | NVIDIA製日本語特化モデル | [リンク](https://huggingface.co/mmnga/NVIDIA-Nemotron-Nano-9B-v2-Japanese-gguf) |
@@ -170,7 +175,7 @@ pip install -r requirements.txt --no-cache-dir
 | 4GB | LFM2.5-1.2B-JP / llm-jp-3.1-1.8b |
 | 6GB | gemma-3-4b-it（動作確認済み） |
 | 8GB | Qwen2.5-7B / japanese-stablelm-7B |
-| 12GB以上 | phi-4 / llm-jp-3.1-13b |
+| 12GB以上 | llm-jp-3.1-13b |
 
 > モデルの進化は速いため、最新情報は [Hugging Face](https://huggingface.co/models?library=gguf&language=ja) で「gguf japanese」で検索してください。  
 > **リンク切れの場合はHugging Face（https://huggingface.co/）でモデル名を直接検索してください。**
