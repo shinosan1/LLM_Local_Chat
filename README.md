@@ -201,7 +201,7 @@ copy chat_settings.json.example chat_settings.json
 
 ```json
 {
-  "model_path": "C:\\Users\\yourname\\models\\gemma-3-4b-it-q4_k_m.gguf",
+  "model_path": "C:\\your\\path\\to\\models\\gemma-3-4b-it-q4_k_m.gguf",
   ...
 }
 ```
