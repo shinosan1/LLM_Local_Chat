@@ -1,0 +1,24 @@
+# LLM Local Chat - 依存ライブラリ
+#
+# ※ torch / torchvision / torchaudio はCUDA版を使用しています。
+#   以下のコマンドでインストールしてください（CUDA 12.4の場合）：
+#   pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+#   CPUのみの場合：
+#   pip install torch torchvision torchaudio
+#
+# ※ llama-cpp-python はGPU(CUDA)を使う場合、以下のコマンドで別途インストールしてください：
+#   pip install llama-cpp-python==0.3.20 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+#
+# ※ PyAudioのインストールでエラーが出る場合：
+#   pip install pipwin
+#   pipwin install pyaudio
+
+llama-cpp-python==0.3.20
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+torchaudio==2.6.0+cu124
+Pillow==12.2.0
+pyttsx3==2.99
+PyAudio==0.2.14
+numpy==2.4.3
+openai-whisper==20250625

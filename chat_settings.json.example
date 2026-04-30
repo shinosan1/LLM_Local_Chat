@@ -1,0 +1,9 @@
+{
+  "_comment": "このファイルを chat_settings.json にコピーしてから各パスを書き換えてください。",
+  "model_path": "C:\\path\\to\\your\\model.gguf",
+  "n_ctx": 8192,
+  "max_tokens": 1024,
+  "temperature": 0.7,
+  "tts_enabled": true,
+  "vad_threshold": 150
+}
