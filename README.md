@@ -40,12 +40,25 @@
 
 ## セットアップ
 
-> **⚠️ 事前準備：Pythonのインストール**  
+> **⚠️ 事前準備①：Pythonのインストール**  
 > **Python 3.12.10（64bit）** を必ずインストールしてください。  
 > [https://www.python.org/downloads/release/python-31210/](https://www.python.org/downloads/release/python-31210/)  
 >  
 > インストーラー起動時に必ず **「Add Python to PATH」にチェック** を入れてください。  
 > チェックを忘れると以降のコマンドがすべて動作しません。
+
+> **⚠️ 事前準備②：Gitのインストール**  
+> Gitが必要です。以下のURLからインストールしてください。  
+> [https://git-scm.com/download/win](https://git-scm.com/download/win)  
+>  
+> インストール時はすべてデフォルト設定のままで問題ありません。
+
+> **⚠️ 事前準備③：CUDA Toolkitのインストール（GPU使用の場合のみ）**  
+> NVIDIA GPUでCUDAを使用する場合は、CUDA Toolkit 12.4をインストールしてください。  
+> [https://developer.nvidia.com/cuda-12-4-0-download-archive](https://developer.nvidia.com/cuda-12-4-0-download-archive)  
+>  
+> CPUのみで使用する場合はインストール不要です。  
+> インストール後は必ずPCを再起動してください。
 
 ### 1. リポジトリをクローン
 
