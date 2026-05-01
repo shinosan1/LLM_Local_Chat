@@ -190,7 +190,8 @@ def load_settings() -> dict:
         n_ctx         = DEFAULT_N_CTX,
         max_tokens    = DEFAULT_MAX_TOKENS,
         temperature   = DEFAULT_TEMP,
-        tts_enabled   = True,
+        tts_enabled   = False,
+        mic_enabled   = False,
         vad_threshold = DEFAULT_VAD_RMS,
     )
     if os.path.exists(SETTINGS_FILE):
@@ -335,9 +336,27 @@ class SettingsDialog(tk.Toplevel):
                  bg=C["bg_main"], fg=C["fg_sub"],
                  font=FONT_SMALL).grid(row=4, column=2, sticky="w", **P)
 
+        # 起動時マイクON/OFF
+        self.v_mic = BooleanVar(value=cfg.get("mic_enabled", False))
+        tk.Checkbutton(
+            self, text="起動時にマイクを有効にする",
+            variable=self.v_mic,
+            bg=C["bg_main"], fg=C["fg_main"],
+            selectcolor=C["bg_input"], activebackground=C["bg_main"],
+        ).grid(row=5, column=0, columnspan=3, sticky="w", padx=16, pady=4)
+
+        # 起動時TTS ON/OFF
+        self.v_tts = BooleanVar(value=cfg.get("tts_enabled", False))
+        tk.Checkbutton(
+            self, text="起動時にTTS読み上げを有効にする",
+            variable=self.v_tts,
+            bg=C["bg_main"], fg=C["fg_main"],
+            selectcolor=C["bg_input"], activebackground=C["bg_main"],
+        ).grid(row=6, column=0, columnspan=3, sticky="w", padx=16, pady=4)
+
         # ボタン
         bf = tk.Frame(self, bg=C["bg_main"])
-        bf.grid(row=5, column=0, columnspan=3, pady=16)
+        bf.grid(row=7, column=0, columnspan=3, pady=16)
         tk.Button(
             bf, text="保存して適用",
             bg=C["accent"], fg="white", width=14, bd=0,
@@ -372,7 +391,9 @@ class SettingsDialog(tk.Toplevel):
                 raise ValueError("トークン数が小さすぎます (n_ctx は 512 以上)")
             self.result = dict(
                 model_path=mp, n_ctx=ctx, max_tokens=tok,
-                temperature=tmp, vad_threshold=vad)
+                temperature=tmp, vad_threshold=vad,
+                mic_enabled=self.v_mic.get(),
+                tts_enabled=self.v_tts.get())
             self.destroy()
         except ValueError as e:
             messagebox.showerror("入力エラー", str(e), parent=self)
@@ -554,55 +575,74 @@ class TTSWorker:
             self.root.after(0, self.on_stop)
 
     def _run(self) -> None:
-        import subprocess
+            import subprocess
+            import time
 
-        def _speak_sapi(text: str) -> None:
-            """PowerShell経由でSAPIを呼ぶ。出力デバイスを既定のデバイスに固定。"""
-            char_codes = ",".join(str(ord(c)) for c in text)
-            ps = (
-                "Add-Type -AssemblyName System.Speech;"
-                "Add-Type -AssemblyName System.Windows.Forms;"
-                "$s=New-Object System.Speech.Synthesis.SpeechSynthesizer;"
-                "$s.Rate=-2;"
-                # SetOutputToDefaultAudioDevice() で既定の再生デバイスに強制出力
-                "$s.SetOutputToDefaultAudioDevice();"
-                f"$s.Speak([string]::new([char[]]@({char_codes})))"
-            )
-            try:
-                subprocess.run(
-                    ["powershell", "-NoProfile", "-WindowStyle", "Hidden",
-                     "-Command", ps],
-                    timeout=60,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
+            def _speak_sapi(text: str) -> None:
+                # 発話関数自体でも enabled をチェックするようにガード
+                if not self.enabled:
+                    return
+
+                safe_text = text.replace("'", "''")
+                speed = 2
+                ps = (
+                    "Add-Type -AssemblyName System.Speech;"
+                    "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+                    f"$s.Rate = {speed};"
+                    "$s.SetOutputToDefaultAudioDevice();"
+                    f"$s.Speak('{safe_text}');"
                 )
-            except Exception as e:
-                print(f"[TTS PowerShell エラー] {e}")
+                try:
+                    subprocess.run(
+                        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                        timeout=60,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                except Exception as e:
+                    print(f"[TTS PowerShell エラー] {e}")
 
-        while True:
-            text = self._q.get()
-            if not text:
-                self._q.task_done()
-                continue
+            # ─── 起動時の処理 ───
+            # 3秒待機してから、enabled の場合のみ起動発話
+            time.sleep(3.0) 
+            if self.enabled:
+                _speak_sapi("システムを起動しました。")
+                print("[TTS] 起動発話完了")
 
-            if self._stop.is_set():
-                self._q.task_done()
-                continue
+            # ─── メインループ ───
+            while True:
+                text = self._q.get()
+                
+                # キューから取得したテキストが空ならスキップ
+                if not text:
+                    self._q.task_done()
+                    continue
 
-            self._stop.clear()
-            try:
-                self.root.after(0, self.avatar.start_speaking)
-                # Bluetoothデバイスのオーディオストリーム再接続を待つ
-                time.sleep(0.5)
-                _speak_sapi(text)
-            except Exception as e:
-                print(f"[TTS エラー] {e}")
-            finally:
-                if self._q.empty():
-                    self.root.after(0, self.avatar.stop_speaking)
-                    if self.on_stop:
-                        self.root.after(0, self.on_stop)
-                self._q.task_done()
+                # stopフラグの判定
+                stopped = self._stop.is_set()
+                self._stop.clear()
 
+                if stopped:
+                    self._q.task_done()
+                    continue
+
+                try:
+                    # enabled でない場合はスキップ
+                    if not self.enabled:
+                        continue
+
+                    self.root.after(0, self.avatar.start_speaking)
+                    # Bluetoothデバイス等の復帰待ち
+                    time.sleep(0.5)
+                    _speak_sapi(text)
+                except Exception as e:
+                    print(f"[TTS エラー] {e}")
+                finally:
+                    # キューが空ならアバターの口パクを止める
+                    if self._q.empty():
+                        self.root.after(0, self.avatar.stop_speaking)
+                        if self.on_stop:
+                            self.root.after(0, self.on_stop)
+                    self._q.task_done()
 
 # ═══════════════════════════════════════════════════════
 #  ■ VAD + Whisper 音声認識
@@ -858,7 +898,7 @@ class ChatApp:
 
         # ── TTS ───────────────────────────────────
         self.tts         = TTSWorker(self.avatar, root)
-        self.tts.enabled = self._cfg.get("tts_enabled", True)
+        self.tts.enabled = self._cfg.get("tts_enabled", False)
         # TTS発話中はVADを抑制してハウリング・誤認識を防ぐ
         self.tts.on_start = self._on_tts_start
         self.tts.on_stop  = self._on_tts_stop
@@ -978,7 +1018,7 @@ class ChatApp:
         mv.add_checkbutton(
             label="TTS 音声出力",
             variable=self._tts_var,
-            command=lambda: setattr(self.tts, "enabled", self._tts_var.get()))
+            command=self._toggle_tts)
         mv.add_command(
             label="アバター表示/非表示",
             command=self.avatar.toggle_visible)
@@ -1720,6 +1760,11 @@ class ChatApp:
     # ══════════════════════════════════════════════
     #  設定ダイアログ
     # ══════════════════════════════════════════════
+    def _toggle_tts(self) -> None:
+        self.tts.enabled = self._tts_var.get()
+        self._cfg["tts_enabled"] = self.tts.enabled
+        save_settings(self._cfg)
+
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.root, dict(
             model_path    = self._model_path,
@@ -1727,6 +1772,8 @@ class ChatApp:
             max_tokens    = self._max_tokens,
             temperature   = self._temperature,
             vad_threshold = self._vad_thresh,
+            mic_enabled   = self._voice.enabled if self._voice else False,
+            tts_enabled   = self.tts.enabled,
         ))
         self.root.wait_window(dlg)
         if dlg.result is None:
@@ -1742,9 +1789,11 @@ class ChatApp:
         self._vad_thresh  = new["vad_threshold"]
         if self._voice:
             self._voice.vad_threshold = self._vad_thresh
+            self._voice.enabled = new["mic_enabled"]
+        self.tts.enabled = new["tts_enabled"]
+        self._tts_var.set(new["tts_enabled"])  # メニューのチェック状態を同期
 
         self._cfg.update(new)
-        self._cfg["tts_enabled"] = self.tts.enabled
         save_settings(self._cfg)
 
         if model_changed:
@@ -1802,9 +1851,11 @@ class ChatApp:
     def _on_close(self) -> None:
         if self._voice:
             self._voice.stop()
+            self._cfg["mic_enabled"] = self._voice.enabled
+        self._cfg["tts_enabled"] = self.tts.enabled
+        save_settings(self._cfg)
         self.tts.stop_all()
         self._save_now()
-        # after コールバックが残っていても安全に終了するため少し待つ
         self.root.after(200, self.root.destroy)
 
 
