@@ -190,7 +190,7 @@ def load_settings() -> dict:
         n_ctx         = DEFAULT_N_CTX,
         max_tokens    = DEFAULT_MAX_TOKENS,
         temperature   = DEFAULT_TEMP,
-        tts_enabled   = True,
+        tts_enabled   = False,
         vad_threshold = DEFAULT_VAD_RMS,
     )
     if os.path.exists(SETTINGS_FILE):
@@ -624,7 +624,7 @@ class VoiceRecognizer:
         self.on_text       = on_text
         self.vad_threshold  = vad_threshold
         self._enabled       = threading.Event()
-        self._enabled.set()
+        self._enabled.clear()  # 起動時はマイクOFF（ユーザーが明示的にONにする）
         self._active        = True
         self._flush_request = False
         self._tts_active    = False  # TTS発話中フラグ（閾値を上げる）
