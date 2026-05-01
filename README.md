@@ -28,7 +28,7 @@
 
 | 項目 | 要件 |
 |---|---|
-| OS | Windows 10 / 11（64bit） |
+| OS | Windows 11（64bit） |
 | Python | 3.12.10（64bit） |
 | GPU | NVIDIA GPU推奨（VRAM 6GB以上）／CPUのみでも動作可 |
 | RAM | 8GB以上推奨 |
