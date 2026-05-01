@@ -21,6 +21,9 @@
 - VoiceRecognizer初期状態をOFFに変更・設定ファイルの値を優先して反映するよう修正
 - README：セキュリティ項目にモデルによる外部通信の可能性がある旨の注意を追加
 - README：diskcache（CVE-2025-69872）の脆弱性情報とpip-auditでの定期確認を推奨する旨を追加
+- マイクON設定で起動した際にマイクが機能しないバグを修正（_on_whisper_ready内でmic_enabledを反映するよう変更）
+- README：動作確認済みモデル一覧にgemma-4-E4B-Q4_K_M（自前量子化）・LFM2.5-1.2B-Instruct-Q4_K_Mを追加
+- README：推奨モデル一覧を削除し動作確認済みモデルのみに整理
 - マイクのデフォルトをONからOFFに変更（明示的にONにする形に変更）
 - TTSのデフォルトをONからOFFに変更
 - README：音声入力・TTSの説明をデフォルトOFFに合わせて修正

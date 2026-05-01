@@ -190,8 +190,7 @@ def load_settings() -> dict:
         n_ctx         = DEFAULT_N_CTX,
         max_tokens    = DEFAULT_MAX_TOKENS,
         temperature   = DEFAULT_TEMP,
-        tts_enabled   = False,
-        mic_enabled   = False,
+        tts_enabled   = True,
         vad_threshold = DEFAULT_VAD_RMS,
     )
     if os.path.exists(SETTINGS_FILE):
@@ -336,27 +335,9 @@ class SettingsDialog(tk.Toplevel):
                  bg=C["bg_main"], fg=C["fg_sub"],
                  font=FONT_SMALL).grid(row=4, column=2, sticky="w", **P)
 
-        # 起動時マイクON/OFF
-        self.v_mic = BooleanVar(value=cfg.get("mic_enabled", False))
-        tk.Checkbutton(
-            self, text="起動時にマイクを有効にする",
-            variable=self.v_mic,
-            bg=C["bg_main"], fg=C["fg_main"],
-            selectcolor=C["bg_input"], activebackground=C["bg_main"],
-        ).grid(row=5, column=0, columnspan=3, sticky="w", padx=16, pady=4)
-
-        # 起動時TTS ON/OFF
-        self.v_tts = BooleanVar(value=cfg.get("tts_enabled", False))
-        tk.Checkbutton(
-            self, text="起動時にTTS読み上げを有効にする",
-            variable=self.v_tts,
-            bg=C["bg_main"], fg=C["fg_main"],
-            selectcolor=C["bg_input"], activebackground=C["bg_main"],
-        ).grid(row=6, column=0, columnspan=3, sticky="w", padx=16, pady=4)
-
         # ボタン
         bf = tk.Frame(self, bg=C["bg_main"])
-        bf.grid(row=7, column=0, columnspan=3, pady=16)
+        bf.grid(row=5, column=0, columnspan=3, pady=16)
         tk.Button(
             bf, text="保存して適用",
             bg=C["accent"], fg="white", width=14, bd=0,
@@ -391,9 +372,7 @@ class SettingsDialog(tk.Toplevel):
                 raise ValueError("トークン数が小さすぎます (n_ctx は 512 以上)")
             self.result = dict(
                 model_path=mp, n_ctx=ctx, max_tokens=tok,
-                temperature=tmp, vad_threshold=vad,
-                mic_enabled=self.v_mic.get(),
-                tts_enabled=self.v_tts.get())
+                temperature=tmp, vad_threshold=vad)
             self.destroy()
         except ValueError as e:
             messagebox.showerror("入力エラー", str(e), parent=self)
@@ -645,7 +624,7 @@ class VoiceRecognizer:
         self.on_text       = on_text
         self.vad_threshold  = vad_threshold
         self._enabled       = threading.Event()
-        self._enabled.clear()  # 起動時はOFF・設定ファイルから反映される
+        self._enabled.set()
         self._active        = True
         self._flush_request = False
         self._tts_active    = False  # TTS発話中フラグ（閾値を上げる）
@@ -879,7 +858,7 @@ class ChatApp:
 
         # ── TTS ───────────────────────────────────
         self.tts         = TTSWorker(self.avatar, root)
-        self.tts.enabled = self._cfg.get("tts_enabled", False)
+        self.tts.enabled = self._cfg.get("tts_enabled", True)
         # TTS発話中はVADを抑制してハウリング・誤認識を防ぐ
         self.tts.on_start = self._on_tts_start
         self.tts.on_stop  = self._on_tts_stop
@@ -971,7 +950,7 @@ class ChatApp:
             0, self._mic_listening)
         self._voice.on_processing = lambda: self.root.after(
             0, self._mic_processing)
-        # 設定ファイルのmic_enabledを反映（デフォルトはOFF）
+        # スレッド起動後に設定ファイルのmic_enabledを反映する
         self._voice.enabled = self._cfg.get("mic_enabled", False)
         print(f"[Whisper] 音声認識開始 / VAD閾値={self._vad_thresh}")
         self._update_status()
@@ -1748,8 +1727,6 @@ class ChatApp:
             max_tokens    = self._max_tokens,
             temperature   = self._temperature,
             vad_threshold = self._vad_thresh,
-            mic_enabled   = self._voice.enabled if self._voice else False,
-            tts_enabled   = self.tts.enabled,
         ))
         self.root.wait_window(dlg)
         if dlg.result is None:
@@ -1765,10 +1742,9 @@ class ChatApp:
         self._vad_thresh  = new["vad_threshold"]
         if self._voice:
             self._voice.vad_threshold = self._vad_thresh
-            self._voice.enabled = new["mic_enabled"]
-        self.tts.enabled = new["tts_enabled"]
 
         self._cfg.update(new)
+        self._cfg["tts_enabled"] = self.tts.enabled
         save_settings(self._cfg)
 
         if model_changed:

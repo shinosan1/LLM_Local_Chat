@@ -124,7 +124,7 @@ pip install -r requirements.txt --no-cache-dir
 ### 4. GGUFモデルを用意する
 
 [Hugging Face](https://huggingface.co/) から `.gguf` 形式のモデルをダウンロードして `models/` フォルダに配置してください。  
-動作確認済み：`gemma-3-4b-it-q4_k_m.gguf`
+動作確認済み：`gemma-3-4b-it-q4_k_m.gguf`、`gemma-4-E4B-Q4_K_M.gguf`（自前量子化）
 
 > **⚠️ 初回起動時の注意：**  
 > 音声認識（Whisper）のモデルが初回起動時に自動ダウンロードされます（約1.5GB）。  
@@ -132,9 +132,9 @@ pip install -r requirements.txt --no-cache-dir
 
 ---
 
-## 動作確認済み・推奨モデル一覧
+## 動作確認済みモデル一覧
 
-本アプリで使用できる日本語対応GGUFモデルの一覧です。  
+本アプリで動作確認済みのGGUFモデルの一覧です。  
 すべて [Hugging Face](https://huggingface.co/) からダウンロードできます。  
 ファイルは `models/` フォルダに配置してください。
 
@@ -149,40 +149,13 @@ pip install -r requirements.txt --no-cache-dir
 
 > **推奨量子化形式：** `Q4_K_M`（品質と速度のバランスが最良）
 
-### 軽量モデル（4B以下・VRAM 4GB〜・低スペックPC向け）
-
-| モデル名 | パラメータ | 特徴 | ダウンロード |
+| モデル名 | パラメータ | 備考 | ダウンロード |
 |---|---|---|---|
-| gemma-3-4b-it | 4B | 動作確認済み。日本語品質良好 | [リンク](https://huggingface.co/lmstudio-community/gemma-3-4b-it-GGUF) |
-| LFM2.5-1.2B-JP | 1.2B | 日本語特化の超軽量モデル | [リンク](https://huggingface.co/ggml-org/LFM2.5-1.2B-JP-GGUF) |
-| llm-jp-3.1-1.8b-instruct4 | 1.8B | NII開発の日本語特化モデル | [リンク](https://huggingface.co/llm-jp/llm-jp-3.1-1.8b-instruct4) |
+| gemma-3-4b-it-q4_k_m | 4B | 動作確認済み | [リンク](https://huggingface.co/lmstudio-community/gemma-3-4b-it-GGUF) |
+| gemma-4-E4B-Q4_K_M | 4B | 動作確認済み（自前量子化） | [リンク](https://huggingface.co/google/gemma-4) |
+| phi-3.5-Q8_0 | 3.8B | 動作確認済み | [リンク](https://huggingface.co/lmstudio-community/Phi-3.5-mini-instruct-GGUF) |
+| LFM2.5-1.2B-Instruct-Q4_K_M | 1.2B | 動作確認済み（起動時に警告が出ますが動作に問題なし） | [リンク](https://huggingface.co/ggml-org/LFM2.5-1.2B-JP-GGUF) |
 
-### 中量モデル（7B〜9B・VRAM 6GB〜・推奨）
-
-| モデル名 | パラメータ | 特徴 | ダウンロード |
-|---|---|---|---|
-| phi-3.5 | 3.8B | 動作確認済み。高品質な応答 | [リンク](https://huggingface.co/lmstudio-community/Phi-3.5-mini-instruct-GGUF) |
-| Qwen2.5-7B-Instruct | 7B | 多言語対応・日本語品質高い | [リンク](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF) |
-| japanese-stablelm-instruct-gamma-7B | 7B | 日本語特化のStableLM | [リンク](https://huggingface.co/TheBloke/japanese-stablelm-instruct-gamma-7B-GGUF) |
-| NVIDIA-Nemotron-Nano-9B-v2-Japanese | 9B | NVIDIA製日本語特化モデル | [リンク](https://huggingface.co/mmnga/NVIDIA-Nemotron-Nano-9B-v2-Japanese-gguf) |
-
-### 大型モデル（13B以上・VRAM 12GB〜・高品質）
-
-| モデル名 | パラメータ | 特徴 | ダウンロード |
-|---|---|---|---|
-| Llama-3-ELYZA-JP-8B | 8B | ELYZA製日本語特化Llama3 | [リンク](https://huggingface.co/elyza/Llama-3-ELYZA-JP-8B-GGUF) |
-| llm-jp-3.1-13b-instruct4 | 13B | NII開発・高品質日本語モデル | [リンク](https://huggingface.co/llm-jp/llm-jp-3.1-13b-instruct4) |
-
-### モデル選択の目安
-
-| VRAM | 推奨モデル |
-|---|---|
-| 4GB | LFM2.5-1.2B-JP / llm-jp-3.1-1.8b |
-| 6GB | gemma-3-4b-it（動作確認済み） |
-| 8GB | Qwen2.5-7B / japanese-stablelm-7B |
-| 12GB以上 | llm-jp-3.1-13b |
-
-> モデルの進化は速いため、最新情報は [Hugging Face](https://huggingface.co/models?library=gguf&language=ja) で「gguf japanese」で検索してください。  
 > **リンク切れの場合はHugging Face（https://huggingface.co/）でモデル名を直接検索してください。**
 
 
