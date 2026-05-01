@@ -5,6 +5,38 @@
 
 ---
 
+## [1.0.1] - 2026-05-01
+
+### 修正
+- アバターパスのスラッシュ抜けを修正
+- ローカルパスを相対パスに変更（ポータビリティ向上）
+- マイクボタンの動作説明を修正（起動後自動ON・ボタンでOFF）
+- 停止ボタンの説明を修正（タイミングによっては中断できない場合がある旨を追記）
+- phi-4の動作確認済み表記をphi-3.5に修正
+
+### 追加
+- README：仮想環境の作成手順を追加
+- README：Python・Git・CUDA Toolkitのインストール案内を追加
+- README：Whisper初回ダウンロード（約1.5GB）の注意を追加
+- README：Privateリポジトリでのclone方法の説明を追加
+- README：日本語対応GGUFモデル一覧を追加
+- README：モデルリンク切れ時の案内を追加
+- README：モデル利用規約に関する免責事項を追加
+- requirements.txtにsetuptools==78.1.1を追加
+- chat_settings.json.exampleを追加
+- .gitignoreを追加
+- CHANGELOG.mdを追加
+- 操作マニュアル（PDF）を追加
+
+### 変更
+- README：pip installコマンドに--no-cache-dirを追加
+- README：ゲストモードの説明を正確な動作に修正
+- README：「作者に直接お問い合わせ」をPAT発行案内に変更
+- 免責事項を強化（禁止事項・保証の否認・準拠法を追加）
+- ライセンス表記をMITからAll Rights Reservedに変更
+
+---
+
 ## [1.0.0] - 2026-04-30
 
 ### 初回リリース
