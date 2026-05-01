@@ -602,8 +602,8 @@ class TTSWorker:
                     print(f"[TTS PowerShell エラー] {e}")
 
             # ─── 起動時の処理 ───
-            # 3秒待機してから、enabled の場合のみ起動発話
-            time.sleep(3.0) 
+            # 10秒待機してから、enabled の場合のみ起動発話
+            time.sleep(10.0) 
             if self.enabled:
                 _speak_sapi("システムを起動しました。")
                 print("[TTS] 起動発話完了")
