@@ -653,23 +653,36 @@ class VoiceRecognizer:
     whisper モデルは外部から渡す（バックグラウンドでロード済み）。
     マイクが存在しない環境でも例外を出さずに動作する。
     """
-
     def __init__(
-            self,
-            whisper_model,
-            on_text,
-            vad_threshold: int = DEFAULT_VAD_RMS,
-        ) -> None:
-            self.whisper_model = whisper_model
-            # ... (中略) ...
-            self._enabled.clear() # 初期状態は無効（イベントループ内で制御）
+        self,
+        whisper_model,
+        on_text,
+        vad_threshold: int = DEFAULT_VAD_RMS,
+    ) -> None:
+        # 1. まず属性を初期化する
+        self.whisper_model = whisper_model
+        self.on_text = on_text
+        self.vad_threshold = vad_threshold
+        
+        # 2. スレッド制御用のフラグを定義（★ここが重要）
+        self._enabled = threading.Event() 
+        self._active = True
+        self._tts_active = False
+        self._flush_request = False
+        
+        # 3. コールバックの初期化
+        self.on_idle = None
+        self.on_listening = None
+        self.on_processing = None
 
-            # ── 修正: モデルがない場合は認識ループを開始しない ──
-            if self.whisper_model is not None:
-                threading.Thread(target=self._loop, daemon=True).start()
-            else:
-                print("[VoiceRecognizer] Whisper未ロードのためスレッドを開始しません。")
+        # 初期状態は無効に設定
+        self._enabled.clear()
 
+        # 4. モデルがある場合のみスレッドを開始
+        if self.whisper_model is not None:
+            threading.Thread(target=self._loop, daemon=True).start()
+        else:
+            print("[VoiceRecognizer] Whisper未ロードのためスレッドを開始しません。")
     @property
     def enabled(self) -> bool:
         return self._enabled.is_set()
