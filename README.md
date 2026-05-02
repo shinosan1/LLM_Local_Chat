@@ -30,7 +30,7 @@
 |---|---|
 | OS | Windows 11（64bit） |
 | Python | 3.12.10（64bit） |
-| GPU | NVIDIA GPU推奨（VRAM 6GB以上）／CPUのみでも動作可 |
+| GPU | NVIDIA GPU推奨（VRAM 8GB以上）／CPUのみでも動作可 |
 | RAM | 8GB以上推奨 |
 
 > **Mac・Linuxは非対応です。**  
