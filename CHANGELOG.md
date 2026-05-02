@@ -9,7 +9,8 @@
 - [修正] VoiceRecognizerクラスの初期化エラー(AttributeError)を修正
     - 理由: __init__内で self._enabled が定義される前に .clear() が呼び出されていたため。
     - 対応: 属性の宣言順序を見直し、threading.Event() の初期化を先に行うよう変更。
-- GPU | NVIDIA GPU推奨（VRAM 8GB以上）／CPUのみでも動作可へ変更 
+- GPU | NVIDIA GPU推奨（VRAM 8GB以上）／CPUのみでも動作可
+- 生成設定の"温度"を"会話の自由度"へ変更
 ## [1.0.2] - 2026-05-02
 
 ### 修正

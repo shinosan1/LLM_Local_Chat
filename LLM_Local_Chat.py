@@ -325,8 +325,8 @@ class SettingsDialog(tk.Toplevel):
                  bg=C["bg_main"], fg=C["fg_sub"],
                  font=FONT_SMALL).grid(row=2, column=2, sticky="w", **P)
 
-        # 温度
-        lbl(3, "温度 (0.0 – 2.0):")
+        # 会話の自由度
+        lbl(3, "会話の自由度 (0.0 – 2.0):")
         self.e_temp = ent(3, cfg.get("temperature", DEFAULT_TEMP))
 
         # VAD 感度
@@ -386,7 +386,7 @@ class SettingsDialog(tk.Toplevel):
             tmp = float(self.e_temp.get())
             vad = int(self.e_vad.get())
             if not (0.0 <= tmp <= 2.0):
-                raise ValueError("温度は 0.0〜2.0 の範囲で入力してください")
+                raise ValueError("会話の自由度は 0.0〜2.0 の範囲で入力してください")
             if tok < 1 or ctx < 512:
                 raise ValueError("トークン数が小さすぎます (n_ctx は 512 以上)")
             self.result = dict(
