@@ -5,9 +5,22 @@
 
 ---
 ## [1.0.2] - 2026-05-02
+
 ### 修正
 - 初期起動時にマイク・TTSがOFFになるように修正
-- 起動時の待機時間3秒→10秒に修正
+- 起動時の待機時間を10秒に設定（TTS着火安定化）
+- _stop フラグの判定とクリアの順序を修正（2回目以降のTTSが再生されない問題）
+- 終了時にmic_enabled・tts_enabledを設定ファイルに保存するよう修正
+- メニューのTTS切り替え時に即座に設定ファイルへ保存するよう修正（_toggle_ttsメソッド追加）
+- _open_settingsにmic_enabled・tts_enabledの初期値渡しと反映処理を追加
+- TTS有効時に起動発話「システムを起動しました。」を追加（PowerShell初期化兼用）
+- ファイル名の修正tk_chat_local→LLM_Local_Chat
+
+### 変更
+- 実行ファイル名をtk_chat_local.py → LLM_Local_Chat.pyに変更
+- 起動バッチファイル名をAIローカル対話型AI.bat → LLMローカル対話型AI.batに変更
+- README：「必ずお読みください」セクションを追加（音声ハルシネーション対処法）
+- README：動作確認済みモデル一覧にgemma-4-E4B-Q4_K_M・LFM2.5-1.2B-Instruct-Q4_K_Mを追加
 
 ## [1.0.1] - 2026-05-01
 
