@@ -82,8 +82,8 @@
 ### 1. リポジトリをクローン
 
 ```bash
-git clone https://github.com/shinosan1/tk_chat_local.git
-cd tk_chat_local
+git clone https://github.com/shinosan1/LLM_Local_Chat.git
+cd LLM_Local_Chat
 ```
 
 > **⚠️ Privateリポジトリの場合：**  
