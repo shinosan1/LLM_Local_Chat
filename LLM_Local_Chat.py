@@ -655,26 +655,20 @@ class VoiceRecognizer:
     """
 
     def __init__(
-        self,
-        whisper_model,
-        on_text,
-        vad_threshold: int = DEFAULT_VAD_RMS,
-    ) -> None:
-        self.whisper_model = whisper_model
-        self.on_text       = on_text
-        self.vad_threshold  = vad_threshold
-        self._enabled       = threading.Event()
-        self._enabled.set()
-        self._active        = True
-        self._flush_request = False
-        self._tts_active    = False  # TTS発話中フラグ（閾値を上げる）
+            self,
+            whisper_model,
+            on_text,
+            vad_threshold: int = DEFAULT_VAD_RMS,
+        ) -> None:
+            self.whisper_model = whisper_model
+            # ... (中略) ...
+            self._enabled.clear() # 初期状態は無効（イベントループ内で制御）
 
-        # UI コールバック（メインスレッドから設定）
-        self.on_idle:       any = None
-        self.on_listening:  any = None
-        self.on_processing: any = None
-
-        threading.Thread(target=self._loop, daemon=True).start()
+            # ── 修正: モデルがない場合は認識ループを開始しない ──
+            if self.whisper_model is not None:
+                threading.Thread(target=self._loop, daemon=True).start()
+            else:
+                print("[VoiceRecognizer] Whisper未ロードのためスレッドを開始しません。")
 
     @property
     def enabled(self) -> bool:
@@ -948,6 +942,12 @@ class ChatApp:
     #  Whisper ロード（バックグラウンド）
     # ══════════════════════════════════════════════
     def _load_whisper_async(self) -> None:
+        # ── 追加: マイクもTTSも無効なら、モデルロード自体をスキップ ──
+        if not self._cfg.get("mic_enabled") and not self._cfg.get("tts_enabled"):
+            print("[System] マイク/TTSが無効なため、Whisperのロードをスキップします。")
+            self.root.after(0, lambda: self._on_whisper_ready(None))
+            return
+        
         def _worker() -> None:
             import torch
             cuda_ok = torch.cuda.is_available()
@@ -975,8 +975,8 @@ class ChatApp:
     def _on_whisper_ready(self, wm) -> None:
         self._whisper_model = wm
         if wm is None:
-            print("[Whisper] ロード失敗 → 音声認識は無効")
-            self._status_set("⚠ Whisper ロード失敗（音声認識無効）")
+            print("[Whisper] ロード無効 → 音声認識は無効")
+            self._status_set("⚠ Whisper ロード無効（音声認識無効）")
             return
         print("[Whisper] VoiceRecognizer を起動します")
         self._voice = VoiceRecognizer(
