@@ -70,7 +70,8 @@
 > Gitが必要です。以下のURLからインストールしてください。  
 > [https://git-scm.com/download/win](https://git-scm.com/download/win)  
 >  
-> インストール時はすべてデフォルト設定のままで問題ありません。
+> インストール時はほぼデフォルト設定のままで問題ありません。  
+> ただし「Use a TrueType font in all console windows」という項目は**チェックを外してください**。チェックを入れると日本語が文字化けする場合があります。
 
 > **⚠️ 事前準備③：CUDA Toolkitのインストール（GPU使用の場合のみ）**  
 > NVIDIA GPUでCUDAを使用する場合は、CUDA Toolkit 12.4をインストールしてください。  

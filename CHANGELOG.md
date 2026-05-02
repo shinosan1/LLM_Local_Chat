@@ -14,10 +14,10 @@
 - メニューのTTS切り替え時に即座に設定ファイルへ保存するよう修正（_toggle_ttsメソッド追加）
 - _open_settingsにmic_enabled・tts_enabledの初期値渡しと反映処理を追加
 - TTS有効時に起動発話「システムを起動しました。」を追加（PowerShell初期化兼用）
-- ファイル名の修正tk_chat_local→LLM_Local_Chat
 
 ### 変更
 - 実行ファイル名をtk_chat_local.py → LLM_Local_Chat.pyに変更
+- README：GitインストールのTrueTypeフォント文字化け注意事項を追加
 - 起動バッチファイル名をAIローカル対話型AI.bat → LLMローカル対話型AI.batに変更
 - README：「必ずお読みください」セクションを追加（音声ハルシネーション対処法）
 - README：動作確認済みモデル一覧にgemma-4-E4B-Q4_K_M・LFM2.5-1.2B-Instruct-Q4_K_Mを追加
