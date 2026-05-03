@@ -10,6 +10,7 @@
 - requirements.txtの更新
     - pywin32==309　の追加
 - TTSがOFFでも発話する不具合を修正
+- 生成設定でマイク・TTSどちらもONなって起動する不具合を修正
 - 既知の不具合あり
     - TSWorker	起動時の挨拶がループ構造上、出ない場合がある_initial_greeting_done の判定を get の外側で行うか、初期値としてキューに入れる。
     - VoiceRecognizer	Bluetoothデバイス等の遅延でクラッシュする	stream.read を try-except で囲んでいるのは良いが、None が返った際の処理を追加。

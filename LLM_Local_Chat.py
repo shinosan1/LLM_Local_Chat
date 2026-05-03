@@ -549,7 +549,7 @@ import pythoncom
 import time
 
 class TTSWorker(threading.Thread):
-    def __init__(self, avatar, root):  # 引数を元の数（self含め3つ）に合わせました
+    def __init__(self, avatar, root):
         super().__init__(daemon=True)
         self.avatar = avatar
         self.root = root
@@ -558,17 +558,20 @@ class TTSWorker(threading.Thread):
         self._ready = threading.Event()
         self._initial_greeting_done = False
         
-        # ChatApp本体（root）から設定を取得
-        # root.config もしくは root.chat_app.config など、元のパスに合わせて調整してください
+        # --- 徹底してデフォルトを False に固定 ---
+        self.enabled = False 
         try:
-            self.enabled = self.root.config.get("tts_enabled", False)
+            # 設定が取れる場合のみ上書き。取れなければ False のまま。
+            if hasattr(self.root, 'config'):
+                self.enabled = self.root.config.get("tts_enabled", False)
         except:
-            self.enabled = False
+            pass
 
     def stop(self):
         self._is_running = False
 
     def add_text(self, text):
+        # 設定がTrueのときしかキューに入れない
         if self.enabled:
             self._q.put(text)
 
@@ -576,23 +579,18 @@ class TTSWorker(threading.Thread):
         pythoncom.CoInitialize()
         try:
             self._ready.set()
-            
-            # 起動直後の安定待ち
-            time.sleep(5.0) 
-            
             while self._is_running:
                 try:
-                    # 設定がオフなら何もせずループを回す
+                    # OFFなら即座にリセットしてループをスキップ
                     if not self.enabled:
-                        self._initial_greeting_done = True # 無効中に挨拶フラグだけ折っておく
-                        # キューが溜まっていたら破棄
+                        self._initial_greeting_done = True 
                         while not self._q.empty():
                             try: self._q.get_nowait()
                             except: break
                         time.sleep(0.5)
                         continue
 
-                    # 挨拶判定（有効な時のみ）
+                    # 初回挨拶（ONのときのみ）
                     if not self._initial_greeting_done:
                         text = "システムを起動しました。"
                         self._initial_greeting_done = True
@@ -602,49 +600,17 @@ class TTSWorker(threading.Thread):
                         except queue.Empty:
                             continue
 
-                    # --- 再生処理 (元のロジックをここに維持) ---
-                    # 例: self.avatar.speak(text) など、元の再生コードがあればここに記述
-                    print(f"[TTS] 再生中: {text}")
+                    # 再生実行
+                    if hasattr(self.avatar, 'speak'):
+                        self.avatar.speak(text)
 
-                except Exception as e:
-                    print(f"TTS Loop Error: {e}")
+                except Exception:
                     time.sleep(1)
         finally:
             pythoncom.CoUninitialize()
 
     def run(self):
-        self._play_loop()
-    def _execute_sapi_speak(self, text):
-        """SAPI5専用再生ロジック（中断対応版）"""
-        try:
-            speaker = win32com.client.Dispatch("SAPI.SpVoice")
-            
-            # 1:Async, 2:PurgeBeforeSpeak
-            speaker.Speak(text, 1 | 2)
-            
-            while speaker.Status.RunningState != 1: # 1:Finished
-                if self._stop_flag:
-                    speaker.Speak("", 3) # 強制停止
-                    return
-                
-                pythoncom.PumpWaitingMessages()
-                time.sleep(0.01)
-        except Exception as e:
-            print(f"[SAPI5 Error] {e}")
-
-    def stop_all(self):
-        """停止ボタン"""
-        while not self._q.empty():
-            try:
-                self._q.get_nowait()
-                self._q.task_done()
-            except: break
-        self._stop_flag = True
-
-    def terminate(self):
-        self._is_running = False
-        self.stop_all()
-        
+        self._play_loop()        
 # ═══════════════════════════════════════════════════════
 #  ■ VAD + Whisper 音声認識
 # ═══════════════════════════════════════════════════════
