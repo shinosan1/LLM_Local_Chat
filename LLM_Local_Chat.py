@@ -556,61 +556,70 @@ class TTSWorker(threading.Thread):
         self._q = queue.Queue()
         self._is_running = True
         self._ready = threading.Event()
-        self._initial_greeting_done = False
         
-        # --- 徹底してデフォルトを False に固定 ---
+        # 最初からTrueにして「起動しました」を絶対に言わせない
+        self._initial_greeting_done = True 
+        
+        # デフォルトOFF。設定がTrueの時だけON。
         self.enabled = False 
         try:
-            # 設定が取れる場合のみ上書き。取れなければ False のまま。
             if hasattr(self.root, 'config'):
                 self.enabled = self.root.config.get("tts_enabled", False)
         except:
             pass
 
-    def stop(self):
-        self._is_running = False
-
-    def add_text(self, text):
-        # 設定がTrueのときしかキューに入れない
-        if self.enabled:
+    # アプリ側が期待している再生メソッド（これが欠けていました）
+    def speak(self, text):
+        if self.enabled and text:
             self._q.put(text)
 
+    # 以前のエラー対策用
+    def add_text(self, text):
+        self.speak(text)
+
+    # 終了処理用のメソッド
+    def stop_all(self):
+        self._is_running = False
+        while not self._q.empty():
+            try: self._q.get_nowait()
+            except: break
+
+    def stop(self):
+        self.stop_all()
+
     def _play_loop(self):
-        pythoncom.CoInitialize()
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except:
+            pass
+
         try:
             self._ready.set()
             while self._is_running:
                 try:
-                    # OFFなら即座にリセットしてループをスキップ
-                    if not self.enabled:
-                        self._initial_greeting_done = True 
-                        while not self._q.empty():
-                            try: self._q.get_nowait()
-                            except: break
-                        time.sleep(0.5)
+                    # 無効、またはキューが空なら待機
+                    if not self.enabled or self._q.empty():
+                        time.sleep(0.2)
                         continue
 
-                    # 初回挨拶（ONのときのみ）
-                    if not self._initial_greeting_done:
-                        text = "システムを起動しました。"
-                        self._initial_greeting_done = True
-                    else:
-                        try:
-                            text = self._q.get(timeout=0.5)
-                        except queue.Empty:
-                            continue
+                    text = self._q.get(timeout=0.1)
 
-                    # 再生実行
-                    if hasattr(self.avatar, 'speak'):
+                    # avatar側の実際の再生処理を呼び出し
+                    if self.avatar and hasattr(self.avatar, 'speak'):
                         self.avatar.speak(text)
 
                 except Exception:
-                    time.sleep(1)
+                    time.sleep(0.1)
         finally:
-            pythoncom.CoUninitialize()
+            try:
+                import pythoncom
+                pythoncom.CoUninitialize()
+            except:
+                pass
 
     def run(self):
-        self._play_loop()        
+        self._play_loop()
 # ═══════════════════════════════════════════════════════
 #  ■ VAD + Whisper 音声認識
 # ═══════════════════════════════════════════════════════
