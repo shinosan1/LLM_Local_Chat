@@ -1893,7 +1893,7 @@ class ChatApp:
             max_tokens    = self._max_tokens,
             temperature   = self._temperature,
             vad_threshold = self._vad_thresh,
-            mic_enabled   = self._voice.enabled if self._voice else False,
+            mic_enabled = self._cfg.get("mic_enabled", False),
             tts_enabled   = self.tts.enabled,
         ))
         self.root.wait_window(dlg)
