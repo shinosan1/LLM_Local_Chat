@@ -74,7 +74,6 @@ import time
 import struct
 import math
 import random
-import torch
 
 import tkinter as tk
 from tkinter import (
@@ -540,7 +539,7 @@ class AvatarWindow:
 
 
 # ═══════════════════════════════════════════════════════
-#  ■ TTS ワーカー (ver.1.0.3から 修正)
+#  ■ TTS ワーカー (ver.1.0.3 修正)
 # ═══════════════════════════════════════════════════════
 import threading
 import queue
@@ -548,78 +547,122 @@ import win32com.client
 import pythoncom
 import time
 
-class TTSWorker(threading.Thread):
+class TTSWorker:
     def __init__(self, avatar, root):
-        super().__init__(daemon=True)
         self.avatar = avatar
         self.root = root
         self._q = queue.Queue()
+        self._stop_flag = False
         self._is_running = True
         self._ready = threading.Event()
+        self.enabled = False  # 起動時はOFF・設定ファイルから後で反映される
+        self.on_start = None
+        self.on_stop  = None
         
-        # 最初からTrueにして「起動しました」を絶対に言わせない
-        self._initial_greeting_done = True 
+        # 起動時の挨拶を一度だけ行うためのフラグ
+        self._initial_greeting_done = False
         
-        # デフォルトOFF。設定がTrueの時だけON。
-        self.enabled = False 
-        try:
-            if hasattr(self.root, 'config'):
-                self.enabled = self.root.config.get("tts_enabled", False)
-        except:
-            pass
+        self._thread = threading.Thread(target=self._play_loop, daemon=True)
+        self._thread.start()
 
-    # アプリ側が期待している再生メソッド（これが欠けていました）
     def speak(self, text):
-        if self.enabled and text:
+        """ChatApp側から呼ばれる入り口"""
+        if not self.enabled:
+            return
+        if text and text.strip():
+            if not self._ready.is_set():
+                self._ready.wait(timeout=2.0)
             self._q.put(text)
-
-    # 以前のエラー対策用
-    def add_text(self, text):
-        self.speak(text)
-
-    # 終了処理用のメソッド
-    def stop_all(self):
-        self._is_running = False
-        while not self._q.empty():
-            try: self._q.get_nowait()
-            except: break
-
-    def stop(self):
-        self.stop_all()
+            if self.on_start:
+                self.root.after(0, self.on_start)
 
     def _play_loop(self):
-        try:
-            import pythoncom
-            pythoncom.CoInitialize()
-        except:
-            pass
-
+        """再生メインループ"""
+        pythoncom.CoInitialize()
+        
         try:
             self._ready.set()
+            
+            # enabledがTrueになるまで最大10秒待機
+            for _ in range(100):
+                if self.enabled:
+                    break
+                time.sleep(0.1)
+            
             while self._is_running:
                 try:
-                    # 無効、またはキューが空なら待機
-                    if not self.enabled or self._q.empty():
-                        time.sleep(0.2)
+                    # 挨拶がまだでTTSが有効なら起動発話
+                    if not self._initial_greeting_done and self.enabled:
+                        text = "システムを起動しました。"
+                        self._initial_greeting_done = True
+                        is_greeting = True
+                    else:
+                        text = self._q.get(timeout=0.1)
+                        is_greeting = False
+                    
+                    if not self.enabled:
+                        if not is_greeting:
+                            self._q.task_done()
                         continue
-
-                    text = self._q.get(timeout=0.1)
-
-                    # avatar側の実際の再生処理を呼び出し
-                    if self.avatar and hasattr(self.avatar, 'speak'):
-                        self.avatar.speak(text)
-
-                except Exception:
-                    time.sleep(0.1)
+                    
+                    self._stop_flag = False
+                    
+                    # 口パク開始
+                    self.root.after(0, self.avatar.start_speaking)
+                    
+                    # SAPI5再生実行
+                    self._execute_sapi_speak(text)
+                    
+                    # 口パク停止
+                    self.root.after(0, self.avatar.stop_speaking)
+                    if self.on_stop:
+                        self.root.after(0, self.on_stop)
+                    
+                    # キューから取得したものだけ task_done する
+                    if not is_greeting:
+                        try:
+                            self._q.task_done()
+                        except ValueError:
+                            pass
+                        
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    print(f"[TTS Loop Error] {e}")
         finally:
-            try:
-                import pythoncom
-                pythoncom.CoUninitialize()
-            except:
-                pass
+            pythoncom.CoUninitialize()
 
-    def run(self):
-        self._play_loop()
+    def _execute_sapi_speak(self, text):
+        """SAPI5専用再生ロジック（中断対応版）"""
+        try:
+            speaker = win32com.client.Dispatch("SAPI.SpVoice")
+            
+            # 1:Async, 2:PurgeBeforeSpeak
+            speaker.Speak(text, 1 | 2)
+            
+            while speaker.Status.RunningState != 1: # 1:Finished
+                if self._stop_flag:
+                    speaker.Speak("", 3) # 強制停止
+                    return
+                
+                pythoncom.PumpWaitingMessages()
+                time.sleep(0.01)
+        except Exception as e:
+            print(f"[SAPI5 Error] {e}")
+
+    def stop_all(self):
+        """停止ボタン"""
+        while not self._q.empty():
+            try:
+                self._q.get_nowait()
+                self._q.task_done()
+            except: break
+        self._stop_flag = True
+
+    def terminate(self):
+        self._is_running = False
+        self.stop_all()
+        
 # ═══════════════════════════════════════════════════════
 #  ■ VAD + Whisper 音声認識
 # ═══════════════════════════════════════════════════════
@@ -1027,7 +1070,7 @@ class ChatApp:
             return
         
         def _worker() -> None:
-
+            import torch
             cuda_ok = torch.cuda.is_available()
             print(f"[Whisper] CUDA利用可能: {cuda_ok}")
             if cuda_ok:
@@ -1482,19 +1525,11 @@ class ChatApp:
                     pass
             threading.Thread(target=_force_reset, daemon=True).start()
 
-        # ② TTS停止（フラグをセットしてから stop_all を呼ぶ）
-        self.tts.stop_all() 
+        # ② TTS停止
+        self.tts.stop_all()
         self.avatar.win.after(0, self.avatar.stop_speaking)
 
         # ③ UIを待機状態に戻す
-        self._is_thinking = False
-        self._llm_abort   = False
-        self._stream_buf  = ""
-        self._btn_send.config(state=tk.NORMAL)
-        self._chat_write("\n⛔ 停止しました\n" + "─" * 50 + "\n\n", "divider")
-        self._update_status()
-
-        # ③ UIを待機状態に戻す（マイクはOFFにしない）
         self._is_thinking = False
         self._llm_abort   = False
         self._stream_buf  = ""
