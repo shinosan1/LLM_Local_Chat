@@ -86,7 +86,12 @@
 git clone https://github.com/shinosan1/LLM_Local_Chat.git
 cd LLM_Local_Chat
 ```
-
+⚠️ PowerShellでの実行について：
+Windowsのデフォルト設定ではスクリプトの実行が制限されており、仮想環境の有効化（activate）などが弾かれる場合があります。
+エラーが発生した場合は、内容を理解・同意した上で以下のコマンドを実行し、実行制限を緩和してください。
+```bash
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
 > **⚠️ Privateリポジトリの場合：**  
 > git cloneの際にGitHubのユーザー名とパスワード（Personal Access Token）の入力を求められる場合があります。  
 > その場合はGitHubにログインした状態でクローンするか、Personal Access Token（PAT）を発行してご利用ください。  
