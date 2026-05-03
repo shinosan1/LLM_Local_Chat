@@ -589,42 +589,49 @@ class TTSWorker:
                     break
                 time.sleep(0.1)
             
+            # TTS有効時のみ起動発話（アプリ起動時の1回のみ）
+            # 設定ダイアログからの変更では発話しない
+            if self.enabled and not self._initial_greeting_done:
+                self._initial_greeting_done = True
+                try:
+                    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+                    speaker.Speak("システムを起動しました。", 0)
+                    print("[TTS] 起動発話完了")
+                except Exception as e:
+                    print(f"[TTS] 起動発話失敗: {e}")
+            else:
+                # TTS OFFで起動した場合もフラグを立てておく（後から設定変更しても発話しない）
+                self._initial_greeting_done = True
+
             while self._is_running:
                 try:
-                    # 挨拶がまだでTTSが有効なら起動発話
-                    if not self._initial_greeting_done and self.enabled:
-                        text = "システムを起動しました。"
-                        self._initial_greeting_done = True
-                        is_greeting = True
-                    else:
-                        text = self._q.get(timeout=0.1)
-                        is_greeting = False
-                    
+                    text = self._q.get(timeout=0.1)
+
                     if not self.enabled:
-                        if not is_greeting:
-                            self._q.task_done()
-                        continue
-                    
-                    self._stop_flag = False
-                    
-                    # 口パク開始
-                    self.root.after(0, self.avatar.start_speaking)
-                    
-                    # SAPI5再生実行
-                    self._execute_sapi_speak(text)
-                    
-                    # 口パク停止
-                    self.root.after(0, self.avatar.stop_speaking)
-                    if self.on_stop:
-                        self.root.after(0, self.on_stop)
-                    
-                    # キューから取得したものだけ task_done する
-                    if not is_greeting:
                         try:
                             self._q.task_done()
                         except ValueError:
                             pass
-                        
+                        continue
+
+                    self._stop_flag = False
+
+                    # 口パク開始
+                    self.root.after(0, self.avatar.start_speaking)
+
+                    # SAPI5再生実行
+                    self._execute_sapi_speak(text)
+
+                    # 口パク停止
+                    self.root.after(0, self.avatar.stop_speaking)
+                    if self.on_stop:
+                        self.root.after(0, self.on_stop)
+
+                    try:
+                        self._q.task_done()
+                    except ValueError:
+                        pass
+
                 except queue.Empty:
                     continue
                 except Exception as e:
@@ -955,55 +962,60 @@ class ChatApp:
             self._voice.vad_threshold = 2000 
 
     def _on_tts_stop(self) -> None:
-        """TTSが発声を終了した時の処理"""
-        def _recovery():
-            import time
-            # ★ 0.8秒待機：スピーカーの残響が消えるのを待ってからマイクを復帰させる[cite: 1]
-            time.sleep(0.8) 
-            if self._voice:
-                self._voice.tts_active = False
-                self._voice.vad_threshold = self._vad_thresh
-                print(f"[TTS] VAD感度を通常({self._vad_thresh})に戻す")
-        
-        print("[TTS] 発話終了 → 0.8秒後にマイク復帰予定")
-        threading.Thread(target=_recovery, daemon=True).start()
-
+            """TTSが発声を終了した時の処理"""
+            def _recovery():
+                # スピーカーの残響が消えるのを待ってからマイクを復帰させる
+                # これをしないと、自分の声をマイクが拾ってまたAIが喋り出します
+                time.sleep(0.8) 
+                if self._voice:
+                    # クラス内部のフラグ状態と整合させる
+                    self._voice._tts_active = False
+                    # VADのしきい値を元の値（設定値）に戻す
+                    self._voice.vad_threshold = self._vad_thresh
+                    print(f"[TTS] マイク復帰 (VADしきい値を {self._vad_thresh} に戻しました)")
+            
+            threading.Thread(target=_recovery, daemon=True).start()
     # ── 停止・制御 ──────────────────────────────
 
     def _stop_all(self) -> None:
         """LLM・TTS・マイクを完全に、即座に、依存関係なしで止める"""
         print("[System] 停止命令を執行します")
-        
-        # 1. LLMの生成を物理的に遮断
-        self._llm_abort = True
-        if self._is_thinking:
-            def _reset_task():
-                try:
-                    if self.llm: self.llm.reset()
-                except: pass
-            threading.Thread(target=_reset_task, daemon=True).start()
 
-        # 2. TTS（音声合成）の「息の根」を止める
-        # stop_all内でキューを空にし、再生フラグ(self.tts._stop_flag等)をTrueにします
-        self.tts.stop_all() 
-        
+        # 1. 即座にUIをロック（リセット完了まで次の送信をブロック）
+        self._llm_abort   = True
+        self._is_thinking = True
+        self._btn_send.config(state=tk.DISABLED)
+
+        # 2. TTS停止
+        self.tts.stop_all()
+
         # 3. アバターの視覚的停止
         self.avatar.win.after(0, self.avatar.stop_speaking)
 
         # 4. マイクの「幻聴ガード」を即時リセット
-        # AIが喋っていない判定（tts_active=False）に強制的に戻します
         if self._voice:
             self._voice.tts_active = False
             self._voice.vad_threshold = self._vad_thresh
 
-        # 5. UIの完全初期化
-        self._is_thinking = False
-        self._stream_buf  = ""
-        self._btn_send.config(state=tk.NORMAL)
-        
-        # ログに「完全停止」を刻む
-        self._chat_write("\n⛔ 完全に停止しました\n" + "─" * 50 + "\n\n", "divider")
-        self._update_status()
+        # 5. LLMリセット完了後にUIを解除
+        def _reset_and_unlock():
+            try:
+                if self.llm:
+                    self.llm.reset()
+            except Exception as e:
+                print(f"[LLM reset error] {e}")
+            finally:
+                def _unlock():
+                    self._is_thinking = False
+                    self._llm_abort   = False
+                    self._stream_buf  = ""
+                    self._btn_send.config(state=tk.NORMAL)
+                    self._chat_write("\n⛔ 完全に停止しました\n" + "─" * 50 + "\n\n", "divider")
+                    self._update_status()
+                self.root.after(0, _unlock)
+
+        threading.Thread(target=_reset_and_unlock, daemon=True).start()
+
     def _update_status(self) -> None:
         """ステータス表示の更新"""
         if self._llm_loading:
@@ -1513,30 +1525,6 @@ class ChatApp:
             fg=C["mic_on"] if self._voice.enabled else C["mic_off"])
         self._update_status()
 
-    def _stop_all(self) -> None:
-        """LLM生成・TTS・マイク入力をすべて即時停止する"""
-        # ① LLM生成を強制中断
-        if self._is_thinking:
-            self._llm_abort = True
-            def _force_reset():
-                try:
-                    self.llm.reset()
-                except Exception:
-                    pass
-            threading.Thread(target=_force_reset, daemon=True).start()
-
-        # ② TTS停止
-        self.tts.stop_all()
-        self.avatar.win.after(0, self.avatar.stop_speaking)
-
-        # ③ UIを待機状態に戻す
-        self._is_thinking = False
-        self._llm_abort   = False
-        self._stream_buf  = ""
-        self._btn_send.config(state=tk.NORMAL)
-        self._chat_write("\n⛔ 停止しました\n" + "─" * 50 + "\n\n", "divider")
-        self._update_status()
-
     def _voice_input(self, text: str) -> None:
         if self._is_thinking or not text.strip():
             return
@@ -1570,6 +1558,7 @@ class ChatApp:
         self._llm_abort   = False   # 新規送信時は中断フラグをクリア
         self._is_thinking = True
         self._btn_send.config(state=tk.DISABLED)
+
         self._update_status()
 
         self._chat_write("\n", "")
@@ -1588,6 +1577,9 @@ class ChatApp:
     def _llm_worker(self, user_text: str) -> None:
         reply = ""
         try:
+            # 中断フラグが立っていれば即終了
+            if self._llm_abort:
+                return
             self.llm.reset()
 
             messages = build_messages_safe(
@@ -1619,7 +1611,7 @@ class ChatApp:
                 print("[LLM] 中断されました")
                 self._llm_abort = False
                 return
-
+            
             reply = reply.strip()
             print(f"[LLM] 生成完了 ({len(reply)}文字)")
             self.root.after(0, lambda r=reply: self._on_llm_done(user_text, r))
