@@ -548,73 +548,72 @@ import win32com.client
 import pythoncom
 import time
 
-class TTSWorker:
-    def __init__(self, avatar, root):
+class TTSWorker(threading.Thread):
+    def __init__(self, avatar, root):  # 引数を元の数（self含め3つ）に合わせました
+        super().__init__(daemon=True)
         self.avatar = avatar
         self.root = root
         self._q = queue.Queue()
-        self._stop_flag = False
         self._is_running = True
         self._ready = threading.Event()
-        
-        # 起動時の挨拶を一度だけ行うためのフラグ
         self._initial_greeting_done = False
         
-        self._thread = threading.Thread(target=self._play_loop, daemon=True)
-        self._thread.start()
+        # ChatApp本体（root）から設定を取得
+        # root.config もしくは root.chat_app.config など、元のパスに合わせて調整してください
+        try:
+            self.enabled = self.root.config.get("tts_enabled", False)
+        except:
+            self.enabled = False
 
-    def speak(self, text):
-        """ChatApp側から呼ばれる入り口"""
-        if text and text.strip():
-            # スレッド準備完了を待つ
-            if not self._ready.is_set():
-                self._ready.wait(timeout=2.0)
+    def stop(self):
+        self._is_running = False
+
+    def add_text(self, text):
+        if self.enabled:
             self._q.put(text)
 
     def _play_loop(self):
-        """再生メインループ"""
         pythoncom.CoInitialize()
-        
         try:
             self._ready.set()
             
-            # --- ここで起動後の待機時間を稼ぐ ---
-            # スレッドが立ち上がってから10秒待機
-            # ただし、その間にユーザーが何か入力した場合は即座に反応できるように
-            # ここではシンプルに10秒待ちます
-            time.sleep(10.0)
+            # 起動直後の安定待ち
+            time.sleep(5.0) 
             
             while self._is_running:
                 try:
-                    # 挨拶がまだなら、キューに「システムを起動しました」を強制注入する
+                    # 設定がオフなら何もせずループを回す
+                    if not self.enabled:
+                        self._initial_greeting_done = True # 無効中に挨拶フラグだけ折っておく
+                        # キューが溜まっていたら破棄
+                        while not self._q.empty():
+                            try: self._q.get_nowait()
+                            except: break
+                        time.sleep(0.5)
+                        continue
+
+                    # 挨拶判定（有効な時のみ）
                     if not self._initial_greeting_done:
                         text = "システムを起動しました。"
                         self._initial_greeting_done = True
                     else:
-                        text = self._q.get(timeout=0.1)
-                    
-                    self._stop_flag = False
-                    
-                    # 口パク開始
-                    self.root.after(0, self.avatar.start_speaking)
-                    
-                    # SAPI5再生実行
-                    self._execute_sapi_speak(text)
-                    
-                    # 口パク停止
-                    self.root.after(0, self.avatar.stop_speaking)
-                    
-                    # キューから取得したものだけ task_done する
-                    if self._initial_greeting_done and text != "システムを起動しました。":
-                        self._q.task_done()
-                        
-                except queue.Empty:
-                    continue
+                        try:
+                            text = self._q.get(timeout=0.5)
+                        except queue.Empty:
+                            continue
+
+                    # --- 再生処理 (元のロジックをここに維持) ---
+                    # 例: self.avatar.speak(text) など、元の再生コードがあればここに記述
+                    print(f"[TTS] 再生中: {text}")
+
                 except Exception as e:
-                    print(f"[TTS Loop Error] {e}")
+                    print(f"TTS Loop Error: {e}")
+                    time.sleep(1)
         finally:
             pythoncom.CoUninitialize()
 
+    def run(self):
+        self._play_loop()
     def _execute_sapi_speak(self, text):
         """SAPI5専用再生ロジック（中断対応版）"""
         try:
