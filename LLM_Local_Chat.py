@@ -74,8 +74,8 @@ import time
 import struct
 import math
 import random
-import subprocess
-import time
+import torch
+
 import tkinter as tk
 from tkinter import (
     scrolledtext, Menu, BooleanVar,
@@ -88,7 +88,6 @@ import pyttsx3
 import pyaudio
 import whisper
 import numpy as np
-import torch
 
 # ─────────────────────────────────────────────
 #  Windows UTF-8 出力設定（起動直後に実行）
@@ -182,42 +181,6 @@ FONT_TITLE = ("Meiryo", 12, "bold")
 FONT_CHAT  = ("Meiryo", 11)
 FONT_SMALL = ("Meiryo",  9)
 
-# --- 上級者設定のデフォルト値 ---
-DEFAULT_ADVANCED = {
-    "whisper": {
-        "model_size": "medium",
-        "compute_type": "float16",
-        "device": "cuda"
-    },
-    "llm": {
-        "repeat_penalty": 1.1,
-        "top_p": 0.95
-    },
-    "system": {
-        "summary_limit": 10
-    }
-}
-
-def load_advanced_config():
-    path = "advanced_settings.json"
-    # デフォルト値を辞書で定義しておく
-    default = {
-        "whisper": {"model_size": "medium", "compute_type": "float16"},
-        "llm": {"repeat_penalty": 1.1}
-    }
-    
-    if not os.path.exists(path):
-        return default
-
-    try:
-        with open(path, "r", encoding="utf-8") as f: # encodingを指定
-            user_config = json.load(f)
-            # ここでマージ処理
-            return user_config
-    except Exception as e:
-        # ここでエラー内容を表示させると原因が特定できます
-        print(f"DEBUG: JSON読み込み失敗: {e}") 
-        return default
 
 # ═══════════════════════════════════════════════════════
 #  ■ 設定 I/O
@@ -255,21 +218,15 @@ def save_settings(d: dict) -> None:
 def init_llm(model_path: str, n_ctx: int) -> Llama:
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"モデルが見つかりません:\n{model_path}")
-    
-    # 1. CPUスレッド数の動的決定
-    # 論理コア数から2つ引く（GUIや音声認識の処理を確保するため）
-    # ただし、最低でも1スレッド、最大でも8スレッド程度に抑えるのが安定のコツです
-    cpu_count = os.cpu_count() or 4
-    n_threads = max(1, min(8, cpu_count - 2))
-
     return Llama(
         model_path   = model_path,
         n_ctx        = n_ctx,
-        n_threads    = n_threads,  # 動的に設定
-        n_gpu_layers = -1,         # GPU全振り（VRAM不足時は 3 ではこれを調整）
+        n_threads    = 8,
+        n_gpu_layers = -1,
         n_batch      = 512,
         verbose      = False,
     )
+
 
 def count_tokens(llm: Llama, text: str) -> int:
     try:
@@ -444,13 +401,20 @@ class SettingsDialog(tk.Toplevel):
         except Exception:
             messagebox.showerror("入力エラー", "数値が無効です", parent=self)
 
+
 # ═══════════════════════════════════════════════════════
 #  ■ アバターウィンドウ（瞬き + 口パク）
 # ═══════════════════════════════════════════════════════
 class AvatarWindow:
+    """
+    瞬きアニメーション: ランダム間隔で _do_blink → _end_blink
+    口パクアニメーション: start_speaking → _mouth_loop → stop_speaking
+    両アニメーションは blinking フラグで干渉を防ぐ
+    """
     def __init__(self, root: tk.Tk) -> None:
         self.root    = root
         self.visible = True
+
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True, "-transparentcolor", "black")
@@ -461,215 +425,453 @@ class AvatarWindow:
         self.blinking   = False
         self._ox = self._oy = 0
 
-        # 画像ロード（一元管理）
+        # 画像ロード
         self.img_def       = self._load(AVATAR_DEFAULT)
         self.img_spk       = self._load(AVATAR_SPEAKING)
-        self.img_blink     = self._load(AVATAR_BLINK) if os.path.exists(AVATAR_BLINK) else self.img_def
-        self.img_blink_spk = self._load(AVATAR_BLINK_SPK) if os.path.exists(AVATAR_BLINK_SPK) else self.img_blink
+        self.img_blink     = (self._load(AVATAR_BLINK)
+                              if os.path.exists(AVATAR_BLINK)
+                              else self.img_def)
+        self.img_blink_spk = (self._load(AVATAR_BLINK_SPK)
+                              if os.path.exists(AVATAR_BLINK_SPK)
+                              else self.img_blink)
 
         self.lbl = tk.Label(self.win, image=self.img_def, bg="black")
         self.lbl.pack()
         self.win.geometry("+1550+500")
 
-        self.win.bind("<ButtonPress-1>", self._on_press)
-        self.win.bind("<B1-Motion>", self._on_move)
-        
+        # ドラッグ移動
+        self.win.bind("<ButtonPress-1>",
+                      lambda e: (setattr(self, "_ox",
+                                         e.x_root - self.win.winfo_x()),
+                                 setattr(self, "_oy",
+                                         e.y_root - self.win.winfo_y())))
+        self.win.bind("<B1-Motion>",
+                      lambda e: self.win.geometry(
+                          f"+{e.x_root - self._ox}+{e.y_root - self._oy}"))
+
+        # 右クリックメニュー
         m = Menu(self.win, tearoff=0)
         m.add_command(label="表示/非表示", command=self.toggle_visible)
-        self.win.bind("<Button-3>", lambda e: m.tk_popup(e.x_root, e.y_root))
+        self.win.bind("<Button-3>",
+                      lambda e: m.tk_popup(e.x_root, e.y_root))
 
+        # 瞬きスケジュール開始
         self._schedule_blink()
 
+    # ── 画像ロード ────────────────────────────
     def _load(self, path: str) -> ImageTk.PhotoImage:
-        """画像の読み込みとリサイズを同じメソッドで実行"""
         try:
-            if not os.path.exists(path): raise FileNotFoundError
             img = Image.open(path)
             w, h = img.size
-            img = img.resize((int(w * AVATAR_SCALE), int(h * AVATAR_SCALE)), Image.Resampling.LANCZOS)
+            img = img.resize(
+                (int(w * AVATAR_SCALE), int(h * AVATAR_SCALE)),
+                Image.Resampling.LANCZOS)
             return ImageTk.PhotoImage(img)
         except Exception:
-            return ImageTk.PhotoImage(Image.new("RGBA", (100, 100), (0, 0, 0, 0)))
+            return ImageTk.PhotoImage(
+                Image.new("RGBA", (100, 100), (0, 0, 0, 0)))
 
-    def _on_press(self, e):
-        self._ox, self._oy = e.x_root - self.win.winfo_x(), e.y_root - self.win.winfo_y()
-
-    def _on_move(self, e):
-        self.win.geometry(f"+{e.x_root - self._ox}+{e.y_root - self._oy}")
-
-    def toggle_visible(self):
+    # ── 表示制御 ──────────────────────────────
+    def toggle_visible(self) -> None:
         self.visible = not self.visible
         (self.win.deiconify if self.visible else self.win.withdraw)()
 
-    def _schedule_blink(self):
+    # ── 瞬き ──────────────────────────────────
+    def _schedule_blink(self) -> None:
         interval = random.randint(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
-        try: self.win.after(interval, self._do_blink)
-        except: pass
+        try:
+            self.win.after(interval, self._do_blink)
+        except tk.TclError:
+            pass
 
-    def _do_blink(self):
-        if not self.visible: return self._schedule_blink()
+    def _do_blink(self) -> None:
+        if not self.visible:
+            self._schedule_blink()
+            return
         try:
             self.blinking = True
-            img = self.img_blink_spk if (self.speaking and self.mouth_open) else self.img_blink
+            img = (self.img_blink_spk
+                   if (self.speaking and self.mouth_open)
+                   else self.img_blink)
             self.lbl.config(image=img)
             self.win.after(BLINK_DURATION_MS, self._end_blink)
-        except: pass
+        except tk.TclError:
+            pass
 
-    def _end_blink(self):
+    def _end_blink(self) -> None:
         try:
             self.blinking = False
-            img = self.img_spk if (self.speaking and self.mouth_open) else self.img_def
+            img = (self.img_spk
+                   if (self.speaking and self.mouth_open)
+                   else self.img_def)
             self.lbl.config(image=img)
             self._schedule_blink()
-        except: pass
+        except tk.TclError:
+            pass
 
-    def start_speaking(self):
+    # ── 口パク ────────────────────────────────
+    def start_speaking(self) -> None:
         if not self.speaking:
             self.speaking = True
             self._mouth_loop()
 
-    def stop_speaking(self):
+    def stop_speaking(self) -> None:
         self.speaking = False
         if not self.blinking:
-            try: self.lbl.config(image=self.img_def)
-            except: pass
+            try:
+                self.lbl.config(image=self.img_def)
+            except tk.TclError:
+                pass
 
-    def _mouth_loop(self):
-        if not self.speaking: return
+    def _mouth_loop(self) -> None:
+        if not self.speaking:
+            return
         self.mouth_open = not self.mouth_open
         if not self.blinking:
-            try: self.lbl.config(image=self.img_spk if self.mouth_open else self.img_def)
-            except: return
-        try: self.win.after(MOUTH_INTERVAL_MS, self._mouth_loop)
-        except: pass
-
-# ═══════════════════════════════════════════════════════
-#  ■ TTS ワーカー（重複ループを削除して統合）
-# ═══════════════════════════════════════════════════════
-class TTSWorker:
-    def __init__(self, avatar: AvatarWindow, root: tk.Tk) -> None:
-        self.avatar   = avatar
-        self.root     = root
-        self.enabled  = True
-        self.on_start = None
-        self.on_stop  = None
-        self._q       = queue.Queue()
-        self._stop    = threading.Event()
-        threading.Thread(target=self._run, daemon=True).start()
-
-    def speak(self, text: str) -> None:
-        if self.enabled and text.strip():
-            self._q.put(text[:300]) # 長文カット
-            if self.on_start: self.root.after(0, self.on_start)
-
-    def stop_all(self) -> None:
-        self._stop.set()
-        with self._q.mutex: self._q.queue.clear()
-        if self.on_stop: self.root.after(0, self.on_stop)
-
-    def _run(self) -> None:
-        """重複していたworkerループを1つに統合"""
-        def _speak_sapi(text: str) -> None:
-            safe_text = text.replace("'", "''").replace("\n", " ")
-            ps = (
-                "Add-Type -AssemblyName System.Speech;"
-                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
-                "$s.Rate = 1;" # 読み上げ速度調整
-                "$s.Speak('" + safe_text + "');"
-            )
-            subprocess.run(["powershell", "-NoProfile", "-Command", ps], 
-                           creationflags=subprocess.CREATE_NO_WINDOW)
-
-        while True:
             try:
-                text = self._q.get()
-                if not text:
-                    self._q.task_done()
-                    continue
+                self.lbl.config(
+                    image=self.img_spk if self.mouth_open else self.img_def)
+            except tk.TclError:
+                return
+        try:
+            self.win.after(MOUTH_INTERVAL_MS, self._mouth_loop)
+        except tk.TclError:
+            pass
 
-                if self._stop.is_set():
-                    self._stop.clear()
-                    self._q.task_done()
-                    continue
 
-                if self.enabled:
+# ═══════════════════════════════════════════════════════
+#  ■ TTS ワーカー (ver.1.0.3から 修正)
+# ═══════════════════════════════════════════════════════
+import threading
+import queue
+import win32com.client
+import pythoncom
+import time
+
+class TTSWorker:
+    def __init__(self, avatar, root):
+        self.avatar = avatar
+        self.root = root
+        self._q = queue.Queue()
+        self._stop_flag = False
+        self._is_running = True
+        self._ready = threading.Event()
+        
+        # 起動時の挨拶を一度だけ行うためのフラグ
+        self._initial_greeting_done = False
+        
+        self._thread = threading.Thread(target=self._play_loop, daemon=True)
+        self._thread.start()
+
+    def speak(self, text):
+        """ChatApp側から呼ばれる入り口"""
+        if text and text.strip():
+            # スレッド準備完了を待つ
+            if not self._ready.is_set():
+                self._ready.wait(timeout=2.0)
+            self._q.put(text)
+
+    def _play_loop(self):
+        """再生メインループ"""
+        pythoncom.CoInitialize()
+        
+        try:
+            self._ready.set()
+            
+            # --- ここで起動後の待機時間を稼ぐ ---
+            # スレッドが立ち上がってから10秒待機
+            # ただし、その間にユーザーが何か入力した場合は即座に反応できるように
+            # ここではシンプルに10秒待ちます
+            time.sleep(10.0)
+            
+            while self._is_running:
+                try:
+                    # 挨拶がまだなら、キューに「システムを起動しました」を強制注入する
+                    if not self._initial_greeting_done:
+                        text = "システムを起動しました。"
+                        self._initial_greeting_done = True
+                    else:
+                        text = self._q.get(timeout=0.1)
+                    
+                    self._stop_flag = False
+                    
+                    # 口パク開始
                     self.root.after(0, self.avatar.start_speaking)
-                    _speak_sapi(text)
-                
-            except Exception as e:
-                print(f"[TTS Error] {e}")
-            finally:
-                if self._q.empty():
+                    
+                    # SAPI5再生実行
+                    self._execute_sapi_speak(text)
+                    
+                    # 口パク停止
                     self.root.after(0, self.avatar.stop_speaking)
-                    if self.on_stop: self.root.after(0, self.on_stop)
-                self._q.task_done()
+                    
+                    # キューから取得したものだけ task_done する
+                    if self._initial_greeting_done and text != "システムを起動しました。":
+                        self._q.task_done()
+                        
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    print(f"[TTS Loop Error] {e}")
+        finally:
+            pythoncom.CoUninitialize()
 
+    def _execute_sapi_speak(self, text):
+        """SAPI5専用再生ロジック（中断対応版）"""
+        try:
+            speaker = win32com.client.Dispatch("SAPI.SpVoice")
+            
+            # 1:Async, 2:PurgeBeforeSpeak
+            speaker.Speak(text, 1 | 2)
+            
+            while speaker.Status.RunningState != 1: # 1:Finished
+                if self._stop_flag:
+                    speaker.Speak("", 3) # 強制停止
+                    return
+                
+                pythoncom.PumpWaitingMessages()
+                time.sleep(0.01)
+        except Exception as e:
+            print(f"[SAPI5 Error] {e}")
+
+    def stop_all(self):
+        """停止ボタン"""
+        while not self._q.empty():
+            try:
+                self._q.get_nowait()
+                self._q.task_done()
+            except: break
+        self._stop_flag = True
+
+    def terminate(self):
+        self._is_running = False
+        self.stop_all()
+        
 # ═══════════════════════════════════════════════════════
 #  ■ VAD + Whisper 音声認識
 # ═══════════════════════════════════════════════════════
 class VoiceRecognizer:
-    def __init__(self, whisper_model, on_text, vad_threshold=DEFAULT_VAD_RMS):
+    """
+    PyAudio 直接制御 + RMS-VAD による音声認識。
+    whisper モデルは外部から渡す（バックグラウンドでロード済み）。
+    マイクが存在しない環境でも例外を出さずに動作する。
+    """
+    def __init__(
+        self,
+        whisper_model,
+        on_text,
+        vad_threshold: int = DEFAULT_VAD_RMS,
+    ) -> None:
+        # 1. まず属性を初期化する
         self.whisper_model = whisper_model
         self.on_text = on_text
         self.vad_threshold = vad_threshold
-        self._enabled = threading.Event()
+        
+        # 2. スレッド制御用のフラグを定義（★ここが重要）
+        self._enabled = threading.Event() 
         self._active = True
         self._tts_active = False
-        self.on_idle = self.on_listening = self.on_processing = None
-        if self.whisper_model: threading.Thread(target=self._loop, daemon=True).start()
+        self._flush_request = False
+        
+        # 3. コールバックの初期化
+        self.on_idle = None
+        self.on_listening = None
+        self.on_processing = None
 
+        # 初期状態は無効に設定
+        self._enabled.clear()
+
+        # 4. モデルがある場合のみスレッドを開始
+        if self.whisper_model is not None:
+            threading.Thread(target=self._loop, daemon=True).start()
+        else:
+            print("[VoiceRecognizer] Whisper未ロードのためスレッドを開始しません。")
     @property
-    def enabled(self) -> bool: return self._enabled.is_set()
+    def enabled(self) -> bool:
+        return self._enabled.is_set()
+
     @enabled.setter
-    def enabled(self, v: bool): (self._enabled.set if v else self._enabled.clear)()
+    def enabled(self, v: bool) -> None:
+        if v:
+            self._flush_request = True  # 復帰時にバッファをフラッシュ
+            self._enabled.set()
+        else:
+            self._enabled.clear()
+
+    @staticmethod
+    def _rms(data: bytes) -> float:
+        n = len(data) // 2
+        if n == 0:
+            return 0.0
+        shorts = struct.unpack(f"{n}h", data[: n * 2])
+        return math.sqrt(sum(s * s for s in shorts) / n)
+
+    def _fire(self, cb) -> None:
+        """コールバックを安全に呼ぶ"""
+        if cb:
+            try:
+                cb()
+            except Exception:
+                pass
 
     def _loop(self) -> None:
+        # Bluetoothデバイスが既定の場合、接続確立を待つ
+        time.sleep(2.0)
         pa = pyaudio.PyAudio()
         try:
-            stream = pa.open(format=AUDIO_FORMAT, channels=1, rate=AUDIO_RATE, input=True, frames_per_buffer=AUDIO_CHUNK)
+            stream = pa.open(
+                format=AUDIO_FORMAT,
+                channels=1,
+                rate=AUDIO_RATE,
+                input=True,
+                frames_per_buffer=AUDIO_CHUNK,
+            )
+        except Exception as e:
+            print(f"[マイク初期化エラー] {e}  (音声認識は無効になります)")
+            pa.terminate()
+            return
+
+        try:
+            _last_text      = ""
+            _last_text_time = 0.0
+            _SAME_TEXT_EXPIRE = 10.0  # 同一テキストの有効期限（秒）
             while self._active:
                 if not self._enabled.is_set():
-                    if self.on_idle: self.on_idle()
-                    time.sleep(0.1); continue
+                    self._fire(self.on_idle)
+                    time.sleep(0.1)
+                    continue
 
-                # VAD発話検知
-                frames = []
+                self._fire(self.on_idle)
+
+                # マイク復帰直後はバッファをフラッシュして古い音を捨てる
+                if self._flush_request:
+                    self._flush_request = False
+                    try:
+                        for _ in range(8):  # 約500ms分を読み捨て
+                            stream.read(AUDIO_CHUNK, exception_on_overflow=False)
+                    except Exception:
+                        pass
+
+                # ── 発話開始待ち ─────────────────────
+                consecutive = 0
+                pre_buf: list[bytes] = []
                 while self._active and self._enabled.is_set():
-                    chunk = stream.read(AUDIO_CHUNK, exception_on_overflow=False)
-                    if self._tts_active: continue
-                    rms = math.sqrt(sum(s**2 for s in struct.unpack(f"{len(chunk)//2}h", chunk))/(len(chunk)//2))
-                    if rms > self.vad_threshold: frames.append(chunk); break
+                    try:
+                        chunk = stream.read(
+                            AUDIO_CHUNK, exception_on_overflow=False)
+                    except Exception:
+                        time.sleep(0.05)
+                        continue
+                    # TTS発話中はバッファを蓄積せず即スキップ
+                    # （閾値10倍では開放型イヤホン環境でTTS音声を拾ってしまうため）
+                    if self._tts_active:
+                        consecutive = 0
+                        pre_buf.clear()
+                        continue
+                    pre_buf.append(chunk)
+                    if len(pre_buf) > VAD_SPEECH_CHUNKS + 2:
+                        pre_buf.pop(0)
+                    rms = self._rms(chunk)
+                    if rms > self.vad_threshold:
+                        consecutive += 1
+                        if consecutive >= VAD_SPEECH_CHUNKS:
+                            print(f"[VAD] 発話検知 RMS={rms:.1f} threshold={self.vad_threshold}")
+                            break
+                    else:
+                        consecutive = 0
 
-                if not frames: continue
-                if self.on_listening: self.on_listening()
+                if not (self._active and self._enabled.is_set()):
+                    continue
 
-                # 録音継続
-                silence = 0
-                while self._active and len(frames) < VAD_MAX_SECONDS * AUDIO_RATE // AUDIO_CHUNK:
-                    chunk = stream.read(AUDIO_CHUNK, exception_on_overflow=False)
+                self._fire(self.on_listening)
+
+                # ── 発話録音 ─────────────────────────
+                frames        = list(pre_buf)
+                silence_count = 0
+                max_chunks    = VAD_MAX_SECONDS * AUDIO_RATE // AUDIO_CHUNK
+
+                while self._active and len(frames) < max_chunks:
+                    try:
+                        chunk = stream.read(
+                            AUDIO_CHUNK, exception_on_overflow=False)
+                    except Exception:
+                        break
+                    # 録音中にTTSが始まったら録音データを破棄してやり直し
+                    if self._tts_active:
+                        frames = []
+                        break
                     frames.append(chunk)
-                    rms = math.sqrt(sum(s**2 for s in struct.unpack(f"{len(chunk)//2}h", chunk))/(len(chunk)//2))
-                    if rms < self.vad_threshold: silence += 1
-                    else: silence = 0
-                    if silence >= VAD_SILENCE_CHUNKS: break
+                    if self._rms(chunk) < self.vad_threshold:
+                        silence_count += 1
+                        if silence_count >= VAD_SILENCE_CHUNKS:
+                            break
+                    else:
+                        silence_count = 0
 
-                if self.on_processing: self.on_processing()
-                audio = np.frombuffer(b"".join(frames), dtype=np.int16).astype(np.float32) / 32768.0
-                
-                # GPU判定修正[cite: 3]
-                device_type = getattr(self.whisper_model, "device", torch.device("cpu"))
-                on_gpu = "cuda" in str(device_type)
+                # TTS中に録音が破棄された場合はWhisper処理をスキップ
+                if not frames:
+                    continue
 
-                res = self.whisper_model.transcribe(audio, language="ja", fp16=on_gpu)
-                text = res.get("text", "").strip()
-                if text and text not in WHISPER_NOISE: self.on_text(text)
-        except Exception as e: print(f"[VoiceRecognizer Error] {e}")
-        finally: pa.terminate()
+                self._fire(self.on_processing)
 
-    def stop(self): self._active = False
+                # ── Whisper 認識 ──────────────────────
+                if self.whisper_model is None:
+                    continue
+
+                audio_np = (
+                    np.frombuffer(b"".join(frames), dtype=np.int16)
+                    .astype(np.float32) / 32768.0
+                )
+                try:
+                    _t = time.time()
+                    _on_gpu = str(
+                        next(self.whisper_model.parameters()).device
+                    ) != "cpu"
+                    res = self.whisper_model.transcribe(
+                        audio_np,
+                        language="ja",
+                        fp16=_on_gpu,
+                        no_speech_threshold=0.8,
+                        logprob_threshold=-1.5,
+                        condition_on_previous_text=False,
+                        initial_prompt="自己紹介、こんにちは、ありがとうございます。",
+                        beam_size=1,
+                        best_of=1,
+                        temperature=0.0,
+                    )
+                    text = res.get("text", "").strip()
+                    print(f"[Whisper] {time.time()-_t:.1f}秒 tts_active={self._tts_active} 結果='{text}'")
+                    _noise = (
+                        not text
+                        or len(text) < 2
+                        or len(text) > 100   # 100文字超はhallucination
+                        or text in WHISPER_NOISE
+                        or all(c in "。、…　 " for c in text)
+                        or any(p in text for p in WHISPER_NOISE_PARTIAL)
+                    )
+                    if not _noise:
+                        now = time.time()
+                        # 同一テキストでも一定時間経過後は有効とする
+                        if (text != _last_text
+                                or now - _last_text_time > _SAME_TEXT_EXPIRE):
+                            _last_text      = text
+                            _last_text_time = now
+                            self.on_text(text)
+                except Exception as e:
+                    print(f"[Whisper エラー] {e}")
+        finally:
+            try:
+                stream.stop_stream()
+                stream.close()
+            except Exception:
+                pass
+            pa.terminate()
+
+    def stop(self) -> None:
+        self._active = False
+
 
 # ═══════════════════════════════════════════════════════
-#  ■ メインアプリ
+#  ■ ChatApp クラス (ver.1.0.3 修正・完全版)
 # ═══════════════════════════════════════════════════════
 class ChatApp:
     def __init__(self, root: tk.Tk) -> None:
@@ -697,6 +899,7 @@ class ChatApp:
         self._current_session: dict   = {}
         self._current_path: str | None = None
         self._voice: VoiceRecognizer | None = None
+        self._stream_buf = ""
 
         os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -704,9 +907,11 @@ class ChatApp:
         self.avatar = AvatarWindow(root)
 
         # ── TTS ───────────────────────────────────
+        # TTSWorker側のエラーを回避するため self.avatar と root を渡す
         self.tts         = TTSWorker(self.avatar, root)
         self.tts.enabled = self._cfg.get("tts_enabled", False)
-        # TTS発話中はVADを抑制してハウリング・誤認識を防ぐ
+        
+        # TTSのイベントとマイク制御を紐付け
         self.tts.on_start = self._on_tts_start
         self.tts.on_stop  = self._on_tts_stop
 
@@ -720,6 +925,92 @@ class ChatApp:
         # ── バックグラウンドロード ─────────────────
         self._reload_llm()
         self._load_whisper_async()
+
+    # ── TTS 連携メソッド (幻聴対策) ─────────────────
+
+    def _on_tts_start(self) -> None:
+        """TTSが発声を職した時の処理"""
+        print("[TTS] 発話開始 → VAD感度を下げる")
+        if self._voice:
+            # TTS動作中フラグを立ててマイク入力を無視
+            self._voice.tts_active = True
+            # しきい値を一時的に上げて自分の声を拾わないようにする[cite: 1]
+            self._voice.vad_threshold = 2000 
+
+    def _on_tts_stop(self) -> None:
+        """TTSが発声を終了した時の処理"""
+        def _recovery():
+            import time
+            # ★ 0.8秒待機：スピーカーの残響が消えるのを待ってからマイクを復帰させる[cite: 1]
+            time.sleep(0.8) 
+            if self._voice:
+                self._voice.tts_active = False
+                self._voice.vad_threshold = self._vad_thresh
+                print(f"[TTS] VAD感度を通常({self._vad_thresh})に戻す")
+        
+        print("[TTS] 発話終了 → 0.8秒後にマイク復帰予定")
+        threading.Thread(target=_recovery, daemon=True).start()
+
+    # ── 停止・制御 ──────────────────────────────
+
+    def _stop_all(self) -> None:
+        """LLM・TTS・マイクを完全に、即座に、依存関係なしで止める"""
+        print("[System] 停止命令を執行します")
+        
+        # 1. LLMの生成を物理的に遮断
+        self._llm_abort = True
+        if self._is_thinking:
+            def _reset_task():
+                try:
+                    if self.llm: self.llm.reset()
+                except: pass
+            threading.Thread(target=_reset_task, daemon=True).start()
+
+        # 2. TTS（音声合成）の「息の根」を止める
+        # stop_all内でキューを空にし、再生フラグ(self.tts._stop_flag等)をTrueにします
+        self.tts.stop_all() 
+        
+        # 3. アバターの視覚的停止
+        self.avatar.win.after(0, self.avatar.stop_speaking)
+
+        # 4. マイクの「幻聴ガード」を即時リセット
+        # AIが喋っていない判定（tts_active=False）に強制的に戻します
+        if self._voice:
+            self._voice.tts_active = False
+            self._voice.vad_threshold = self._vad_thresh
+
+        # 5. UIの完全初期化
+        self._is_thinking = False
+        self._stream_buf  = ""
+        self._btn_send.config(state=tk.NORMAL)
+        
+        # ログに「完全停止」を刻む
+        self._chat_write("\n⛔ 完全に停止しました\n" + "─" * 50 + "\n\n", "divider")
+        self._update_status()
+    def _update_status(self) -> None:
+        """ステータス表示の更新"""
+        if self._llm_loading:
+            st = "⏳ LLMロード中..."
+        elif self._is_thinking:
+            st = "💭 思考中..."
+        elif self.tts._q.qsize() > 0:
+            st = "📢 応答中..."
+        else:
+            st = "🎤 待機中"
+        self._status_set(st)
+
+    # ── UI構築・その他 (中略なしで必要なものを記載) ──
+
+    def _status_set(self, text: str) -> None:
+        """ステータスバーのテキストを更新"""
+        self._lbl_status.config(text=text)
+
+    def _chat_write(self, text: str, tag: str = None) -> None:
+        """チャットエリアに書き込み"""
+        self._txt_chat.config(state=tk.NORMAL)
+        self._txt_chat.insert(tk.END, text, tag)
+        self._txt_chat.see(tk.END)
+        self._txt_chat.config(state=tk.DISABLED)
 
     # ══════════════════════════════════════════════
     #  LLM ロード
@@ -754,31 +1045,36 @@ class ChatApp:
     # ══════════════════════════════════════════════
     #  Whisper ロード（バックグラウンド）
     # ══════════════════════════════════════════════
-    def _load_whisper_async(self):
-            def _worker() -> None:
+    def _load_whisper_async(self) -> None:
+        # ── 追加: マイクもTTSも無効なら、モデルロード自体をスキップ ──
+        if not self._cfg.get("mic_enabled") and not self._cfg.get("tts_enabled"):
+            print("[System] マイク/TTSが無効なため、Whisperのロードをスキップします。")
+            self.root.after(0, lambda: self._on_whisper_ready(None))
+            return
+        
+        def _worker() -> None:
+
+            cuda_ok = torch.cuda.is_available()
+            print(f"[Whisper] CUDA利用可能: {cuda_ok}")
+            if cuda_ok:
+                print(f"[Whisper] GPU: {torch.cuda.get_device_name(0)}"
+                      f" / VRAM空き: {torch.cuda.mem_get_info()[0]//1024**2}MB")
+
+            devices = [("cuda", "medium")] if cuda_ok else []
+            devices.append(("cpu", "medium"))
+
+            for device, model_name in devices:
                 try:
-                    # 設定からモデルサイズを取得
-                    model_size = self._cfg.get("whisper_model_size", "medium")
-                    # デバイス判定
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-                    
-                    print(f"[Whisper] {model_size} モデルを {device} でロード中...")
-                    
-                    try:
-                        wm = whisper.load_model(model_size, device=device)
-                    except Exception as e:
-                        if device == "cuda":
-                            print(f"[Whisper] GPU失敗、CPUに切り替えます: {e}")
-                            wm = whisper.load_model(model_size, device="cpu")
-                        else:
-                            raise e
-
+                    print(f"[Whisper] モデルロード開始 ({model_name} / {device}) …")
+                    wm = whisper.load_model(model_name, device=device)
+                    print(f"[Whisper] モデルロード完了 ({model_name} / {device})")
                     self.root.after(0, lambda m=wm: self._on_whisper_ready(m))
+                    return
                 except Exception as e:
-                    print(f"[Whisper] 致命的なロードエラー: {e}")
-                    self.root.after(0, lambda: self._on_whisper_ready(None))
+                    print(f"[Whisper ロードエラー ({device})] {type(e).__name__}: {e}")
+            self.root.after(0, lambda: self._on_whisper_ready(None))
 
-            threading.Thread(target=_worker, daemon=True).start()
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _on_whisper_ready(self, wm) -> None:
         self._whisper_model = wm
@@ -1202,7 +1498,7 @@ class ChatApp:
 
     def _stop_all(self) -> None:
         """LLM生成・TTS・マイク入力をすべて即時停止する"""
-        # ① LLM生成を強制中断（別スレッドでreset）
+        # ① LLM生成を強制中断
         if self._is_thinking:
             self._llm_abort = True
             def _force_reset():
@@ -1212,9 +1508,17 @@ class ChatApp:
                     pass
             threading.Thread(target=_force_reset, daemon=True).start()
 
-        # ② TTS停止
-        self.tts.stop_all()
-        self.root.after(0, self.avatar.stop_speaking)
+        # ② TTS停止（フラグをセットしてから stop_all を呼ぶ）
+        self.tts.stop_all() 
+        self.avatar.win.after(0, self.avatar.stop_speaking)
+
+        # ③ UIを待機状態に戻す
+        self._is_thinking = False
+        self._llm_abort   = False
+        self._stream_buf  = ""
+        self._btn_send.config(state=tk.NORMAL)
+        self._chat_write("\n⛔ 停止しました\n" + "─" * 50 + "\n\n", "divider")
+        self._update_status()
 
         # ③ UIを待機状態に戻す（マイクはOFFにしない）
         self._is_thinking = False
@@ -1652,7 +1956,6 @@ class ChatApp:
             f"{think}{guest} | {mn} | "
             f"{self._max_tokens}tok / temp:{self._temperature} | "
             f"{turns}ターン | {mic_stat}")
-        
 
     # ══════════════════════════════════════════════
     #  終了処理

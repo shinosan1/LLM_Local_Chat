@@ -13,6 +13,7 @@
 #   pip install pipwin
 #   pipwin install pyaudio
 
+# --- 既存のライブラリ ---
 llama-cpp-python==0.3.20
 torch==2.6.0+cu124
 torchvision==0.21.0+cu124
@@ -22,4 +23,6 @@ pyttsx3==2.99
 PyAudio==0.2.14
 numpy==2.4.3
 openai-whisper==20250625
-setuptools==78.1.1
+
+# --- 今回のSAPI5制御(停止・スレッド対応)で追加 ---
+pywin32==309
