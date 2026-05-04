@@ -582,26 +582,6 @@ class TTSWorker:
         
         try:
             self._ready.set()
-            
-            # enabledがTrueになるまで最大10秒待機
-            for _ in range(100):
-                if self.enabled:
-                    break
-                time.sleep(0.1)
-            
-            # TTS有効時のみ起動発話（アプリ起動時の1回のみ）
-            # 設定ダイアログからの変更では発話しない
-            if self.enabled and not self._initial_greeting_done:
-                self._initial_greeting_done = True
-                try:
-                    speaker = win32com.client.Dispatch("SAPI.SpVoice")
-                    speaker.Speak("システムを起動しました。", 0)
-                    print("[TTS] 起動発話完了")
-                except Exception as e:
-                    print(f"[TTS] 起動発話失敗: {e}")
-            else:
-                # TTS OFFで起動した場合もフラグを立てておく（後から設定変更しても発話しない）
-                self._initial_greeting_done = True
 
             while self._is_running:
                 try:
@@ -997,24 +977,24 @@ class ChatApp:
             self._voice.tts_active = False
             self._voice.vad_threshold = self._vad_thresh
 
-        # 5. LLMリセット完了後にUIを解除
-        def _reset_and_unlock():
-            try:
-                if self.llm:
-                    self.llm.reset()
-            except Exception as e:
-                print(f"[LLM reset error] {e}")
-            finally:
-                def _unlock():
-                    self._is_thinking = False
-                    self._llm_abort   = False
-                    self._stream_buf  = ""
-                    self._btn_send.config(state=tk.NORMAL)
-                    self._chat_write("\n⛔ 完全に停止しました\n" + "─" * 50 + "\n\n", "divider")
-                    self._update_status()
-                self.root.after(0, _unlock)
+        # 5. ストリーミングが止まるのを待ってからUI解除
+        # llm.reset()はストリーミング中に呼ぶとC++クラッシュするため使わない
+        def _wait_and_unlock():
+            # _llm_workerがabortフラグを見てループを抜けるまで最大3秒待機
+            for _ in range(30):
+                if not self._is_thinking:
+                    break
+                time.sleep(0.1)
+            def _unlock():
+                self._is_thinking = False
+                self._llm_abort   = False
+                self._stream_buf  = ""
+                self._btn_send.config(state=tk.NORMAL)
+                self._chat_write("\n⛔ 完全に停止しました\n" + "─" * 50 + "\n\n", "divider")
+                self._update_status()
+            self.root.after(0, _unlock)
 
-        threading.Thread(target=_reset_and_unlock, daemon=True).start()
+        threading.Thread(target=_wait_and_unlock, daemon=True).start()
 
     def _update_status(self) -> None:
         """ステータス表示の更新"""
@@ -1128,6 +1108,12 @@ class ChatApp:
         print(f"[Whisper] 音声認識開始 / VAD閾値={self._vad_thresh}")
         self._update_status()
         self._mic_idle()
+
+        # Whisper準備完了後にTTS起動発話（TTS ONかつ未発話の場合のみ）
+        if self.tts.enabled and not self.tts._initial_greeting_done:
+            self.tts._initial_greeting_done = True
+            self.tts.speak("システムを起動しました。")
+            print("[TTS] 起動発話をキューに追加")
 
     # ══════════════════════════════════════════════
     #  UI 構築
@@ -1606,10 +1592,10 @@ class ChatApp:
                     self.root.after(
                         0, lambda t=token: self._append_stream_token(t))
 
-            # 中断された場合は履歴に残さず終了
+            # 中断された場合は_wait_and_unlockに任せてreturn
             if self._llm_abort:
                 print("[LLM] 中断されました")
-                self._llm_abort = False
+                self._is_thinking = False  # _wait_and_unlockのループ終了シグナル
                 return
             
             reply = reply.strip()
@@ -1629,9 +1615,10 @@ class ChatApp:
 
     # ── LLM 完了（メインスレッド） ───────────────
     def _on_llm_done(self, user_text: str, reply: str) -> None:
-        # 停止ボタンで中断された場合は何もしない
+        # 停止ボタンで中断された場合はUI解除のみ行う
         if self._llm_abort:
             print("[LLM] _on_llm_done: abort済みのためスキップ")
+            # _reset_and_unlockがUIを解除するので、ここでは何もしない
             return
         print(f"[LLM] _on_llm_done 呼び出し")
         if not self._stream_buf:
