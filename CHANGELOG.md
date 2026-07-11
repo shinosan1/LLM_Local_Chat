@@ -5,6 +5,123 @@
 
 ---
 
+## [1.3.0] - 2026-06-25
+
+### 追加
+- 段階的リファクタリングにより、`LLM_Local_Chat.py` から主要責務を分離
+  - `controller.py`: 送信・停止・LLM完了処理のオーケストレーション
+  - `prompt_builder.py`: 通常・家計簿・健康記録プロンプト生成
+  - `json_extractors.py`: 家計簿/Biolog向けLLM応答JSON抽出
+  - `session_store.py`: `chat_logs/` の保存・読み込み・一覧・検索・削除・名前変更
+  - `audio_workers.py`: `TTSWorker` / `VoiceRecognizer`
+  - `app_composition.py`: 起動時依存生成 (`AppDeps`, `create_app_deps`)
+  - `integrations.py`: 家計簿/Biolog送信前ガード・サニタイズ・確認ダイアログ・POST処理
+- Biolog/家計簿送信前の安全ガードを追加
+  - サニタイズ済みpayloadのみ確認ダイアログに表示
+  - `localhost` / `127.0.0.1` / `::1` 以外のAPI URLを拒否
+  - `https://localhost`、`localhost.evil.com`、malformed URL、port不正URLを拒否
+  - LLM出力の未知キー、`user_id`, `token`, `url`, `headers` を破棄
+
+### 変更
+- `Controller` の `sys.modules["__main__"]` 依存を廃止し、`ControllerDeps` 経由の明示依存注入へ変更
+- `PromptBuilder` に家計簿・健康記録プロンプト生成を移動し、`ChatApp` のUI責務を軽量化
+- import時の `ResourceMonitor` / `VRAMGuard` / `WhisperPool` 生成を廃止し、`main()` 起動時の `create_app_deps()` で生成する構成へ変更
+- `ChatApp` は `AppDeps` を受け取り、`SessionStore`、`WhisperPool`、`ResourceMonitor` を明示的に利用する構成へ変更
+- `TTSWorker` / `VoiceRecognizer` は `audio_workers.py` へ移動し、音声スレッド・VAD・TTSの既存挙動を維持
+- 家計簿/Biolog連携は `IntegrationBridge` に分離し、`ChatApp` にはController互換の薄い委譲メソッドのみ残す構成へ変更
+
+### 修正
+- 家計簿の `amount` 判定で `bool` を明示的に拒否
+- Biologの `user_id` はLLM出力を採用せず、送信時に固定値 `self` を付与する挙動を明確化
+- `LLM_Local_Chat.py` を import しただけでTkウィンドウ生成や重い依存生成が走らない構造に修正
+
+### 検証
+- `py_compile` による構文確認
+- `import LLM_Local_Chat` / `import app_composition` / `import integrations` の副作用確認
+- JSON抽出、プロンプト生成、SessionStore、IntegrationBridge、audio_workers の軽量直接確認
+- Dドライブ実行用フォルダへの明示ファイルコピーと、D側 `.venv` での import / py_compile 確認
+
+---
+
+## [1.2.0] - 2026-05-06
+
+### 追加
+- **VRAM安全フィルタ** (`resource_monitor.py` 新規作成)
+  - `ResourceMonitor`: 0.5秒周期で VRAM/GPU/CPU を収集するデーモン（pynvml → nvidia-smi → CPU-only でフォールバック）
+  - `VRAMGuard`: `vram_score = vram_ratio + gpu_pct * 0.001` による即時安全判定（予約・状態なし）
+  - `adjust_llm()`: ロード前の `n_gpu_layers` 自動調整（VRAM使用率 > 85% → CPU専用）
+  - `adjust_inference()`: 推論直前の `max_tokens` 段階削減（レンジ化バッファ +500/800/1200MB）+ Whisper ΔWhisperGPU% スパイク検知
+  - `WhisperController`: GPU/CPU ヒステリシス切替（88%→CPU、70%→GPU）+ `delta_gpu_pct` 変化量追跡
+  - `WhisperPool`: GPU版(medium) + CPU版(small) を起動時に両ロード、ゼロコスト切替
+
+### 変更
+- `init_llm()`: `adjust_llm()` による `n_gpu_layers` 自動調整（VRAM高負荷時 CPU 実行へフォールバック）
+- `_load_whisper_async()`: 従来のデバイスループ → `WhisperPool.load()` に置き換え（GPU+CPU 同時ロード）
+- `VoiceRecognizer._loop()`: `self.whisper_model.transcribe()` → `self.whisper_model.get_model()` + `model.transcribe()` に変更（ヒステリシス付き切替）
+- `_llm_worker()`: `adjust_inference()` による `max_tokens` 動的調整を追加。VRAM 危機時は推論中止しメッセージを表示
+- `chat_settings.json`: `vram_danger_gpu_pct`, `vram_danger_vram_pct` フィールドを追加
+
+### 設計思想
+- 「VRAMを管理する」ではなく「VRAMから逃げる」設計
+- OOM完全防止は不可能。「クラッシュではなく劣化」で済ませることが目標
+- VRAM が唯一の判断軸（GPU% は参考ログのみ。WhisperController のみ GPU% を使用）
+- 既知の限界: TOCTOU あり・単一プロセス内のみ有効・確率的削減が目的
+
+---
+
+## [1.1.2] - 2026-05-06
+
+### 修正
+- `_strip_code_blocks`: `re.DOTALL` 依存を廃止し `[\s\S]*?` パターンに変更  
+  → 言語指定あり・なし・複数行すべてのコードブロックを確実に TTS から除去
+- `_health_build_prompt`: `meal_detail` のハルシネーション抑制  
+  → フィールド説明に「ユーザーの発言通りの表記を使用、言い換え・造語・変換禁止」を明示
+
+### 変更
+- `activity_log` フィールド説明を「運動のみ」→「運動・作業・出来事など今日の活動内容」に拡張  
+  → 「アプリのアップデートをした」などの日常活動報告も記録対象に
+
+---
+
+## [1.1.1] - 2026-05-06
+
+### 修正
+- TTS読み上げからコードブロック（` ``` ... ``` `）を除外 — チャット画面への表示は変更なし
+- `import re` をトップレベルに一本化（`_extract_kakeibo_json` / `_extract_health_json` 内の重複を削除）
+
+### 追加
+- `_strip_code_blocks(text: str) -> str` ユーティリティ関数（モジュールレベル）
+
+---
+
+## [1.1.0] - 2026-05-06
+
+### 追加
+- **Biolog連携**: 健康記録モード（💪ボタン）でLLMレスポンスから体重・体脂肪等をJSON抽出し、Biolog API (`localhost:8766/api/health/record`) へ自動POST
+- `BIOLOG_URL` 環境変数によるエンドポイント切り替え対応（デフォルト: `http://localhost:8766`）
+- `request_id` (UUID v4) による冪等性キー付与（skills.md §3-2 準拠）
+- `meal_detail` + `activity_log` → `memo` フィールドへの自動変換
+- HTTPError (422等) の詳細エラーメッセージをチャットに表示
+- `import uuid` 追加
+
+### 修正
+- `HEALTH_API_URL` が未接続ポート(`8001`)を指していた問題を修正 → `BIOLOG_API_URL` (`8766`) に変更
+- `_health_build_prompt` の `muscle_mass` 単位を骨格筋率(%) → 筋肉量(kg) に修正（Biolog スキーマ準拠）
+- `protein_intake` フィールドをLLMプロンプトから削除（Biolog スキーマ外フィールド）
+
+### 変更
+- `_send_to_health_api` → `_send_to_biolog_api` に刷新（Biolog スキーマ対応）
+- `_on_llm_done` 内の健康記録処理を `tts.speak()` 後に移動（API送信とTTSを並行実行）
+- README.md に v1.1.0 バッジ・Biolog連携の使い方・環境変数説明を追記
+- CHANGELOG.md を新規作成 → 既存エントリへの追記に変更
+
+### アーキテクチャ（維持）
+- `LLM_Local_Chat.py`: Windowsホスト実行を維持（SAPI5 TTS は Windows COM 専用のため Docker 非対応）
+- `biolog-api`: Dockerコンテナ (docker-compose.yml, port 8766) — 変更なし
+- `_tts_active` フラグ（VoiceRecognizer の VAD 排他制御）: 変更なし
+
+---
+
 ## [1.0.6] - 2026-05-04
 
 ### 修正

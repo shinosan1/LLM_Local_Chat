@@ -6,6 +6,7 @@
 機密情報を含む業務利用や、プライバシーを重視する用途に適しています。
 
 ![Python](https://img.shields.io/badge/Python-3.12.10-blue)
+![Version](https://img.shields.io/badge/Version-1.1.0-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-All%20Rights%20Reserved-red)
 
@@ -21,6 +22,52 @@
 - チャット履歴の保存・読み込み・検索
 - ゲストモード（保存なし）
 - ダークテーマUI
+- **Biolog健康記録連携** — 💪ボタンで体重・食事をLLMに話しかけると自動でBiolog APIへPOST（v1.1.0）
+- 家計簿連携（kakeibo-bridge API）
+- **VRAM安全フィルタ** — LLM・Whisper 同時動作時のVRAM枯渇によるクラッシュを確率的に削減（v1.2.0）
+
+---
+
+## VRAM安全フィルタ（v1.2.0）
+
+LLM（Gemma 4B）とWhisper mediumを同一GPUで動かす際のVRAM競合を緩和します。
+
+### 設計思想
+
+**「VRAMを管理する」ではなく「VRAMから逃げる」** — OOMの完全防止は不可能です。
+この機能は「クラッシュではなく性能劣化」で済ませることを目標としています。
+
+### 自動フォールバックの仕組み
+
+| 状況 | 動作 |
+|---|---|
+| LLMロード時にVRAM > 85% | `n_gpu_layers=0`（CPU実行）にフォールバック |
+| Whisperロード時にVRAM > 70% | GPU版ロードをスキップ、CPU版(small)のみで運用 |
+| 推論時にVRAM > 7000MB（先読み込み） | 推論を中止しUIにメッセージ表示 |
+| 推論時にVRAM > 6000MB | `max_tokens` を25%に削減 |
+| 推論時にVRAM > 4500MB | `max_tokens` を50%に削減 |
+| GPU使用率 > 88% | Whisper を CPU に切替（ヒステリシス付き） |
+| GPU使用率 < 70% に回復 | Whisper を GPU に切替復帰 |
+
+### DEBUGログの見方
+
+```
+python -c "import logging; logging.basicConfig(level=logging.DEBUG); exec(open('LLM_Local_Chat.py').read())"
+```
+
+| プレフィックス | 内容 |
+|---|---|
+| `[Monitor]` | VRAM瞬時値・GPU% の収集ログ |
+| `[Guard][llm_init]` | LLMロード前のn_gpu_layers判断 |
+| `[Guard][infer]` | 推論前のmax_tokens調整（fallback=True/False両方が出ることを確認） |
+| `[Whisper]` | GPU→CPU / CPU→GPU 切替ログ |
+| `[WhisperPool]` | Whisperモデルのロード・取得ログ |
+
+### 既知の限界
+
+- pynvml/nvidia-smi はアロケータ後のスナップショット（TOCTOU あり）
+- 単一プロセス内のみ有効（ブラウザ等の他プロセスによるVRAM確保は検知不可）
+- 確率的削減が目的であり、OOMの完全防止は保証しない
 
 ---
 
@@ -32,9 +79,11 @@
 | Python | 3.12.10（64bit） |
 | GPU | NVIDIA GPU推奨（VRAM 8GB以上）／CPUのみでも動作可 |
 | RAM | 8GB以上推奨 |
+| Biolog API（任意） | Docker Desktop + `docker-compose up -d biolog-api`（port 8766） |
 
 > **Mac・Linuxは非対応です。**  
-> TTSにWindows SAPI（PowerShell）を使用しているため、Windows専用となっています。
+> TTSにWindows SAPI（win32com）を使用しているため、Windows専用となっています。  
+> Biolog APIコンテナはDockerで提供されます（`C:\Users\shino\python-mysql-dev\app\docker-compose.yml`）。
 
 ---
 
@@ -254,6 +303,36 @@ ONの状態で一定以上の音量を検知すると自動的に録音を開始
 AIの返答をWindows SAPIで読み上げます。起動時はOFFがデフォルトです。  
 メニューからTTSのON/OFFを切り替えられます。  
 読み上げ中は「停止」ボタンで中断できます（タイミングによっては中断できない場合があります）。
+
+### 健康記録モード（Biolog連携） — v1.1.0
+
+💪ボタンをクリックすると健康記録モードがONになります。  
+このモードでは、体重・食事・活動内容を話しかけるとLLMが返答した後、自動でBiolog APIへデータをPOSTします。
+
+**入力例：**
+```
+体重65kg、体脂肪20%、朝はオートミールを食べた
+```
+
+**動作結果：**
+- チャットに「✅ Biolog記録: 2026-05-06 体重 65.0kg 食事:朝はオートミールを食べた」と表示
+- `kakeibo.db` の `health_records` テーブルに記録
+
+**事前準備：**
+```powershell
+cd C:\Users\shino\python-mysql-dev\app
+docker-compose up -d biolog-api
+# ヘルスチェック
+curl http://localhost:8766/api/health/health
+```
+
+**環境変数でエンドポイントを変更できます：**
+```powershell
+$env:BIOLOG_URL = "http://localhost:8766"  # デフォルト
+python LLM_Local_Chat.py
+```
+
+> 体重などの数値が含まれない発話（「今日は散歩した」のみ等）は422エラー回避のためAPIへ送信されません。
 
 ### ゲストモード
 

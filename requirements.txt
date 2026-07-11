@@ -26,3 +26,12 @@ openai-whisper==20250625
 
 # --- 今回のSAPI5制御(停止・スレッド対応)で追加 ---
 pywin32==309
+
+# --- VRAM安全フィルタ (v1.2.0) で追加 ---
+# GPU memory monitoring (required for VRAM safety filter)
+# pynvml が未インストールの場合、nvidia-smi コマンド経由でフォールバックする。
+# GPU なし環境では両方不要（CPU-only モードで自動動作）。
+pynvml>=11.5.0
+
+# CPU/GPU load metrics (non-decision metric — ログ・診断専用)
+psutil>=5.9.0
