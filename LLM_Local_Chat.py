@@ -637,6 +637,7 @@ class ChatApp:
         self._llm_loading  = True
         self.llm: Llama | None        = None
         self._whisper_model           = None   # バックグラウンドでロード
+        self._whisper_load_skipped    = False  # 起動時にWhisperロードをスキップしたか
         self._files: list[str]        = []
         self._current_session: dict   = {}
         self._current_path: str | None = None
@@ -732,6 +733,7 @@ class ChatApp:
         # ── 追加: マイクもTTSも無効なら、モデルロード自体をスキップ ──
         if not self._cfg.get("mic_enabled") and not self._cfg.get("tts_enabled"):
             print("[System] マイク/TTSが無効なため、Whisperのロードをスキップします。")
+            self._whisper_load_skipped = True
             self.root.after(0, lambda: self._on_whisper_ready(None))
             return
         
@@ -1192,8 +1194,15 @@ class ChatApp:
 
     def _toggle_mic(self) -> None:
         if self._voice is None:
-            messagebox.showinfo(
-                "音声認識", "Whisper モデルを読み込んでいます。\nしばらくお待ちください。")
+            if self._whisper_load_skipped:
+                messagebox.showinfo(
+                    "音声認識",
+                    "音声認識は起動時に読み込まれていません。\n"
+                    "設定で「起動時にマイクを有効にする」をオンにして、\n"
+                    "アプリを再起動してください。")
+            else:
+                messagebox.showinfo(
+                    "音声認識", "Whisper モデルを読み込んでいます。\nしばらくお待ちください。")
             return
         self._voice.enabled = not self._voice.enabled
         self._btn_mic.config(

@@ -162,7 +162,7 @@ class Controller:
         self._app.avatar.win.after(0, self._app.avatar.stop_speaking)
 
         if self._app._voice:
-            self._app._voice.tts_active = False
+            self._app._voice._tts_active = False
             self._app._voice.vad_threshold = self._app._vad_thresh
 
         # LLMService のストリーミングループを中断
