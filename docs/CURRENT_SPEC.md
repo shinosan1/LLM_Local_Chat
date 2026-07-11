@@ -1,7 +1,7 @@
 # LLM Local Chat 現行仕様
 
-作成日: 2026-07-11
-基準: gitコミット `69c4e15` 時点のワークツリー(未コミット変更を含む現行コード)を静的に読解した結果。
+作成日: 2026-07-11 / 最終更新: 2026-07-11(不具合2件の修正を反映)
+基準: gitコミット `3a35b2d` 時点のコードを静的に読解した結果。
 このファイルは「現在実装されている事実」だけを記載する。将来予定・改善案は含まない。
 確認済み事実と推測は区別して記載する(推測には「推測」と明記)。
 
@@ -33,7 +33,7 @@
   5. `_load_whisper_async()` — 条件付きでWhisperロード(下記)
   6. `root.mainloop()`
 - **モデルを読み込むタイミング**: 起動直後(手順4)と、設定画面で `model_path` または `n_ctx` を変更したとき(`ChatApp._open_settings` → `_reload_llm`)。
-- **Whisperを読み込む条件**: 設定の `mic_enabled` または `tts_enabled` のどちらかが true の場合のみ(`ChatApp._load_whisper_async`)。両方 false なら**ロード自体をスキップ**し、音声認識は起動中ずっと利用不可(§12-2参照)。
+- **Whisperを読み込む条件**: 設定の `mic_enabled` または `tts_enabled` のどちらかが true の場合のみ(`ChatApp._load_whisper_async`)。両方 false なら**ロード自体をスキップ**し(`_whisper_load_skipped` フラグ)、音声認識は起動中ずっと利用不可。この状態で🎤を押すと「設定で起動時マイクを有効にして再起動」の案内が表示される(`_toggle_mic`)。
 - **import時の副作用**: モジュールimportだけではTkウィンドウ・モデルロード・監視スレッドは発生しない(すべて `main()` 起動時に生成)。ただし `from llama_cpp import Llama` 等の重量DLLロード、`sys.stdout.reconfigure`、`audio_workers.py` の pyaudio/pyttsx3/pywin32 の try-import は import 時に走る。
 
 ## 3. 主要機能
@@ -248,19 +248,25 @@
 
 ## 12. 現在確認されている不整合・既知の問題
 
-コード読解で確認できた事実のみ。修正は未実施。
+コード読解で確認できた事実のみ。
+
+### 修正済み(2026-07-11、コミット `3a35b2d`)
+
+- `Controller.stop`(controller.py)の `_voice.tts_active` 参照を実フラグ名 `_tts_active` に修正。旧コードはアンダースコア無しの別属性を作るだけのno-opで、停止ボタンによる即時のマイク排他解除が効いていなかった
+- 起動時にWhisperロードをスキップした場合(`_whisper_load_skipped`)、🎤ボタン押下時の案内を「音声認識は起動時に読み込まれていません。設定で『起動時にマイクを有効にする』をオンにして、アプリを再起動してください。」に変更。旧コードは「読み込んでいます。しばらくお待ちください」と表示され続けた
+- ※いずれも静的確認のみ。実機での動作確認は未実施(§13)
+
+### 未修正の既知問題
 
 | # | 内容 | 分類 |
 |---|---|---|
-| 1 | `Controller.stop`(controller.py)が `self._app._voice.tts_active = False` と書くが、`VoiceRecognizer` の実フラグは `_tts_active`(audio_workers.py)。アンダースコア無しのため別属性を作るだけのno-opで、停止ボタンによる即時のマイク排他解除が効かない。TTS側コールバック経由(`_restore_vad`)では解除されるため影響範囲は限定的とみられる | **明確な不具合**(影響度は実機確認が必要) |
-| 2 | `mic_enabled`・`tts_enabled` が両方 false で起動するとWhisperロードがスキップされ `_voice` は None のまま。この状態で🎤を押すと「Whisperモデルを読み込んでいます。しばらくお待ちください」(`_toggle_mic`)と表示されるが、待ってもロードされない(設定変更+再起動が必要)。既定値は両方 false のため、初期状態では常に発生する | **表示上の不整合** |
-| 3 | `build_messages_safe`(LLM_Local_Chat.py) — 全コードから呼び出しゼロ。`PromptBuilder.build` と同機能の旧実装 | **未使用コード** |
-| 4 | `VRAMGuard`(resource_monitor.py) — `create_app_deps` で生成され `AppDeps.guard` に格納されるが、`guard`・`is_safe()` の参照が全コードにゼロ | **未使用コード** |
-| 5 | `pyttsx3` — audio_workers.py で import 可否判定のみ行い、実使用箇所ゼロ(TTSは win32com SAPI5 直接)。requirements.txt には記載あり | **未使用コード**(依存整理は仕様判断が必要) |
-| 6 | `vram_danger_gpu_pct` / `vram_danger_vram_pct` — CHANGELOG v1.2.0 に追加と記載され設定ファイルにも存在するが、現行コードに読む箇所がない。閾値は resource_monitor.py の定数(`VRAMGuard.SCORE_LIMIT`、`WhisperController.GPU_FALLBACK_PCT` 等)にハードコード | **未使用設定**(設定化するか削除するかは仕様判断が必要) |
-| 7 | `_update_summary` は別スレッドで `self.llm` を直接呼ぶが、要約実行中にユーザー送信をブロックする仕組みがない(`_is_thinking` は要約開始時のチェックのみ)。同一 `Llama` オブジェクトへの並行呼び出しが理論上起こり得る | **実機確認が必要**(高リスク領域のため現状変更なし) |
-| 8 | `chat_settings.json.example` の `tts_enabled` が true(コード既定値・CHANGELOG記載の「デフォルトOFF」と不一致) | **表示上の不整合**(ドキュメント/テンプレートの整合は仕様判断が必要) |
-| 9 | `_restore_mic`(LLM_Local_Chat.py)はコメントで「旧方式の残骸」と明示された空メソッド | **未使用コード** |
+| 1 | `build_messages_safe`(LLM_Local_Chat.py) — 全コードから呼び出しゼロ。`PromptBuilder.build` と同機能の旧実装 | **未使用コード** |
+| 2 | `VRAMGuard`(resource_monitor.py) — `create_app_deps` で生成され `AppDeps.guard` に格納されるが、`guard`・`is_safe()` の参照が全コードにゼロ | **未使用コード** |
+| 3 | `pyttsx3` — audio_workers.py で import 可否判定のみ行い、実使用箇所ゼロ(TTSは win32com SAPI5 直接)。requirements.txt には記載あり | **未使用コード**(依存整理は仕様判断が必要) |
+| 4 | `vram_danger_gpu_pct` / `vram_danger_vram_pct` — CHANGELOG v1.2.0 に追加と記載され設定ファイルにも存在するが、現行コードに読む箇所がない。閾値は resource_monitor.py の定数(`VRAMGuard.SCORE_LIMIT`、`WhisperController.GPU_FALLBACK_PCT` 等)にハードコード | **未使用設定**(設定化するか削除するかは仕様判断が必要) |
+| 5 | `_update_summary` は別スレッドで `self.llm` を直接呼ぶが、要約実行中にユーザー送信をブロックする仕組みがない(`_is_thinking` は要約開始時のチェックのみ)。同一 `Llama` オブジェクトへの並行呼び出しが理論上起こり得る | **実機確認が必要**(高リスク領域のため現状変更なし) |
+| 6 | `chat_settings.json.example` の `tts_enabled` が true(コード既定値・CHANGELOG記載の「デフォルトOFF」と不一致) | **表示上の不整合**(ドキュメント/テンプレートの整合は仕様判断が必要) |
+| 7 | `_restore_mic`(LLM_Local_Chat.py)はコメントで「旧方式の残骸」と明示された空メソッド | **未使用コード** |
 
 ## 13. 未確認事項
 
@@ -269,14 +275,14 @@
 - 実機での起動・モデルロード・基本チャット・音声・TTS・連携の動作可否(静的読解のみで、実行確認は未実施)
 - `Start_Shiro.bat` が現在の実運用の起動経路かどうか(実行用フォルダにのみ存在し、内容からは実運用向けと推測されるが未確認)
 - 開発用フォルダ(C側)での起動可否(`.venv` が存在しないため、現状のままでは依存が満たされない可能性が高い)
-- §12-1(tts_active名不一致)と §12-7(要約の並行実行)の実使用時の影響度
+- §12-5(要約の並行実行)の実使用時の影響度、および今回修正した2件(TTSフラグ属性名・マイク案内)の実機での動作確認
 - `llm_service.py`・`resource_manager.py` の正確な作成経緯(CHANGELOG未記載。ファイル日時と内容から、それぞれ速度最適化作業・v1.2.0後の作業で作成と推測)
 - README・操作マニュアルPDFの記述と実装の逐条一致(見出しレベルの確認のみ実施)
 - CHANGELOG未記載の実装: 速度最適化一式([Perf]計測、`init_llm` の3段階リトライ、perf系6設定キー、Whisper条件付きロードスキップ)が、どのバージョン番号に属するか
 
 ## 14. 仕様の根拠
 
-本書の各記載は、以下のファイルの直接読解による(2026-07-11、gitコミット `69c4e15` +未コミット変更の状態)。主な根拠はクラス名・関数名で本文中に併記した。行番号は変動しやすいため記載していない。
+本書の各記載は、以下のファイルの直接読解による(2026-07-11、gitコミット `3a35b2d` の状態)。主な根拠はクラス名・関数名で本文中に併記した。行番号は変動しやすいため記載していない。
 
 - LLM_Local_Chat.py(`main`, `ChatApp`, `SettingsDialog`, `AvatarWindow`, `load_settings`, `save_settings`, `init_llm`)
 - app_composition.py(`create_app_deps`)/ controller.py(`Controller`)/ llm_service.py(`LLMService`)
