@@ -6,7 +6,7 @@
 ローカル処理を重視した構成です。機密情報を扱う業務環境へ導入する場合は、端末のアクセス制御、平文履歴、Dockerポート、依存ライブラリ、バックアップ方法を含め、組織の情報セキュリティ担当者による事前評価を行ってください。
 
 ![Python](https://img.shields.io/badge/Python-3.12.10-blue)
-![Version](https://img.shields.io/badge/Version-1.3.0-green)
+![Version](https://img.shields.io/badge/Version-1.4.0-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-All%20Rights%20Reserved-red)
 
