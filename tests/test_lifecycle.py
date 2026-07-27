@@ -135,7 +135,7 @@ class ShutdownTests(unittest.TestCase):
             "begin_closing": lambda self: setattr(self, "closing", True),
             "pending_operations": lambda self: [],
         })()
-        app._save_now = lambda: None
+        app._save_now = lambda **_kwargs: True
         app._deps = type("Deps", (), {
             "res_monitor": type("Monitor", (), {
                 "stop": lambda self: setattr(self, "stopped", True),

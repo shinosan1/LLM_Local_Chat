@@ -14,7 +14,7 @@ class AtomicJsonWriteTests(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump({"before": True}, handle)
 
-            with patch("atomic_io.json.dump", side_effect=OSError("disk full")):
+            with patch("atomic_io.os.replace", side_effect=OSError("disk full")):
                 with self.assertRaises(OSError):
                     atomic_write_json(path, {"after": True})
 

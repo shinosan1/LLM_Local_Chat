@@ -103,6 +103,12 @@ from kakeibo_amount import normalize_manual_amount_input
 from kakeibo_confirmation import can_submit_kakeibo_candidate
 from prompt_builder import KAKEIBO_EXPENSE_CATS, KAKEIBO_INCOME_CATS
 from resource_monitor import adjust_llm, normalize_whisper_mode
+from history_crypto import HistoryCryptoError
+from session_store import (
+    ALLOWED_RETENTION_DAYS,
+    HistoryMigrationError,
+    normalize_retention_days,
+)
 
 # ─────────────────────────────────────────────
 #  Windows UTF-8 出力設定（起動直後に実行）
@@ -230,6 +236,7 @@ def load_settings() -> dict:
         flash_attn    = DEFAULT_FLASH_ATTN,
         offload_kqv   = DEFAULT_OFFLOAD_KQV,
         use_mmap      = DEFAULT_USE_MMAP,
+        history_retention_days = 0,
     )
     if os.path.exists(SETTINGS_FILE):
         try:
@@ -255,6 +262,8 @@ def load_settings() -> dict:
         defaults.get("vad_threshold"), DEFAULT_VAD_RMS)
     defaults["whisper_mode"] = normalize_whisper_mode(
         defaults.get("whisper_mode"))
+    defaults["history_retention_days"] = normalize_retention_days(
+        defaults.get("history_retention_days"))
     return defaults
 
 
@@ -449,6 +458,29 @@ class SettingsDialog(tk.Toplevel):
             bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
         ).grid(row=6, column=2, sticky="w", **P)
 
+        # 会話履歴の保存期間
+        lbl(7, "会話履歴の保存期間:")
+        retention_labels = {
+            0: "無期限",
+            30: "30日",
+            90: "90日（推奨）",
+            180: "180日",
+            365: "365日",
+        }
+        current_retention = normalize_retention_days(
+            cfg.get("history_retention_days"))
+        self.v_retention = tk.StringVar(
+            value=retention_labels[current_retention])
+        retention_menu = tk.OptionMenu(
+            self, self.v_retention, *retention_labels.values())
+        retention_menu.config(
+            bg=C["bg_input"], fg=C["fg_main"],
+            activebackground=C["accent"], bd=0, width=18,
+        )
+        retention_menu["menu"].config(bg=C["bg_input"], fg=C["fg_main"])
+        retention_menu.grid(row=7, column=1, sticky="w", **P)
+        self._retention_labels = retention_labels
+
         # 起動時マイクON/OFF
         self.v_mic = BooleanVar(value=cfg.get("mic_enabled", False))
         tk.Checkbutton(
@@ -456,7 +488,7 @@ class SettingsDialog(tk.Toplevel):
             variable=self.v_mic,
             bg=C["bg_main"], fg=C["fg_main"],
             selectcolor=C["bg_input"], activebackground=C["bg_main"],
-        ).grid(row=7, column=0, columnspan=3, sticky="w", padx=16, pady=4)
+        ).grid(row=8, column=0, columnspan=3, sticky="w", padx=16, pady=4)
 
         # 起動時TTS ON/OFF
         self.v_tts = BooleanVar(value=cfg.get("tts_enabled", False))
@@ -465,17 +497,17 @@ class SettingsDialog(tk.Toplevel):
             variable=self.v_tts,
             bg=C["bg_main"], fg=C["fg_main"],
             selectcolor=C["bg_input"], activebackground=C["bg_main"],
-        ).grid(row=8, column=0, columnspan=3, sticky="w", padx=16, pady=4)
+        ).grid(row=9, column=0, columnspan=3, sticky="w", padx=16, pady=4)
 
         tk.Label(
             self,
             text="※ 体感速度はWindowsの音声エンジンによって異なります",
             bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
-        ).grid(row=9, column=0, columnspan=3, sticky="w", padx=16, pady=(2, 4))
+        ).grid(row=10, column=0, columnspan=3, sticky="w", padx=16, pady=(2, 4))
 
         # ボタン
         bf = tk.Frame(self, bg=C["bg_main"])
-        bf.grid(row=10, column=0, columnspan=3, pady=16)
+        bf.grid(row=11, column=0, columnspan=3, pady=16)
         tk.Button(
             bf, text="保存して適用",
             bg=C["accent"], fg="white", width=14, bd=0,
@@ -519,11 +551,16 @@ class SettingsDialog(tk.Toplevel):
                 key for key, label in WHISPER_MODE_LABELS.items()
                 if label == self.v_whisper_mode.get()
             )
+            retention_days = next(
+                days for days, label in self._retention_labels.items()
+                if label == self.v_retention.get()
+            )
             self.result = dict(
                 model_path=mp, n_ctx=ctx, max_tokens=tok,
                 temperature=tmp, vad_threshold=vad,
                 tts_rate=tts_rate,
                 whisper_mode=whisper_mode,
+                history_retention_days=retention_days,
                 mic_enabled=self.v_mic.get(),
                 tts_enabled=self.v_tts.get())
             self.destroy()
@@ -925,6 +962,7 @@ class ChatApp:
 
         # ── UI 構築 ───────────────────────────────
         self._build_ui()
+        self._initialize_history_security()
 
         # ── 初期セッション ────────────────────────
         self._new_session()
@@ -941,6 +979,52 @@ class ChatApp:
 
         # ── バックグラウンドロード ─────────────────
         self._reload_llm()
+
+    def _initialize_history_security(self) -> None:
+        legacy, errors = self._session_store.scan_legacy()
+        if errors:
+            names = "\n".join(os.path.basename(path) for path in errors[:10])
+            messagebox.showerror(
+                "会話履歴の安全確認エラー",
+                "破損または未対応形式の会話履歴があります。\n"
+                "安全のため通常起動を中止します。\n\n" + names,
+                parent=self.root,
+            )
+            raise HistoryCryptoError("会話履歴の安全確認に失敗しました。")
+        if legacy:
+            if not messagebox.askyesno(
+                "会話履歴の暗号化",
+                f"平文の会話履歴が{len(legacy)}件見つかりました。\n"
+                "現在のWindowsユーザー用DPAPIで暗号化します。\n\n"
+                "暗号化後はv1.4.1以前のアプリでは読み込めません。"
+                "\n続行しますか？",
+                icon="warning",
+                parent=self.root,
+            ):
+                raise HistoryCryptoError("会話履歴の暗号化がキャンセルされました。")
+            try:
+                self._session_store.migrate_legacy(legacy)
+            except HistoryMigrationError as exc:
+                names = "\n".join(
+                    os.path.basename(path) for path in exc.paths[:10])
+                messagebox.showerror(
+                    "会話履歴の暗号化エラー",
+                    "暗号化できない履歴が残っています。\n"
+                    "安全のため通常起動を中止します。\n\n" + names,
+                    parent=self.root,
+                )
+                raise
+        days = normalize_retention_days(
+            self._cfg.get("history_retention_days"))
+        if days:
+            deleted, failures = self._session_store.prune_expired(days)
+            if failures:
+                messagebox.showwarning(
+                    "保存期間の適用",
+                    f"{deleted}件を削除しましたが、"
+                    f"{len(failures)}件は削除できませんでした。",
+                    parent=self.root,
+                )
 
     # ── 停止・制御 ──────────────────────────────
 
@@ -1694,30 +1778,49 @@ class ChatApp:
         self._entry.focus_set()
         self._update_status()
 
-    def _save_now(self) -> None:
+    def _save_now(self, show_error: bool = True) -> bool:
         if self._is_guest:
-            return
+            return True
         try:
             saved_path = self._session_store.save(
                 self._current_session, self._current_path)
             if not saved_path:
-                return
+                return True
             self._current_path = saved_path
             # リスト更新は必ずメインスレッドで行う
             self._post_ui(self._refresh_chat_list)
+            return True
         except Exception as e:
             print(f"[保存エラー] {e}")
+            if show_error:
+                messagebox.showerror(
+                    "会話履歴の保存エラー",
+                    "DPAPIで会話履歴を保存できませんでした。\n"
+                    "平文への自動保存は行いません。\n\n"
+                    f"{e}",
+                    parent=self.root,
+                )
+            return False
 
-    def _save_as_text(self) -> None:
+    def _save_as_text(self) -> bool:
         if not self._current_session.get("history"):
             messagebox.showinfo("保存", "保存する会話がありません")
-            return
+            return False
+        if not messagebox.askyesno(
+            "平文テキストとして保存",
+            "指定先へ暗号化されていない平文を保存します。\n"
+            "保存先のアクセス権限とバックアップ範囲を確認してください。\n\n"
+            "続行しますか？",
+            icon="warning",
+            parent=self.root,
+        ):
+            return False
         path = filedialog.asksaveasfilename(
             title="テキストとして保存",
             defaultextension=".txt",
             filetypes=[("テキストファイル", "*.txt")])
         if not path:
-            return
+            return False
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(f"タイトル: {self._current_session['title']}\n")
@@ -1727,8 +1830,10 @@ class ChatApp:
                     f.write(f"🤖 アシスタント\n{h.get('assistant','')}\n")
                     f.write("-" * 60 + "\n")
             messagebox.showinfo("保存完了", "テキストファイルとして保存しました")
+            return True
         except Exception as e:
             messagebox.showerror("保存エラー", str(e))
+            return False
 
     def _refresh_chat_list(self) -> None:
         self._chat_list.delete(0, tk.END)
@@ -1812,6 +1917,8 @@ class ChatApp:
             temperature   = self._temperature,
             vad_threshold = self._vad_thresh,
             tts_rate      = self.tts.rate,
+            history_retention_days=self._cfg.get(
+                "history_retention_days", 0),
             mic_enabled = self._cfg.get("mic_enabled", False),
             whisper_mode = self._cfg.get("whisper_mode", "auto"),
             tts_enabled   = self.tts.enabled,
@@ -1821,6 +1928,24 @@ class ChatApp:
             return
 
         new = dlg.result
+        old_retention = normalize_retention_days(
+            self._cfg.get("history_retention_days"))
+        new_retention = normalize_retention_days(
+            new.get("history_retention_days"))
+        if new_retention and new_retention != old_retention:
+            candidates = self._session_store.expired_paths(
+                new_retention, self._current_path)
+            if not messagebox.askyesno(
+                "会話履歴の保存期間",
+                f"{new_retention}日を超えた会話履歴が"
+                f"{len(candidates)}件あります。\n"
+                "確認後すぐにchat_logsから削除します。\n"
+                "アプリからは復元できず、外部バックアップは"
+                "自動削除されません。\n\n適用しますか？",
+                icon="warning",
+                parent=self.root,
+            ):
+                new["history_retention_days"] = old_retention
         whisper_mode_changed = (
             new["whisper_mode"] != self._cfg.get("whisper_mode", "auto")
         )
@@ -1849,6 +1974,18 @@ class ChatApp:
 
         self._cfg.update(new)
         save_settings(self._cfg)
+        applied_retention = normalize_retention_days(
+            self._cfg.get("history_retention_days"))
+        if applied_retention and applied_retention != old_retention:
+            deleted, failures = self._session_store.prune_expired(
+                applied_retention, self._current_path)
+            if failures:
+                messagebox.showwarning(
+                    "保存期間の適用",
+                    f"{deleted}件を削除しましたが、"
+                    f"{len(failures)}件は削除できませんでした。",
+                    parent=self.root,
+                )
 
         if whisper_mode_changed:
             messagebox.showinfo(
@@ -1918,6 +2055,20 @@ class ChatApp:
     def _on_close(self) -> None:
         if self._closing:
             return
+        if not self._save_now(show_error=False):
+            choice = messagebox.askyesnocancel(
+                "会話履歴を保存できません",
+                "DPAPIで会話履歴を保存できませんでした。\n\n"
+                "「はい」: 警告確認後に平文テキストとして保存\n"
+                "「いいえ」: 保存せず終了\n"
+                "「キャンセル」: 終了を取り消す",
+                icon="warning",
+                parent=self.root,
+            )
+            if choice is None:
+                return
+            if choice and not self._save_as_text():
+                return
         self._closing = True
         self._llm_load_generation += 1
         self._ctrl.begin_shutdown()
@@ -1929,7 +2080,6 @@ class ChatApp:
         save_settings(self._cfg)
         self.tts.terminate()
         self._deps.res_monitor.stop()
-        self._save_now()
         deadline = time.monotonic() + 6.0
 
         def _wait_for_workers() -> None:
@@ -1959,8 +2109,16 @@ class ChatApp:
 # ═══════════════════════════════════════════════════════
 def main() -> None:
     root = tk.Tk()
-    deps = create_app_deps(LOG_DIR)
-    app  = ChatApp(root, deps)
+    try:
+        deps = create_app_deps(LOG_DIR)
+        app = ChatApp(root, deps)
+    except HistoryCryptoError as exc:
+        print(f"[HistorySecurity] startup blocked: {exc}")
+        try:
+            root.destroy()
+        except tk.TclError:
+            pass
+        return
     root.protocol("WM_DELETE_WINDOW", app._on_close)
     root.mainloop()
 

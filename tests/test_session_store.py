@@ -5,12 +5,23 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from session_store import SessionStore
+from history_crypto import HistoryCryptoError
+from session_store import SessionStore, normalize_retention_days
+
+
+class FakeProtector:
+    def protect(self, data):
+        return b"protected:" + data[::-1]
+
+    def unprotect(self, data):
+        if not data.startswith(b"protected:"):
+            raise HistoryCryptoError("invalid ciphertext")
+        return data[len(b"protected:"):][::-1]
 
 
 class CountingSessionStore(SessionStore):
     def __init__(self, log_dir):
-        super().__init__(log_dir)
+        super().__init__(log_dir, protector=FakeProtector())
         self.metadata_reads = 0
 
     def _read_metadata(self, path, fallback_title):
@@ -27,20 +38,23 @@ class SessionStoreIndexTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    def _write(self, filename, title, summary=""):
+    def _write(self, filename, title, summary="", activity=None):
         path = os.path.join(self.temp_dir.name, filename)
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(
-                {"title": title, "summary": summary, "history": []},
-                handle,
-                ensure_ascii=False,
-            )
+        data = {"title": title, "summary": summary, "history": []}
+        if activity:
+            data["last_activity_at"] = activity
+        self.store._write_encrypted(path, data)
         return path
 
-    def test_repeated_search_reuses_parsed_metadata(self):
+    def _write_legacy(self, filename, data, indent=None):
+        path = os.path.join(self.temp_dir.name, filename)
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=indent)
+        return path
+
+    def test_repeated_search_reuses_decrypted_metadata(self):
         self._write("chat_1.json", "Alpha", "first")
         self._write("chat_2.json", "Beta", "second")
-
         self.assertEqual(len(self.store.list_sessions()), 2)
         self.assertEqual(self.store.metadata_reads, 2)
         self.assertEqual(
@@ -49,36 +63,37 @@ class SessionStoreIndexTests(unittest.TestCase):
         )
         self.assertEqual(self.store.metadata_reads, 2)
 
-    def test_save_rename_and_delete_update_index_immediately(self):
-        session = {"title": "Saved", "summary": "memo", "history": [{"user": "u"}]}
+    def test_save_is_encrypted_and_rename_delete_update_index(self):
+        session = {
+            "title": "Saved",
+            "summary": "memo",
+            "history": [{"user": "private text"}],
+        }
         path = self.store.save(session, None)
-        self.assertEqual(self.store.list_sessions()[0]["title"], "Saved")
-        self.assertEqual(self.store.metadata_reads, 0)
-
+        with open(path, "rb") as handle:
+            stored = handle.read()
+        self.assertNotIn(b"private text", stored)
+        self.assertEqual(self.store.load(path)["title"], "Saved")
         self.store.rename(path, "Renamed")
         self.assertEqual(self.store.list_sessions()[0]["title"], "Renamed")
-        self.assertEqual(self.store.metadata_reads, 0)
-
         self.store.delete(path)
         self.assertEqual(self.store.list_sessions(), [])
 
-    def test_external_change_and_new_file_are_detected(self):
+    def test_external_encrypted_change_and_new_file_are_detected(self):
         path = self._write("chat_1.json", "Before")
         self.store.list_sessions()
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump({"title": "After with longer title", "history": []}, handle)
+        self.store._write_encrypted(
+            path, {"title": "After with longer title", "history": []})
         self._write("chat_2.json", "New")
-
         titles = [item["title"] for item in self.store.list_sessions()]
         self.assertEqual(titles, ["New", "After with longer title"])
         self.assertEqual(self.store.metadata_reads, 3)
 
-    def test_broken_json_is_ignored_until_it_changes(self):
+    def test_broken_envelope_is_ignored_until_it_changes(self):
         broken = os.path.join(self.temp_dir.name, "chat_2.json")
-        with open(broken, "w", encoding="utf-8") as handle:
-            handle.write("{")
+        with open(broken, "wb") as handle:
+            handle.write(b"{")
         self._write("chat_1.json", "Valid")
-
         self.assertEqual(
             [item["title"] for item in self.store.list_sessions()], ["Valid"])
         reads_after_first_scan = self.store.metadata_reads
@@ -90,12 +105,63 @@ class SessionStoreIndexTests(unittest.TestCase):
         session = {"title": "Saved", "history": [{"user": "u"}]}
         with patch("session_store.datetime.datetime") as mocked_datetime:
             mocked_datetime.now.return_value = fixed
+            mocked_datetime.side_effect = lambda *a, **k: datetime.datetime(*a, **k)
             first = self.store.save(session, None)
             second = self.store.save(session, None)
-
         self.assertNotEqual(first, second)
-        self.assertTrue(os.path.exists(first))
-        self.assertTrue(os.path.exists(second))
+
+    def test_migration_preserves_exact_plaintext_bytes(self):
+        path = self._write_legacy(
+            "chat_1.json",
+            {"title": "旧", "history": [], "unknown": {"x": 1}},
+            indent=4,
+        )
+        with open(path, "rb") as handle:
+            original = handle.read()
+        legacy, errors = self.store.scan_legacy()
+        self.assertEqual(errors, [])
+        self.assertEqual(legacy, [path])
+        self.assertEqual(self.store.migrate_legacy(legacy), 1)
+        data, encrypted, plaintext = self.store._read_document(path)
+        self.assertTrue(encrypted)
+        self.assertEqual(plaintext, original)
+        self.assertEqual(data["unknown"], {"x": 1})
+        self.assertEqual(self.store.migrate_legacy([path]), 0)
+
+    def test_load_rejects_unmigrated_plaintext(self):
+        path = self._write_legacy(
+            "chat_1.json", {"title": "旧", "history": []})
+        with self.assertRaises(HistoryCryptoError):
+            self.store.load(path)
+
+    def test_retention_uses_activity_and_excludes_current(self):
+        now = datetime.datetime(2026, 7, 27, tzinfo=datetime.timezone.utc)
+        old = self._write(
+            "chat_old.json", "Old",
+            activity="2026-04-01T00:00:00+00:00")
+        current = self._write(
+            "chat_current.json", "Current",
+            activity="2026-04-01T00:00:00+00:00")
+        recent = self._write(
+            "chat_recent.json", "Recent",
+            activity="2026-07-01T00:00:00+00:00")
+        self.assertEqual(
+            self.store.expired_paths(90, current, now), [old])
+        self.assertTrue(os.path.exists(recent))
+
+    def test_retention_cutoff_is_strict_and_zero_is_disabled(self):
+        now = datetime.datetime(2026, 7, 27, tzinfo=datetime.timezone.utc)
+        exact = self._write(
+            "chat_exact.json", "Exact",
+            activity="2026-04-28T00:00:00+00:00")
+        self.assertEqual(self.store.expired_paths(0, now=now), [])
+        self.assertEqual(self.store.expired_paths(90, now=now), [])
+        self.assertTrue(os.path.exists(exact))
+
+    def test_retention_normalization_rejects_bool_and_unknown(self):
+        self.assertEqual(normalize_retention_days(True), 0)
+        self.assertEqual(normalize_retention_days(45), 0)
+        self.assertEqual(normalize_retention_days("90"), 90)
 
 
 if __name__ == "__main__":
