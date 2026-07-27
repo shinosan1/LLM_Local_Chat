@@ -947,6 +947,9 @@ class ChatApp:
         self._session_store = deps.session_store
         self._integrations = IntegrationBridge(self.root, self._chat_write)
 
+        # 履歴検査はAvatar/TTSなどのワーカーを作る前に完了させる。
+        self._initialize_history_security()
+
         # ── アバター ──────────────────────────────
         self.avatar = AvatarWindow(root)
 
@@ -962,7 +965,6 @@ class ChatApp:
 
         # ── UI 構築 ───────────────────────────────
         self._build_ui()
-        self._initialize_history_security()
 
         # ── 初期セッション ────────────────────────
         self._new_session()
@@ -987,21 +989,32 @@ class ChatApp:
             messagebox.showerror(
                 "会話履歴の安全確認エラー",
                 "破損または未対応形式の会話履歴があります。\n"
-                "安全のため通常起動を中止します。\n\n" + names,
+                "安全のため通常起動を中止します。\n\n"
+                f"対象（最大10件）:\n{names}\n\n"
+                "まず元のWindowsユーザーと環境で再試行し、"
+                "対象ファイルのバックアップを確保してください。\n"
+                "起動を優先する場合は、すべてのShiroを終了してから"
+                "対象ファイルを削除せず、chat_logs外の安全な場所へ"
+                "手動で退避してください。",
                 parent=self.root,
             )
-            raise HistoryCryptoError("会話履歴の安全確認に失敗しました。")
+            exc = HistoryCryptoError("会話履歴の安全確認に失敗しました。")
+            exc.user_notified = True
+            raise exc
         if legacy:
             if not messagebox.askyesno(
                 "会話履歴の暗号化",
                 f"平文の会話履歴が{len(legacy)}件見つかりました。\n"
                 "現在のWindowsユーザー用DPAPIで暗号化します。\n\n"
+                "先に、旧版を含むすべてのShiroを終了してください。\n"
                 "暗号化後はv1.4.1以前のアプリでは読み込めません。"
                 "\n続行しますか？",
                 icon="warning",
                 parent=self.root,
             ):
-                raise HistoryCryptoError("会話履歴の暗号化がキャンセルされました。")
+                exc = HistoryCryptoError("会話履歴の暗号化がキャンセルされました。")
+                exc.user_notified = True
+                raise exc
             try:
                 self._session_store.migrate_legacy(legacy)
             except HistoryMigrationError as exc:
@@ -1010,9 +1023,14 @@ class ChatApp:
                 messagebox.showerror(
                     "会話履歴の暗号化エラー",
                     "暗号化できない履歴が残っています。\n"
-                    "安全のため通常起動を中止します。\n\n" + names,
+                    "安全のため通常起動を中止します。\n\n"
+                    f"対象（最大10件）:\n{names}\n\n"
+                    "対象ファイルは自動削除・移動されていません。"
+                    "バックアップを確保し、READMEの復旧手順を"
+                    "確認してください。",
                     parent=self.root,
                 )
+                exc.user_notified = True
                 raise
         days = normalize_retention_days(
             self._cfg.get("history_retention_days"))
@@ -2109,11 +2127,31 @@ class ChatApp:
 # ═══════════════════════════════════════════════════════
 def main() -> None:
     root = tk.Tk()
+    deps = None
     try:
         deps = create_app_deps(LOG_DIR)
         app = ChatApp(root, deps)
     except HistoryCryptoError as exc:
         print(f"[HistorySecurity] startup blocked: {exc}")
+        if not getattr(exc, "user_notified", False):
+            try:
+                messagebox.showerror(
+                    "会話履歴保護エラー",
+                    f"{exc}\n\n"
+                    "通常起動を中止しました。READMEの「起動できない"
+                    "場合の復旧手順」を確認してください。",
+                    parent=root,
+                )
+            except tk.TclError:
+                pass
+        if deps is not None:
+            try:
+                deps.res_monitor.stop()
+            except Exception as cleanup_exc:
+                print(
+                    "[HistorySecurity] resource monitor cleanup failed: "
+                    f"{type(cleanup_exc).__name__}"
+                )
         try:
             root.destroy()
         except tk.TclError:

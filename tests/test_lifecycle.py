@@ -3,7 +3,8 @@ import unittest
 from unittest.mock import patch
 
 from integrations import IntegrationBridge
-from LLM_Local_Chat import ChatApp
+from history_crypto import HistoryCryptoError
+from LLM_Local_Chat import ChatApp, main
 from llm_service import LLMService
 
 
@@ -150,6 +151,48 @@ class ShutdownTests(unittest.TestCase):
         self.assertTrue(app.tts.terminated)
         self.assertTrue(app._deps.res_monitor.stopped)
         root.callbacks.pop(0)()
+        self.assertTrue(root.destroyed)
+
+
+class HistoryStartupFailureTests(unittest.TestCase):
+    def test_unreported_crypto_error_shows_once_and_stops_monitor(self):
+        root = _Root()
+        monitor = type("Monitor", (), {
+            "stop": lambda self: setattr(self, "stopped", True),
+        })()
+        deps = type("Deps", (), {"res_monitor": monitor})()
+        with (
+            patch("LLM_Local_Chat.tk.Tk", return_value=root),
+            patch("LLM_Local_Chat.create_app_deps", return_value=deps),
+            patch(
+                "LLM_Local_Chat.ChatApp",
+                side_effect=HistoryCryptoError("DPAPI unavailable"),
+            ),
+            patch("LLM_Local_Chat.messagebox.showerror") as showerror,
+        ):
+            main()
+        showerror.assert_called_once()
+        self.assertNotIn("ciphertext", str(showerror.call_args))
+        self.assertTrue(monitor.stopped)
+        self.assertTrue(root.destroyed)
+
+    def test_reported_crypto_error_does_not_show_twice(self):
+        root = _Root()
+        monitor = type("Monitor", (), {
+            "stop": lambda self: setattr(self, "stopped", True),
+        })()
+        deps = type("Deps", (), {"res_monitor": monitor})()
+        error = HistoryCryptoError("already shown")
+        error.user_notified = True
+        with (
+            patch("LLM_Local_Chat.tk.Tk", return_value=root),
+            patch("LLM_Local_Chat.create_app_deps", return_value=deps),
+            patch("LLM_Local_Chat.ChatApp", side_effect=error),
+            patch("LLM_Local_Chat.messagebox.showerror") as showerror,
+        ):
+            main()
+        showerror.assert_not_called()
+        self.assertTrue(monitor.stopped)
         self.assertTrue(root.destroyed)
 
 

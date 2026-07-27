@@ -128,6 +128,50 @@ class SessionStoreIndexTests(unittest.TestCase):
         self.assertEqual(data["unknown"], {"x": 1})
         self.assertEqual(self.store.migrate_legacy([path]), 0)
 
+    def test_migration_rescans_and_encrypts_new_legacy_file(self):
+        first = self._write_legacy(
+            "chat_1.json", {"title": "First", "history": []})
+        second = self._write_legacy(
+            "chat_2.json", {"title": "Second", "history": []})
+        self.assertEqual(self.store.migrate_legacy([first]), 2)
+        for path in (first, second):
+            _data, encrypted, _raw = self.store._read_document(path)
+            self.assertTrue(encrypted)
+
+    def test_existing_migration_lock_is_not_removed_or_mutated(self):
+        path = self._write_legacy(
+            "chat_1.json", {"title": "旧", "history": []})
+        with open(path, "rb") as handle:
+            before = handle.read()
+        lock_path = os.path.join(
+            self.temp_dir.name, ".history_migration.lock")
+        with open(lock_path, "wb") as handle:
+            handle.write(b"12345")
+
+        with self.assertRaisesRegex(
+            HistoryCryptoError, "すべてのShiroが終了"
+        ):
+            self.store.migrate_legacy([path])
+
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+        with open(lock_path, "rb") as handle:
+            self.assertEqual(handle.read(), b"12345")
+
+    def test_corrupt_history_is_not_pruned_or_modified(self):
+        path = os.path.join(self.temp_dir.name, "chat_broken.json")
+        with open(path, "wb") as handle:
+            handle.write(b"{broken")
+        before = os.stat(path)
+        self.assertEqual(self.store.expired_paths(30), [])
+        after = os.stat(path)
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), b"{broken")
+        self.assertEqual(
+            (after.st_mtime_ns, after.st_size),
+            (before.st_mtime_ns, before.st_size),
+        )
+
     def test_load_rejects_unmigrated_plaintext(self):
         path = self._write_legacy(
             "chat_1.json", {"title": "旧", "history": []})

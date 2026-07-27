@@ -14,8 +14,12 @@ class AppDeps:
 
 def create_app_deps(log_dir: str) -> AppDeps:
     res_monitor = ResourceMonitor()
-    whisper_pool = WhisperPool()
-    session_store = SessionStore(log_dir)
+    try:
+        whisper_pool = WhisperPool()
+        session_store = SessionStore(log_dir)
+    except Exception:
+        res_monitor.stop()
+        raise
     return AppDeps(
         res_monitor=res_monitor,
         whisper_pool=whisper_pool,

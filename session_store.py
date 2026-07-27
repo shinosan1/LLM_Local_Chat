@@ -226,7 +226,11 @@ class SessionStore:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError as exc:
             raise HistoryCryptoError(
-                "履歴移行が別のプロセスで実行中です。"
+                "履歴移行が別のプロセスで実行中か、前回の異常終了で"
+                "ロックが残っています。\n"
+                "すべてのShiroが終了していることを確認した場合に限り、"
+                "次のファイルを手動で削除して再起動してください。\n"
+                f"{lock_path}"
             ) from exc
         try:
             os.write(fd, str(os.getpid()).encode("ascii"))
@@ -248,7 +252,12 @@ class SessionStore:
         failures = []
         migrated = 0
         with self._migration_lock():
-            for path in paths:
+            # 起動時scan後に追加された平文履歴も、置換開始前に取り込む。
+            current_legacy, scan_errors = self.scan_legacy()
+            if scan_errors:
+                raise HistoryMigrationError(scan_errors)
+            targets = list(dict.fromkeys([*paths, *current_legacy]))
+            for path in targets:
                 try:
                     before = os.stat(path)
                     with open(path, "rb") as handle:
@@ -282,9 +291,12 @@ class SessionStore:
                     migrated += 1
                 except Exception:
                     failures.append(path)
+            remaining_legacy, remaining_errors = self.scan_legacy()
+            failures.extend(remaining_legacy)
+            failures.extend(remaining_errors)
         self._index.clear()
         if failures:
-            raise HistoryMigrationError(failures)
+            raise HistoryMigrationError(list(dict.fromkeys(failures)))
         return migrated
 
     def expired_paths(
