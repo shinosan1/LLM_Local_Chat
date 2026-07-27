@@ -20,9 +20,17 @@ class _Root:
     def __init__(self):
         self.callbacks = []
         self.destroyed = False
+        self.withdrawn = False
+        self.deiconified = False
 
     def after(self, _delay, callback):
         self.callbacks.append(callback)
+
+    def withdraw(self):
+        self.withdrawn = True
+
+    def deiconify(self):
+        self.deiconified = True
 
     def destroy(self):
         self.destroyed = True
@@ -175,6 +183,8 @@ class HistoryStartupFailureTests(unittest.TestCase):
         self.assertNotIn("ciphertext", str(showerror.call_args))
         self.assertTrue(monitor.stopped)
         self.assertTrue(root.destroyed)
+        self.assertTrue(root.withdrawn)
+        self.assertFalse(root.deiconified)
 
     def test_reported_crypto_error_does_not_show_twice(self):
         root = _Root()
@@ -194,6 +204,8 @@ class HistoryStartupFailureTests(unittest.TestCase):
         showerror.assert_not_called()
         self.assertTrue(monitor.stopped)
         self.assertTrue(root.destroyed)
+        self.assertTrue(root.withdrawn)
+        self.assertFalse(root.deiconified)
 
 
 if __name__ == "__main__":

@@ -27,8 +27,9 @@ def normalize_retention_days(value) -> int:
 
 
 class HistoryMigrationError(HistoryCryptoError):
-    def __init__(self, paths: list[str]):
+    def __init__(self, paths: list[str], diagnostics=None):
         self.paths = paths
+        self.diagnostics = tuple(diagnostics or ())
         super().__init__(
             f"{len(paths)}件の会話履歴を暗号化できませんでした。"
         )
@@ -126,7 +127,11 @@ class SessionStore:
     def _cache_session(self, path: str, session: dict) -> None:
         stat = os.stat(path)
         self._index[path] = {
-            "signature": (stat.st_mtime_ns, stat.st_size),
+            "signature": (
+                stat.st_mtime_ns,
+                stat.st_size,
+                stat.st_ctime_ns,
+            ),
             "metadata": {
                 "path": path,
                 "title": session.get("title", os.path.basename(path)),
@@ -147,7 +152,11 @@ class SessionStore:
             current_paths.add(path)
             try:
                 stat = entry.stat()
-                signature = (stat.st_mtime_ns, stat.st_size)
+                signature = (
+                    stat.st_mtime_ns,
+                    stat.st_size,
+                    stat.st_ctime_ns,
+                )
                 cached = self._index.get(path)
                 if cached and cached["signature"] == signature:
                     continue
@@ -205,9 +214,10 @@ class SessionStore:
         self._cache_session(path, data)
         return data
 
-    def scan_legacy(self) -> tuple[list[str], list[str]]:
+    def _scan_legacy_with_diagnostics(self):
         legacy = []
         errors = []
+        diagnostics = []
         for entry in os.scandir(self._log_dir):
             if not entry.is_file() or not entry.name.endswith(".json"):
                 continue
@@ -215,8 +225,17 @@ class SessionStore:
                 _data, encrypted, _raw = self._read_document(entry.path)
                 if not encrypted:
                     legacy.append(entry.path)
-            except Exception:
+            except Exception as exc:
                 errors.append(entry.path)
+                diagnostics.append({
+                    "name": entry.name,
+                    "phase": "scan",
+                    "error_type": type(exc).__name__,
+                })
+        return legacy, errors, diagnostics
+
+    def scan_legacy(self) -> tuple[list[str], list[str]]:
+        legacy, errors, _diagnostics = self._scan_legacy_with_diagnostics()
         return legacy, errors
 
     @contextmanager
@@ -250,12 +269,16 @@ class SessionStore:
             raise HistoryCryptoError("Windows DPAPIの事前検証に失敗しました。")
 
         failures = []
+        diagnostics = []
         migrated = 0
         with self._migration_lock():
             # 起動時scan後に追加された平文履歴も、置換開始前に取り込む。
-            current_legacy, scan_errors = self.scan_legacy()
+            current_legacy, scan_errors, scan_diagnostics = (
+                self._scan_legacy_with_diagnostics()
+            )
             if scan_errors:
-                raise HistoryMigrationError(scan_errors)
+                raise HistoryMigrationError(
+                    scan_errors, diagnostics=scan_diagnostics)
             targets = list(dict.fromkeys([*paths, *current_legacy]))
             for path in targets:
                 try:
@@ -283,20 +306,43 @@ class SessionStore:
                         raise HistoryCryptoError(
                             "移行中に会話履歴が更新されました。"
                         )
+                    with open(path, "rb") as handle:
+                        if handle.read() != raw:
+                            raise HistoryCryptoError(
+                                "移行中に会話履歴の内容が更新されました。"
+                            )
                     atomic_write_bytes(path, envelope)
                     os.utime(
                         path,
                         ns=(before.st_atime_ns, before.st_mtime_ns),
                     )
                     migrated += 1
-                except Exception:
+                except Exception as exc:
                     failures.append(path)
-            remaining_legacy, remaining_errors = self.scan_legacy()
+                    diagnostics.append({
+                        "name": os.path.basename(path),
+                        "phase": "encrypt",
+                        "error_type": type(exc).__name__,
+                    })
+            remaining_legacy, remaining_errors, remaining_diagnostics = (
+                self._scan_legacy_with_diagnostics()
+            )
             failures.extend(remaining_legacy)
             failures.extend(remaining_errors)
+            diagnostics.extend({
+                "name": os.path.basename(path),
+                "phase": "post_scan",
+                "error_type": "LegacyHistoryRemaining",
+            } for path in remaining_legacy)
+            diagnostics.extend({
+                **detail, "phase": "post_scan"
+            } for detail in remaining_diagnostics)
         self._index.clear()
         if failures:
-            raise HistoryMigrationError(list(dict.fromkeys(failures)))
+            raise HistoryMigrationError(
+                list(dict.fromkeys(failures)),
+                diagnostics=diagnostics,
+            )
         return migrated
 
     def expired_paths(

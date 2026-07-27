@@ -6,7 +6,11 @@ import unittest
 from unittest.mock import patch
 
 from history_crypto import HistoryCryptoError
-from session_store import SessionStore, normalize_retention_days
+from session_store import (
+    HistoryMigrationError,
+    SessionStore,
+    normalize_retention_days,
+)
 
 
 class FakeProtector:
@@ -157,6 +161,70 @@ class SessionStoreIndexTests(unittest.TestCase):
             self.assertEqual(handle.read(), before)
         with open(lock_path, "rb") as handle:
             self.assertEqual(handle.read(), b"12345")
+
+    def test_migration_failure_keeps_safe_diagnostics_and_can_resume(self):
+        first = self._write_legacy(
+            "chat_1.json", {"title": "First", "history": []})
+        second = self._write_legacy(
+            "chat_2.json", {"title": "Second", "history": []})
+        real_write = __import__("session_store").atomic_write_bytes
+
+        def fail_second(path, data):
+            if path == second:
+                raise OSError("secret diagnostic text")
+            return real_write(path, data)
+
+        with patch("session_store.atomic_write_bytes", side_effect=fail_second):
+            with self.assertRaises(HistoryMigrationError) as caught:
+                self.store.migrate_legacy([first, second])
+
+        details = caught.exception.diagnostics
+        self.assertTrue(any(
+            detail == {
+                "name": "chat_2.json",
+                "phase": "encrypt",
+                "error_type": "OSError",
+            }
+            for detail in details
+        ))
+        self.assertNotIn("secret diagnostic text", repr(details))
+        self.assertTrue(self.store._read_document(first)[1])
+        self.assertFalse(self.store._read_document(second)[1])
+        self.assertEqual(self.store.migrate_legacy([second]), 1)
+        self.assertTrue(self.store._read_document(second)[1])
+
+    def test_same_size_same_mtime_content_change_is_not_overwritten(self):
+        path = self._write_legacy(
+            "chat_1.json", {"title": "AAAA", "history": []})
+        before = os.stat(path)
+        original_open = open
+        read_count = 0
+
+        def replace_before_final_read(*args, **kwargs):
+            nonlocal read_count
+            handle = original_open(*args, **kwargs)
+            if args[0] == path and args[1] == "rb":
+                read_count += 1
+                if read_count == 3:
+                    handle.close()
+                    with original_open(path, "r+b") as writer:
+                        data = writer.read().replace(b"AAAA", b"BBBB")
+                        writer.seek(0)
+                        writer.write(data)
+                    os.utime(
+                        path,
+                        ns=(before.st_atime_ns, before.st_mtime_ns),
+                    )
+                    return original_open(*args, **kwargs)
+            return handle
+
+        with patch("builtins.open", side_effect=replace_before_final_read):
+            with self.assertRaises(HistoryMigrationError):
+                self.store.migrate_legacy([path])
+        with original_open(path, "rb") as handle:
+            stored = handle.read()
+        self.assertIn(b"BBBB", stored)
+        self.assertNotIn(b"llm-local-chat-dpapi", stored)
 
     def test_corrupt_history_is_not_pruned_or_modified(self):
         path = os.path.join(self.temp_dir.name, "chat_broken.json")

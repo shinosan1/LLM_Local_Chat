@@ -1020,9 +1020,19 @@ class ChatApp:
             except HistoryMigrationError as exc:
                 names = "\n".join(
                     os.path.basename(path) for path in exc.paths[:10])
+                preflight_failed = any(
+                    detail.get("phase") == "scan"
+                    for detail in exc.diagnostics
+                )
+                summary = (
+                    "移行直前の安全確認で破損または未対応形式の"
+                    "履歴を検出しました。"
+                    if preflight_failed
+                    else "暗号化できない履歴が残っています。"
+                )
                 messagebox.showerror(
                     "会話履歴の暗号化エラー",
-                    "暗号化できない履歴が残っています。\n"
+                    f"{summary}\n"
                     "安全のため通常起動を中止します。\n\n"
                     f"対象（最大10件）:\n{names}\n\n"
                     "対象ファイルは自動削除・移動されていません。"
@@ -2127,6 +2137,7 @@ class ChatApp:
 # ═══════════════════════════════════════════════════════
 def main() -> None:
     root = tk.Tk()
+    root.withdraw()
     deps = None
     try:
         deps = create_app_deps(LOG_DIR)
@@ -2157,6 +2168,7 @@ def main() -> None:
         except tk.TclError:
             pass
         return
+    root.deiconify()
     root.protocol("WM_DELETE_WINDOW", app._on_close)
     root.mainloop()
 
