@@ -139,6 +139,28 @@ class IntegrationLifecycleTests(unittest.TestCase):
 
 
 class ShutdownTests(unittest.TestCase):
+    def test_failed_import_confirmation_post_clears_pending(self):
+        app = ChatApp.__new__(ChatApp)
+        app._portable_pending = threading.Event()
+        app._portable_pending.set()
+        app._post_ui = lambda _callback: False
+        posted = app._post_portable_import_confirmation([], 0, 0)
+        self.assertFalse(posted)
+        self.assertFalse(app._portable_pending.is_set())
+
+    def test_close_is_blocked_while_portable_history_is_running(self):
+        app = ChatApp.__new__(ChatApp)
+        app.root = _Root()
+        app._closing = False
+        app._portable_pending = threading.Event()
+        app._portable_pending.set()
+        app._save_now = lambda **_kwargs: self.fail(
+            "save must not run while portable history is active")
+        with patch("LLM_Local_Chat.messagebox.showwarning") as warning:
+            app._on_close()
+        warning.assert_called_once()
+        self.assertFalse(app._closing)
+
     def test_close_stops_components_and_destroys_when_idle(self):
         root = _Root()
         app = ChatApp.__new__(ChatApp)

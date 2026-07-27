@@ -59,13 +59,14 @@
 #  ・ゲストモード（保存しない）
 #  ・設定ダイアログ（モデルパス / n_ctx / max_tokens /
 #                   temperature / VAD 感度）
-#  ・テキストとして保存
+#  ・パスフレーズ付き暗号化インポート／エクスポート
 #  ・ダークテーマ
 # =============================================================
 
 import os
 import sys
 import json
+import datetime
 import gc
 import threading
 import time
@@ -83,7 +84,7 @@ from PIL import Image, ImageTk
 
 # ADDED: VRAM安全フィルタ（resource_monitor.py）
 from app_composition import AppDeps, create_app_deps
-from atomic_io import atomic_write_json
+from atomic_io import atomic_write_bytes, atomic_write_json
 from audio_workers import (
     DEFAULT_TTS_RATE,
     DEFAULT_VAD_RMS,
@@ -102,6 +103,13 @@ from integrations import IntegrationBridge
 from kakeibo_amount import normalize_manual_amount_input
 from kakeibo_confirmation import can_submit_kakeibo_candidate
 from prompt_builder import KAKEIBO_EXPENSE_CATS, KAKEIBO_INCOME_CATS
+from portable_history import (
+    MAX_ARCHIVE_BYTES,
+    PortableHistoryError,
+    export_archive,
+    import_archive,
+    session_digest,
+)
 from resource_monitor import adjust_llm, normalize_whisper_mode
 from history_crypto import HistoryCryptoError
 from session_store import (
@@ -125,7 +133,7 @@ if sys.platform == "win32":
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.5.0"
 
 
 def app_path(*parts: str) -> str:
@@ -932,6 +940,7 @@ class ChatApp:
         self._whisper_load_started    = False  # LLM準備後に初回だけロードする
         self._llm_load_generation     = 0
         self._llm_load_active         = threading.Event()
+        self._portable_pending        = threading.Event()
         self._files: list[str]        = []
         self._current_session: dict   = {}
         self._current_path: str | None = None
@@ -1256,7 +1265,14 @@ class ChatApp:
         bar.add_cascade(label="ファイル", menu=mf)
         mf.add_command(label="新規チャット",       command=self._new_session)
         mf.add_command(label="保存",              command=self._save_now)
-        mf.add_command(label="テキストとして保存", command=self._save_as_text)
+        mf.add_command(
+            label="暗号化エクスポート",
+            command=self._export_portable_history,
+        )
+        mf.add_command(
+            label="暗号化インポート",
+            command=self._import_portable_history,
+        )
         mf.add_command(label="設定",              command=self._open_settings)
         mf.add_separator()
         mf.add_command(label="終了",              command=self._on_close)
@@ -1275,6 +1291,15 @@ class ChatApp:
         mh = Menu(bar, tearoff=0)
         bar.add_cascade(label="ヘルプ", menu=mh)
         mh.add_command(label="基本的な使い方", command=self._show_help)
+        mh.add_command(label="音声入力・TTS", command=self._show_audio_help)
+        mh.add_command(
+            label="暗号化インポート／エクスポート",
+            command=self._show_portable_help,
+        )
+        mh.add_command(
+            label="家計簿・健康記録",
+            command=self._show_integration_help,
+        )
         mh.add_command(
             label="履歴の暗号化と復旧",
             command=self._show_history_help,
@@ -1841,38 +1866,245 @@ class ChatApp:
                 )
             return False
 
-    def _save_as_text(self) -> bool:
-        if not self._current_session.get("history"):
-            messagebox.showinfo("保存", "保存する会話がありません")
+    def _portable_ready(self) -> bool:
+        if self._closing or self._portable_pending.is_set():
+            messagebox.showwarning(
+                "暗号化履歴",
+                "暗号化インポートまたはエクスポートを処理中です。",
+                parent=self.root,
+            )
             return False
-        if not messagebox.askyesno(
-            "平文テキストとして保存",
-            "指定先へ暗号化されていない平文を保存します。\n"
-            "保存先のアクセス権限とバックアップ範囲を確認してください。\n\n"
-            "続行しますか？",
+        if self._ctrl.is_busy():
+            messagebox.showwarning(
+                "暗号化履歴",
+                "AIの処理中は履歴を操作できません。",
+                parent=self.root,
+            )
+            return False
+        return True
+
+    def _ask_export_passphrase(self) -> str | None:
+        first = simpledialog.askstring(
+            "暗号化エクスポート",
+            "12文字以上のパスフレーズを入力してください。\n"
+            "紛失した場合、履歴を復元できません。",
+            show="*",
+            parent=self.root,
+        )
+        if first is None:
+            return None
+        if len(first) < 12:
+            messagebox.showerror(
+                "暗号化エクスポート",
+                "パスフレーズは12文字以上にしてください。",
+                parent=self.root,
+            )
+            return None
+        second = simpledialog.askstring(
+            "暗号化エクスポート",
+            "確認のため、同じパスフレーズを再入力してください。",
+            show="*",
+            parent=self.root,
+        )
+        if second != first:
+            messagebox.showerror(
+                "暗号化エクスポート",
+                "パスフレーズが一致しません。",
+                parent=self.root,
+            )
+            return None
+        return first
+
+    def _export_portable_history(self) -> None:
+        if not self._portable_ready():
+            return
+        current = self._current_session
+        has_current = bool(current.get("history"))
+        choice = messagebox.askyesnocancel(
+            "暗号化エクスポート",
+            "「はい」: 現在の会話だけ\n"
+            "「いいえ」: 保存済みの全会話\n\n"
+            "暗号化ファイルは人間が直接読めません。",
+            parent=self.root,
+        )
+        if choice is None:
+            return
+        if choice and not has_current:
+            messagebox.showinfo(
+                "暗号化エクスポート",
+                "現在の会話にエクスポートする履歴がありません。",
+                parent=self.root,
+            )
+            return
+        passphrase = self._ask_export_passphrase()
+        if passphrase is None:
+            return
+        path = filedialog.asksaveasfilename(
+            title="暗号化エクスポート",
+            defaultextension=".shiro-export",
+            filetypes=[("Shiro暗号化履歴", "*.shiro-export")],
+            parent=self.root,
+        )
+        if not path:
+            return
+        if os.path.exists(path) and not messagebox.askyesno(
+            "上書き確認",
+            "既存の暗号化ファイルを置き換えますか？",
             icon="warning",
             parent=self.root,
         ):
-            return False
-        path = filedialog.asksaveasfilename(
-            title="テキストとして保存",
-            defaultextension=".txt",
-            filetypes=[("テキストファイル", "*.txt")])
+            return
+        current_snapshot = json.loads(json.dumps(current, ensure_ascii=False))
+        self._portable_pending.set()
+
+        def _worker():
+            try:
+                sessions = (
+                    [current_snapshot]
+                    if choice
+                    else self._session_store.exportable_sessions()
+                )
+                if not choice and has_current:
+                    digest = session_digest(current_snapshot)
+                    if all(session_digest(item) != digest for item in sessions):
+                        sessions.append(current_snapshot)
+                raw = export_archive(sessions, passphrase)
+                atomic_write_bytes(path, raw)
+                self._post_ui(lambda: messagebox.showinfo(
+                    "暗号化エクスポート",
+                    f"{len(sessions)}件の会話履歴を暗号化して保存しました。",
+                    parent=self.root,
+                ))
+            except Exception as exc:
+                self._post_ui(lambda err=exc: messagebox.showerror(
+                    "暗号化エクスポート",
+                    str(err),
+                    parent=self.root,
+                ))
+            finally:
+                self._portable_pending.clear()
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _import_portable_history(self) -> None:
+        if not self._portable_ready():
+            return
+        path = filedialog.askopenfilename(
+            title="暗号化インポート",
+            filetypes=[("Shiro暗号化履歴", "*.shiro-export")],
+            parent=self.root,
+        )
         if not path:
-            return False
+            return
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(f"タイトル: {self._current_session['title']}\n")
-                f.write("=" * 60 + "\n\n")
-                for h in self._current_session["history"]:
-                    f.write(f"👤 ユーザー\n{h['user']}\n\n")
-                    f.write(f"🤖 アシスタント\n{h.get('assistant','')}\n")
-                    f.write("-" * 60 + "\n")
-            messagebox.showinfo("保存完了", "テキストファイルとして保存しました")
-            return True
-        except Exception as e:
-            messagebox.showerror("保存エラー", str(e))
-            return False
+            if os.path.getsize(path) > MAX_ARCHIVE_BYTES:
+                raise PortableHistoryError(
+                    "暗号化ファイルのサイズが上限を超えています。")
+        except OSError as exc:
+            messagebox.showerror(
+                "暗号化インポート", str(exc), parent=self.root)
+            return
+        passphrase = simpledialog.askstring(
+            "暗号化インポート",
+            "エクスポート時のパスフレーズを入力してください。",
+            show="*",
+            parent=self.root,
+        )
+        if passphrase is None:
+            return
+        self._portable_pending.set()
+
+        def _read_worker():
+            try:
+                with open(path, "rb") as handle:
+                    raw = handle.read(MAX_ARCHIVE_BYTES + 1)
+                sessions = import_archive(raw, passphrase)
+                existing = self._session_store.existing_session_digests()
+                duplicate_count = sum(
+                    session_digest(item) in existing for item in sessions)
+                days = normalize_retention_days(
+                    self._cfg.get("history_retention_days", 0))
+                expired_count = 0
+                if days:
+                    cutoff = datetime.datetime.now(
+                        datetime.timezone.utc
+                    ) - datetime.timedelta(days=days)
+                    for item in sessions:
+                        text = item.get("last_activity_at")
+                        if not text:
+                            continue
+                        try:
+                            activity = datetime.datetime.fromisoformat(text)
+                            if activity.tzinfo and activity < cutoff:
+                                expired_count += 1
+                        except ValueError:
+                            pass
+                self._post_portable_import_confirmation(
+                    sessions, duplicate_count, expired_count)
+            except Exception as exc:
+                self._portable_pending.clear()
+                self._post_ui(lambda err=exc: messagebox.showerror(
+                    "暗号化インポート",
+                    str(err),
+                    parent=self.root,
+                ))
+
+        threading.Thread(target=_read_worker, daemon=True).start()
+
+    def _post_portable_import_confirmation(
+        self, sessions: list[dict], duplicate_count: int, expired_count: int
+    ) -> bool:
+        posted = self._post_ui(
+            lambda: self._confirm_portable_import(
+                sessions, duplicate_count, expired_count)
+        )
+        if not posted:
+            self._portable_pending.clear()
+        return posted
+
+    def _confirm_portable_import(
+        self, sessions: list[dict], duplicate_count: int, expired_count: int
+    ) -> None:
+        warning = ""
+        if expired_count:
+            warning = (
+                f"\n\n保存期間を超える履歴が{expired_count}件あります。"
+                "日時は保持され、次回の期限処理で削除対象になります。"
+            )
+        choice = messagebox.askyesnocancel(
+            "暗号化インポート",
+            f"履歴: {len(sessions)}件\n重複: {duplicate_count}件\n"
+            "「はい」: 重複をスキップしてインポート\n"
+            "「いいえ」: 重複も別履歴としてインポート"
+            f"{warning}",
+            icon="warning" if expired_count else "question",
+            parent=self.root,
+        )
+        if choice is None:
+            self._portable_pending.clear()
+            return
+
+        def _commit_worker():
+            try:
+                paths, skipped = self._session_store.import_sessions(
+                    sessions, skip_duplicates=choice)
+                self._post_ui(self._refresh_chat_list)
+                self._post_ui(lambda: messagebox.showinfo(
+                    "暗号化インポート",
+                    f"{len(paths)}件をインポートしました。"
+                    f"\n重複スキップ: {skipped}件",
+                    parent=self.root,
+                ))
+            except Exception as exc:
+                self._post_ui(lambda err=exc: messagebox.showerror(
+                    "暗号化インポート",
+                    str(err),
+                    parent=self.root,
+                ))
+            finally:
+                self._portable_pending.clear()
+
+        threading.Thread(target=_commit_worker, daemon=True).start()
 
     def _refresh_chat_list(self) -> None:
         self._chat_list.delete(0, tk.END)
@@ -1951,10 +2183,50 @@ class ChatApp:
     def _show_help(self) -> None:
         messagebox.showinfo(
             "基本的な使い方",
-            "入力欄へメッセージを書き、送信してください。\n"
-            "マイクとTTSは画面のボタン・表示メニューから切り替えられます。\n"
-            "停止は生成・読み上げを中断します。ゲストモードでは履歴を保存しません。\n"
-            "家計簿・健康記録の登録内容は確認画面を確認してから送信してください。",
+            "■ 会話\n"
+            "入力欄へメッセージを書いて送信します。停止は生成と読み上げを"
+            "中断しますが、処理状況によって完了まで時間がかかる場合があります。\n\n"
+            "■ 履歴\n"
+            "通常の会話は自動保存され、左側で検索・切替できます。"
+            "右クリックで名前変更・削除ができます。\n\n"
+            "■ ゲストモード\n"
+            "ゲストモード中の会話はchat_logsへ保存しません。"
+            "メモリ、画面、標準出力、連携先APIまで消去する機能ではありません。",
+            parent=self.root,
+        )
+
+    def _show_audio_help(self) -> None:
+        messagebox.showinfo(
+            "音声入力・TTS",
+            "マイクは音声を検知するとWhisperで文字起こしします。"
+            "短い音声、無音、低信頼・反復的な認識結果は破棄される場合があります。\n\n"
+            "TTSは回答を文単位で読み上げます。読み上げ中は自己音声の再認識を"
+            "防ぐためマイクを抑制します。マイクとTTSは画面のボタンや"
+            "表示メニューから切り替えられます。",
+            parent=self.root,
+        )
+
+    def _show_portable_help(self) -> None:
+        messagebox.showinfo(
+            "暗号化インポート／エクスポート",
+            "別PC・別Windowsユーザーへ移す場合は、ファイルメニューの"
+            "「暗号化エクスポート」を使用します。出力はAES-256-GCMで"
+            "暗号化され、人間が直接読めるテキストではありません。\n\n"
+            "パスフレーズは保存されません。紛失すると復元できません。"
+            "暗号化ファイルとパスフレーズを同じ場所へ保管しないでください。\n\n"
+            "インポートした履歴は、このPCの現在のWindowsユーザー用DPAPIで"
+            "再暗号化されます。保存期間を超えた日時の履歴は、次回の期限処理で"
+            "削除対象になる場合があります。",
+            parent=self.root,
+        )
+
+    def _show_integration_help(self) -> None:
+        messagebox.showinfo(
+            "家計簿・健康記録",
+            "家計簿・健康記録モードでは、LLMが抽出した内容を確認画面へ表示し、"
+            "承認後にローカルAPIへ送信します。内容を必ず確認してください。\n\n"
+            "連携先サービスが停止している場合は登録できません。"
+            "送信済みデータは会話履歴の暗号化・保存期間管理の対象外です。",
             parent=self.root,
         )
 
@@ -1965,7 +2237,9 @@ class ChatApp:
             "別ユーザー、OS再インストール後、別PCでは復号できない場合があります。\n\n"
             "起動時に破損・復号不能と表示された場合は、全Shiroを終了し、"
             "chat_logsを非公開の場所へバックアップしてください。"
-            "対象ファイルは削除せずchat_logs外へ退避してから再起動してください。",
+            "対象ファイルは削除せずchat_logs外へ退避してから再起動してください。\n\n"
+            "chat_logsの暗号文は別環境への移行形式ではありません。"
+            "別環境へ移す場合は暗号化エクスポートを使用してください。",
             parent=self.root,
         )
 
@@ -2124,19 +2398,22 @@ class ChatApp:
     def _on_close(self) -> None:
         if self._closing:
             return
-        if not self._save_now(show_error=False):
-            choice = messagebox.askyesnocancel(
-                "会話履歴を保存できません",
-                "DPAPIで会話履歴を保存できませんでした。\n\n"
-                "「はい」: 警告確認後に平文テキストとして保存\n"
-                "「いいえ」: 保存せず終了\n"
-                "「キャンセル」: 終了を取り消す",
-                icon="warning",
+        portable_pending = getattr(self, "_portable_pending", None)
+        if portable_pending is not None and portable_pending.is_set():
+            messagebox.showwarning(
+                "終了できません",
+                "暗号化インポートまたはエクスポートの完了後に終了してください。",
                 parent=self.root,
             )
-            if choice is None:
-                return
-            if choice and not self._save_as_text():
+            return
+        if not self._save_now(show_error=False):
+            if not messagebox.askyesno(
+                "会話履歴を保存できません",
+                "DPAPIで会話履歴を保存できませんでした。\n\n"
+                "保存せずに終了しますか？",
+                icon="warning",
+                parent=self.root,
+            ):
                 return
         self._closing = True
         self._llm_load_generation += 1

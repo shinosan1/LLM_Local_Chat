@@ -2,6 +2,8 @@ import datetime
 import hashlib
 import json
 import os
+import threading
+import uuid
 from contextlib import contextmanager
 
 from atomic_io import atomic_write_bytes
@@ -12,6 +14,7 @@ from history_crypto import (
     encode_envelope,
     validate_session,
 )
+from portable_history import session_digest, validate_portable_session
 
 
 ALLOWED_RETENTION_DAYS = (0, 30, 90, 180, 365)
@@ -55,6 +58,7 @@ class SessionStore:
         self._log_dir = log_dir
         self._protector = protector if protector is not None else DPAPIProtector()
         self._index: dict[str, dict] = {}
+        self._lock = threading.RLock()
         os.makedirs(self._log_dir, exist_ok=True)
 
     def new_session(self) -> dict:
@@ -114,22 +118,23 @@ class SessionStore:
         return prepared
 
     def save(self, session: dict, path: str | None) -> str | None:
-        history = session.get("history", [])
-        if not history:
-            return None
-        prepared = self._prepare_for_save(session, path)
-        if not path:
-            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            base_path = os.path.join(self._log_dir, f"chat_{ts}.json")
-            path = base_path
-            suffix = 1
-            while os.path.exists(path):
-                path = os.path.splitext(base_path)[0] + f"_{suffix}.json"
-                suffix += 1
-        self._write_encrypted(path, prepared)
-        session["last_activity_at"] = prepared["last_activity_at"]
-        self._cache_session(path, prepared)
-        return path
+        with self._lock:
+            history = session.get("history", [])
+            if not history:
+                return None
+            prepared = self._prepare_for_save(session, path)
+            if not path:
+                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                base_path = os.path.join(self._log_dir, f"chat_{ts}.json")
+                path = base_path
+                suffix = 1
+                while os.path.exists(path):
+                    path = os.path.splitext(base_path)[0] + f"_{suffix}.json"
+                    suffix += 1
+            self._write_encrypted(path, prepared)
+            session["last_activity_at"] = prepared["last_activity_at"]
+            self._cache_session(path, prepared)
+            return path
 
     def _read_metadata(self, path: str, fallback_title: str) -> dict:
         data, _encrypted, _raw = self._read_document(path)
@@ -182,44 +187,132 @@ class SessionStore:
             self._index.pop(path, None)
 
     def list_sessions(self, keyword: str = "") -> list[dict]:
-        self._refresh_index()
-        kw = keyword.strip().lower()
-        sessions = [
-            cached["metadata"]
-            for path, cached in sorted(
-                self._index.items(),
-                key=lambda item: os.path.basename(item[0]),
-                reverse=True,
-            )
-            if cached["metadata"] is not None
-        ]
-        if not kw:
-            return sessions
-        return [
-            session for session in sessions
-            if kw in (session["title"] + session["summary"]).lower()
-        ]
+        with self._lock:
+            self._refresh_index()
+            kw = keyword.strip().lower()
+            sessions = [
+                cached["metadata"]
+                for path, cached in sorted(
+                    self._index.items(),
+                    key=lambda item: os.path.basename(item[0]),
+                    reverse=True,
+                )
+                if cached["metadata"] is not None
+            ]
+            if not kw:
+                return sessions
+            return [
+                session for session in sessions
+                if kw in (session["title"] + session["summary"]).lower()
+            ]
 
     def load(self, path: str) -> dict:
-        data, encrypted, _raw = self._read_document(path)
-        if not encrypted:
-            raise HistoryCryptoError(
-                "暗号化されていない会話履歴です。起動時の移行を実行してください。"
-            )
-        return data
+        with self._lock:
+            data, encrypted, _raw = self._read_document(path)
+            if not encrypted:
+                raise HistoryCryptoError(
+                    "暗号化されていない会話履歴です。"
+                    "起動時の移行を実行してください。"
+                )
+            return data
 
     def delete(self, path: str) -> None:
-        os.remove(path)
-        self._index.pop(path, None)
+        with self._lock:
+            os.remove(path)
+            self._index.pop(path, None)
 
     def rename(self, path: str, new_title: str) -> dict:
-        data = self.load(path)
-        data["title"] = new_title
-        if not data.get("last_activity_at"):
-            data["last_activity_at"] = self._timestamp_from_mtime(path)
-        self._write_encrypted(path, data)
-        self._cache_session(path, data)
-        return data
+        with self._lock:
+            data = self.load(path)
+            data["title"] = new_title
+            if not data.get("last_activity_at"):
+                data["last_activity_at"] = self._timestamp_from_mtime(path)
+            self._write_encrypted(path, data)
+            self._cache_session(path, data)
+            return data
+
+    def exportable_sessions(self) -> list[dict]:
+        with self._lock:
+            sessions = []
+            for item in self.list_sessions():
+                sessions.append(self.load(item["path"]))
+            return sessions
+
+    def existing_session_digests(self) -> set[str]:
+        with self._lock:
+            return {
+                session_digest(session)
+                for session in self.exportable_sessions()
+            }
+
+    def import_sessions(
+        self, sessions: list[dict], *, skip_duplicates: bool = True
+    ) -> tuple[list[str], int]:
+        with self._lock:
+            validated = []
+            existing = self.existing_session_digests()
+            seen = set(existing)
+            duplicates = 0
+            for session in sessions:
+                validate_portable_session(session)
+                digest = session_digest(session)
+                if skip_duplicates and digest in seen:
+                    duplicates += 1
+                    continue
+                seen.add(digest)
+                validated.append(session)
+            staged = []
+            stage_paths = []
+            committed = []
+            try:
+                for session in validated:
+                    stage = os.path.join(
+                        self._log_dir, f".import.{uuid.uuid4().hex}.tmp"
+                    )
+                    stage_paths.append(stage)
+                    self._write_encrypted(stage, session)
+                    verified, encrypted, _raw = self._read_document(stage)
+                    if not encrypted or session_digest(verified) != session_digest(
+                        session
+                    ):
+                        raise HistoryCryptoError(
+                            "インポート履歴のDPAPI照合に失敗しました。"
+                        )
+                    staged.append((stage, session))
+                for stage, session in staged:
+                    while True:
+                        target = os.path.join(
+                            self._log_dir,
+                            f"chat_import_{uuid.uuid4().hex}.json",
+                        )
+                        if not os.path.exists(target):
+                            break
+                    os.replace(stage, target)
+                    committed.append(target)
+                    self._cache_session(target, session)
+                return committed, duplicates
+            except Exception as original_error:
+                rollback_failures = []
+                for target in committed:
+                    try:
+                        os.remove(target)
+                    except FileNotFoundError:
+                        continue
+                    except OSError:
+                        rollback_failures.append(target)
+                    self._index.pop(target, None)
+                if rollback_failures:
+                    raise HistoryCryptoError(
+                        "インポートの巻き戻しに失敗しました。"
+                        "追加された履歴を確認してください。"
+                    ) from original_error
+                raise
+            finally:
+                for stage in stage_paths:
+                    try:
+                        os.remove(stage)
+                    except FileNotFoundError:
+                        pass
 
     def _scan_legacy_with_diagnostics(self):
         legacy = []

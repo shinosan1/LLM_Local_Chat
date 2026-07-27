@@ -29,6 +29,8 @@ pywin32==309
 # pynvml が未インストールの場合、nvidia-smi コマンド経由でフォールバックする。
 # GPU なし環境では両方不要（CPU-only モードで自動動作）。
 nvidia-ml-py==13.610.43
+# Official PyPI package (Python Cryptographic Authority)
+cryptography==49.0.0
 
 # CPU/GPU load metrics (non-decision metric — ログ・診断専用)
 psutil>=5.9.0
