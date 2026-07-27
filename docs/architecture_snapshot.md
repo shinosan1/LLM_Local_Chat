@@ -66,7 +66,7 @@ This document captures the current architecture of LLM Local Chat before the nex
 - `VRAMGuard` は即時観測値から安全判定を行う。
 - `adjust_llm()` は LLM ロード前に `n_gpu_layers` を調整する。
 - `adjust_inference()` は推論直前に `max_tokens` を削減、または推論をブロックする。
-- `WhisperPool` は CPU版 Whisper small と、条件付き GPU版 Whisper medium を保持する。
+- `WhisperPool` はCPU版Whisper smallと、設定・空き容量に応じたGPU版smallまたはmediumを保持する。
 - `WhisperController` は GPU/CPU 切替のヒステリシスを持つ。
 - `ResourceManager` は `adjust_inference()` の薄いラッパー。
 
@@ -100,8 +100,8 @@ This document captures the current architecture of LLM Local Chat before the nex
 1. `LLM_Local_Chat.main()` が Tk root を作る。
 2. `create_app_deps(LOG_DIR)` が起動時依存を生成する。
 3. `ChatApp(root, deps)` が UI、TTS、IntegrationBridge、Controller を接続する。
-4. LLM はバックグラウンドスレッドでロードされる。
-5. Whisper は `_load_whisper_async()` から `deps.whisper_pool.load(deps.res_monitor)` でロードされる。
+4. LLM はバックグラウンドスレッドで先にロードされる。
+5. LLMロード完了後、Whisperは`_load_whisper_async()`から`deps.whisper_pool.load(deps.res_monitor)`で一度だけロードされる。
 6. Whisperロード後、`VoiceRecognizer` が起動する。
 7. Tk mainloop が UIイベントを処理する。
 
@@ -125,13 +125,15 @@ This document captures the current architecture of LLM Local Chat before the nex
 5. `LLMService.generate()` がストリーミング推論を別スレッドで実行する。
 6. token は `ChatApp._append_stream_token()` へ渡され、チャット欄に逐次表示される。
 7. 完了後、`Controller._on_llm_done()` が履歴、要約更新、TTS、保存、連携処理を進める。
+8. 性能ログの出力token数は生成本文をモデルtokenizerで数える。
 
 停止処理の流れ:
 
 1. `Controller.stop()` が `_llm_abort` を立てる。
 2. `TTSWorker.stop_all()` で読み上げキューと再生を止める。
 3. `LLMService.abort()` でストリーミングループに中断要求を出す。
-4. 最大約3秒待機し、UIロックを解除する。
+4. 最大約3秒待機し、終了済みならUIロックを解除する。
+5. 3秒以内に停止しなければ`stopping`と操作ロックを維持して再起動を案内し、低頻度監視を継続する。遅延終了時は操作世代を確認してから解除する。
 
 ## 7. Local Integration Flow
 
@@ -149,9 +151,10 @@ This document captures the current architecture of LLM Local Chat before the nex
 1. UI側で健康記録モードが有効になる。
 2. `PromptBuilder.build_health_prompt()` が JSON 出力指示つきプロンプトを作る。
 3. LLM応答後、`extract_health_json()` が JSON を抽出する。
-4. `IntegrationBridge.confirm_and_send_biolog()` が payload をサニタイズする。
-5. ローカルAPI URLであることを確認する。
-6. ユーザー確認後、`user_id: "self"` を付与して `BIOLOG_API_URL` へ POST する。
+4. `prepare_biolog_record()` がユーザー原文の明示ラベル（食事ログ・行動ログ・メモ）を決定的に解析し、同じフィールドのLLM値より優先して統合する。
+5. `IntegrationBridge.confirm_and_send_biolog()` が明示由来情報を保持したまま最終サニタイズする。由来情報はAPI payloadには含めない。
+6. ローカルAPI URLであることを確認する。
+7. ユーザー確認後、`user_id: "self"` を付与して `BIOLOG_API_URL` へ POST する。
 
 重要な保護:
 
@@ -168,10 +171,10 @@ VRAM安全フィルタの設計思想は「VRAMを管理する」ではなく「
 
 - `ResourceMonitor`: 0.5秒周期で VRAM/GPU/CPU を観測。
 - `VRAMGuard`: `vram_score` ベースで即時安全判定。
-- `adjust_llm()`: LLMロード前に VRAM 使用率が高ければ `n_gpu_layers=0` へ落とす。
-- `adjust_inference()`: 推論直前に `max_tokens` を段階削減し、危険時は推論をブロックする。
-- `WhisperPool`: CPU版 small を常時ロードし、VRAM条件がよければ GPU版 medium もロードする。
-- `WhisperController`: GPU使用率のヒステリシスで Whisper の GPU/CPU 使用を切り替える。
+- `adjust_llm()`: CUDA対応とGGUFサイズを含む実空き容量判定で、全層GPU要求またはCPUフォールバックを選ぶ。
+- `adjust_inference()`: 推論直前の実空き容量と動的予約領域で`max_tokens`を段階削減し、危険時だけ推論をブロックする。
+- `WhisperPool`: LLMロード後にCPU版smallをロードし、`whisper_mode`と空き容量に応じてGPU smallまたはGPU mediumもロードする。
+- `WhisperController`: GPU版がロード済みの場合だけ、GPU使用率のヒステリシスで使用モデルを切り替える。
 
 音声安全側の主な構成:
 
@@ -188,6 +191,7 @@ VRAM安全フィルタの設計思想は「VRAMを管理する」ではなく「
 - GPU利用時は NVIDIA/CUDA 環境が前提。CPU-only でも一部動作可能だが性能は落ちる。
 - セットアップ後の通常チャットはローカル中心。ただし Whisper 初回モデル取得や任意のローカルAPI連携は別扱い。
 - 家計簿/Biolog連携はローカルAPI前提。
+- 設定・履歴・アバターと相対モデルパスはアプリ配置フォルダ基準で解決する。
 - VRAM安全策は OOM を完全には防がない。目的はクラッシュ頻度の確率的低減。
 
 ## 10. Known Risks / Things To Preserve
@@ -198,6 +202,7 @@ Preserve:
 - 停止ボタンまわりの `_llm_abort`、UIロック、TTS停止、LLMService abort の順序。
 - TTS中のVAD抑制。ここを崩すと読み上げ音声を再入力する可能性がある。
 - 家計簿/Biolog送信前のサニタイズ、ローカルURL制限、確認ダイアログ。
+- 終了時は新規操作を拒否し、LLM・Voice・TTS・API処理を最大6秒監視してからTkを破棄する。
 - `main()` 起動時に重い依存を生成する構造。import時に Tk ウィンドウや重いモデルロードが走らないこと。
 
 Risks:
@@ -206,7 +211,7 @@ Risks:
 - `Controller` は薄くなっているが、`app` への直接参照が多く、完全な独立サービスではない。
 - `WhisperPool` の内部属性 `_ctrl` を `Controller` 側が参照しているため、境界がやや脆い。
 - VRAM観測は TOCTOU があり、他プロセスや CUDA allocator の挙動までは制御できない。
-- JSON抽出は正規表現ベースであり、LLM応答の形式崩れには限界がある。
+- JSON抽出は正規表現ベースであり、LLM応答の形式崩れには限界がある。健康JSONが複数ある場合は厳格JSONとして有効な最後の候補を採るため「例示→本番」は緩和できるが、逆順を意味的に完全判定するものではない。
 - 現在のワークツリーは未コミット/未追跡ファイルが多く、次作業前に差分確認が必要。
 
 ## 11. Next Refactoring Notes

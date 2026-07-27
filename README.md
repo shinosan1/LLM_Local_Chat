@@ -1,12 +1,12 @@
 # LLM Local Chat
 
 ローカルLLM（llama.cpp）＋ Whisper音声認識＋ Windows SAPIを組み合わせた日本語AIチャットアプリです。  
-**セットアップ完了後は完全オフラインで動作します。会話内容が外部サーバーに送信されることはありません。**
+**必要な依存ライブラリとモデルをすべて取得済みで、Biolog・家計簿連携先をローカル環境に限定した場合、推論・音声認識・音声合成・会話処理はローカルで実行されます。**
 
-機密情報を含む業務利用や、プライバシーを重視する用途に適しています。
+ローカル処理を重視した構成です。機密情報を扱う業務環境へ導入する場合は、端末のアクセス制御、平文履歴、Dockerポート、依存ライブラリ、バックアップ方法を含め、組織の情報セキュリティ担当者による事前評価を行ってください。
 
 ![Python](https://img.shields.io/badge/Python-3.12.10-blue)
-![Version](https://img.shields.io/badge/Version-1.1.0-green)
+![Version](https://img.shields.io/badge/Version-1.3.0-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-All%20Rights%20Reserved-red)
 
@@ -16,15 +16,29 @@
 
 - ストリーミング表示によるリアルタイム応答
 - PyAudio + RMS-VAD + Whisper による常駐音声認識
-- Windows SAPI（PowerShell経由）によるTTS読み上げ
+- Windows SAPI5（win32comによる直接制御）のTTS読み上げ
 - アバターウィンドウ（瞬き・口パクアニメーション）
 - 会話の要約メモリ（長期会話対応）
 - チャット履歴の保存・読み込み・検索
-- ゲストモード（保存なし）
+- ゲストモード（`chat_logs/`への履歴保存なし）
 - ダークテーマUI
-- **Biolog健康記録連携** — 💪ボタンで体重・食事をLLMに話しかけると自動でBiolog APIへPOST（v1.1.0）
+- **Biolog健康記録連携** — 💪ボタンで計測値・食事・活動内容・メモを入力し、確認後にBiolog APIへPOST（v1.1.0）
 - 家計簿連携（kakeibo-bridge API）
 - **VRAM安全フィルタ** — LLM・Whisper 同時動作時のVRAM枯渇によるクラッシュを確率的に削減（v1.2.0）
+
+---
+
+## 実装構成とテスト
+
+`LLM_Local_Chat.py` をエントリーポイントとし、生成制御は `controller.py`、LLM実行は `llm_service.py`、プロンプト構築は `prompt_builder.py`、履歴管理は `session_store.py`、音声処理は `audio_workers.py` に分割されています。
+
+回帰テストは標準ライブラリの `unittest` で実行できます。
+
+テストファイルは `tests/` 配下にまとめてあります（`.venv` がプロジェクト直下にあるため、素の `unittest discover -v` を使うと `.venv` 内の依存パッケージのテストまで収集してしまいます。`-s tests` で収集範囲を限定し、`-t .` でプロジェクトルートをトップレベルディレクトリに指定してください）。
+
+```bash
+python -m unittest discover -s tests -t . -p "test*.py" -v
+```
 
 ---
 
@@ -41,13 +55,16 @@ LLM（Gemma 4B）とWhisper mediumを同一GPUで動かす際のVRAM競合を緩
 
 | 状況 | 動作 |
 |---|---|
-| LLMロード時にVRAM > 85% | `n_gpu_layers=0`（CPU実行）にフォールバック |
-| Whisperロード時にVRAM > 70% | GPU版ロードをスキップ、CPU版(small)のみで運用 |
-| 推論時にVRAM > 7000MB（先読み込み） | 推論を中止しUIにメッセージ表示 |
-| 推論時にVRAM > 6000MB | `max_tokens` を25%に削減 |
-| 推論時にVRAM > 4500MB | `max_tokens` を50%に削減 |
+| LLMロード前の空き容量がGGUFサイズ+予約領域以上 | `n_gpu_layers=-1`で全層GPUオフロードを要求 |
+| CUDA非対応または必要空き容量不足 | `n_gpu_layers=0`（CPU実行）にフォールバック |
+| Whisperモード`auto`・空き4096MB以上 | GPU版mediumを使用 |
+| Whisperモード`auto`・空き2048〜4095MB | GPU版smallを使用 |
+| Whisperモード`auto`・空き2048MB未満 | CPU版smallのみで運用 |
+| 推論時の実空き容量 < 予約領域（512MBまたは総容量の6%） | 推論を中止しUIにメッセージ表示 |
+| 推論時の実空き容量 512〜1024MB | `max_tokens` を25%に削減 |
+| 推論時の実空き容量 1024〜1536MB | `max_tokens` を50%に削減 |
 | GPU使用率 > 88% | Whisper を CPU に切替（ヒステリシス付き） |
-| GPU使用率 < 70% に回復 | Whisper を GPU に切替復帰 |
+| GPU版Whisperロード済みでGPU使用率 < 70% | Whisper を GPU に切替復帰 |
 
 ### DEBUGログの見方
 
@@ -58,16 +75,18 @@ python -c "import logging; logging.basicConfig(level=logging.DEBUG); exec(open('
 | プレフィックス | 内容 |
 |---|---|
 | `[Monitor]` | VRAM瞬時値・GPU% の収集ログ |
-| `[Guard][llm_init]` | LLMロード前のn_gpu_layers判断 |
-| `[Guard][infer]` | 推論前のmax_tokens調整（fallback=True/False両方が出ることを確認） |
+| `[GPU]` | CUDAバックエンド対応と要求したGPUレイヤー数 |
+| `[VRAM]` | LLMロード前後と推論直前の総量・使用量・実空き容量 |
 | `[Whisper]` | GPU→CPU / CPU→GPU 切替ログ |
-| `[WhisperPool]` | Whisperモデルのロード・取得ログ |
+| `[Whisper]` | CPU/GPUモデルのロード・スキップ理由 |
 
 ### 既知の限界
 
 - pynvml/nvidia-smi はアロケータ後のスナップショット（TOCTOU あり）
 - 単一プロセス内のみ有効（ブラウザ等の他プロセスによるVRAM確保は検知不可）
 - 確率的削減が目的であり、OOMの完全防止は保証しない
+
+Whisper実行モードは設定画面で`自動`・`GPU small`・`GPU medium`・`CPU small`から選択でき、次回起動時に反映されます。手動GPU指定でも安全な空き容量を満たさない場合はCPU smallへフォールバックします。
 
 ---
 
@@ -79,11 +98,11 @@ python -c "import logging; logging.basicConfig(level=logging.DEBUG); exec(open('
 | Python | 3.12.10（64bit） |
 | GPU | NVIDIA GPU推奨（VRAM 8GB以上）／CPUのみでも動作可 |
 | RAM | 8GB以上推奨 |
-| Biolog API（任意） | Docker Desktop + `docker-compose up -d biolog-api`（port 8766） |
+| Biolog API（任意） | `BIOLOG_URL`で指定するローカルAPI（既定値：`http://localhost:8766`） |
 
 > **Mac・Linuxは非対応です。**  
 > TTSにWindows SAPI（win32com）を使用しているため、Windows専用となっています。  
-> Biolog APIコンテナはDockerで提供されます（`C:\Users\shino\python-mysql-dev\app\docker-compose.yml`）。
+> Biologは別プロジェクトです。標準ComposeではAPIの`8766`とUIの`8501`を`127.0.0.1`だけに公開します。認証は実装されていないため、公開範囲を変更する場合はBiolog側のセキュリティ説明を確認してください。
 
 ---
 
@@ -160,7 +179,7 @@ python -m venv .venv
 
 ### 3. 依存ライブラリのインストール
 
-**① まず torch（CUDA版）を先にインストールします：**
+**① 必ず先に、利用環境に合うPyTorchをインストールします：**
 
 ```bash
 pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
@@ -171,14 +190,12 @@ pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124
 > pip install torch torchvision torchaudio
 > ```
 
-**② 次に llama-cpp-python（CUDA版）をインストールします：**
+> **重要:** この手順を飛ばして `requirements.txt` を先に適用すると、
+> CUDA利用環境でも `openai-whisper` の依存としてCPU版torchが入る場合があります。
 
-```bash
-pip install llama-cpp-python==0.3.20 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
-```
+**② llama-cpp-pythonの配布方式を確認します：**
 
-> ※ `cu124` の部分はご自身のCUDAバージョンに合わせて変更してください（cu118、cu121等）。  
-> CPUのみの場合：`pip install llama-cpp-python==0.3.20`
+現在の`requirements.txt`は、CUDA 12.4向けの`llama-cpp-python 0.3.34`ホイールを指定しています。CUDAのバージョンが異なる環境やCPUのみの環境では、そのまま適用せず、利用環境に対応する公式の配布方法を確認してください。
 
 **③ 残りのライブラリをインストールします：**
 
@@ -290,7 +307,7 @@ python LLM_Local_Chat.py
 
 ### 音声入力
 
-起動時はマイク・TTS読み上げともに**OFFがデフォルト**です。  
+コード上の既定値と`chat_settings.json.example`では、起動時のマイク・TTS読み上げはともに**OFF**です。必要に応じて設定ファイルで変更してください。
 マイクボタンをクリックするとONになります。  
 ONの状態で一定以上の音量を検知すると自動的に録音を開始し、Whisperで文字起こしして送信します。  
 再度クリックするとOFFに戻ります。
@@ -307,7 +324,7 @@ AIの返答をWindows SAPIで読み上げます。起動時はOFFがデフォル
 ### 健康記録モード（Biolog連携） — v1.1.0
 
 💪ボタンをクリックすると健康記録モードがONになります。  
-このモードでは、体重・食事・活動内容を話しかけるとLLMが返答した後、自動でBiolog APIへデータをPOSTします。
+このモードでは、計測値・食事・活動内容・メモを話しかけると、確認後にBiolog APIへデータをPOSTします。食事ログ、行動ログ、メモだけの登録にも対応します。
 
 **入力例：**
 ```
@@ -316,13 +333,13 @@ AIの返答をWindows SAPIで読み上げます。起動時はOFFがデフォル
 
 **動作結果：**
 - チャットに「✅ Biolog記録: 2026-05-06 体重 65.0kg 食事:朝はオートミールを食べた」と表示
-- `kakeibo.db` の `health_records` テーブルに記録
+- Biologの健康記録へ保存
 
 **事前準備：**
+Biolog側の文書とComposeを確認してAPIを起動し、LLM Local Chatを実行するPCからヘルスチェックへ接続できることを確認してください。
+標準ComposeではBiolog APIを`127.0.0.1:8766`に限定して公開します。
+
 ```powershell
-cd C:\Users\shino\python-mysql-dev\app
-docker-compose up -d biolog-api
-# ヘルスチェック
 curl http://localhost:8766/api/health/health
 ```
 
@@ -332,12 +349,12 @@ $env:BIOLOG_URL = "http://localhost:8766"  # デフォルト
 python LLM_Local_Chat.py
 ```
 
-> 体重などの数値が含まれない発話（「今日は散歩した」のみ等）は422エラー回避のためAPIへ送信されません。
+> 計測値・食事ログ・行動ログ・メモがすべて空の場合だけ送信しません。`食事ログ`・`行動ログ`・`メモ`を明示した入力は、ユーザー原文から決定的に解析されます。
 
 ### ゲストモード
 
 「ゲストモード: OFF」ボタンをクリックするとゲストモードがONになります。  
-ゲストモードがONのときの会話は**一切保存されません**。  
+ゲストモードがONのとき、会話履歴は`chat_logs/`へ自動保存されません。ただし、実行中のメモリ、標準出力やOS側のログ、連携先APIへ送信したデータまで消去・保護する機能ではありません。ユーザーが「テキストとして保存」を実行した場合は、ゲストモードでも指定先へ保存されます。
 プライベートな会話や一時的な用途に使用してください。  
 再度クリックすると通常モードに戻り、新しいセッションが開始されます。
 
@@ -346,7 +363,8 @@ python LLM_Local_Chat.py
 左ペインに過去の会話一覧が表示されます。クリックで読み込めます。  
 上部の検索欄でタイトル・要約の部分一致検索ができます。  
 右クリックで個別削除が可能です。  
-履歴は `chat_logs/` フォルダにJSON形式で保存されます。
+履歴はアプリ配置フォルダ内の `chat_logs/` にJSON形式で保存されます。起動時のカレントディレクトリには依存しません。
+履歴の自動削除や保存期間の設定はありません。不要な履歴はアプリから個別に削除し、バックアップ側の保持期間も運用者が管理してください。
 
 ### 要約メモリ
 
@@ -375,16 +393,16 @@ python LLM_Local_Chat.py
 ## よくある質問
 
 **Q. OllamaやLM Studioを使わないのはなぜですか？**  
-A. llama.cppを直接Pythonバインディング（llama-cpp-python）で呼び出すことで、外部サービスへの依存をなくし、完全にオフラインで動作させています。
+A. llama.cppをPythonバインディング（llama-cpp-python）から直接呼び出し、LLM推論をローカルで実行するためです。必要な依存ライブラリとモデルを取得済みで、Biolog・家計簿の接続先をローカル環境に限定した構成では、通常の会話処理に外部のLLMサービスを使用しません。セットアップ、モデル取得、外部リンクの閲覧にはインターネット接続が必要です。
 
 **Q. CPUだけでも動きますか？**  
 A. 動作します。ただしモデルの応答速度が大幅に低下します。4Bクラスのモデルであれば実用範囲内です。
 
 **Q. Whisperのモデルは自動でダウンロードされますか？**  
-A. はい。初回起動時に `whisper.load_model("medium")` が自動的にダウンロードします（約1.5GB）。
+A. 起動時マイクを有効にした場合、初回ロード時にWhisperモデルが自動的にダウンロードされます。マイク無効時は、TTSが有効でもWhisperをロードしません。
 
-**Q. TTSにpyttsx3ではなくPowerShellを使っているのはなぜですか？**  
-A. pyttsx3はBluetooth出力デバイスとの相性問題があり、出力先を既定デバイスに固定できないケースがありました。PowerShell経由でWindows SAPIを直接呼び出すことでこの問題を解決しています。
+**Q. TTSには何を使用していますか？**
+A. `win32com.client.Dispatch("SAPI.SpVoice")` により、Windows SAPI5をワーカースレッドから直接制御しています。
 
 
 ---
@@ -393,27 +411,31 @@ A. pyttsx3はBluetooth出力デバイスとの相性問題があり、出力先�
 
 本アプリを業務環境に導入される際は、以下のセキュリティ上の特性を情報セキュリティ担当者と共有・確認してください。
 
+脆弱性を報告する場合は[SECURITY.md](SECURITY.md)を確認し、詳細を公開Issueへ投稿しないでください。
+
 ### セキュリティ上の特性
 
-**安全な点（本アプリ自体の動作について）**
-- 本アプリ自体は外部サーバーへの通信を行いません
-- APIキー・認証情報の送信もありません
-- 会話内容はすべてローカル環境内で処理されます
+**確認済みの範囲**
+- LLM推論、Whisper音声認識、Windows SAPI5による音声合成はローカルプロセスで実行されます
+- 現在のアプリコードでは、外部のLLM APIへ会話内容を送信する処理は確認できません
+- Biolog・家計簿連携は別プロセスのHTTP APIを使用します。現在のアプリコードでは接続先をループバックアドレスに制限し、環境プロキシを使用せずに接続します。実際に利用できるかどうかはローカルAPIとDockerの稼働・ネットワーク設定にも依存します
 
 > **⚠️ 使用するモデルについての注意：**  
-> GGUFモデルの中には、外部サーバーと通信する機能を持つものが存在する可能性があります。  
-> 使用するモデルの仕様・ライセンスを必ず確認してください。
+> GGUFモデルファイル自体が独立して通信や攻撃を行うものではありません。ただし、信頼できない、または破損したファイルがモデル読み込みライブラリの脆弱性を突く可能性があります。信頼できる配布元から取得し、`llama.cpp`および`llama-cpp-python`を定期的に更新してください。モデルの仕様・ライセンスも確認してください。
 
 **導入前に確認すべき点**
 - 会話履歴は`chat_logs/`フォルダに**平文（暗号化なし）**で保存されます
 - PCへの物理アクセスがある第三者には会話内容が閲覧可能です
-- TTSにWindows PowerShellを使用しています
-- ゲストモードはファイル保存を行わないモードですが、メモリ上のデータは保護されません
-- 依存ライブラリの`diskcache`（llama-cpp-pythonが内部使用）にCVE-2025-69872の脆弱性が報告されています。現時点では修正バージョンが提供されていないため、定期的に`pip-audit`で状態を確認することを推奨します
+- TTSにwin32comによるWindows SAPI5を使用しています
+- ゲストモードは`chat_logs/`への履歴保存を行いませんが、メモリ、標準出力、OS側のログ、連携先APIの保存データは保護対象外です
+- 確認済みのCompose構成では、MySQLの`3306`と家計簿APIの`8000`はホストへ公開せず、Biolog APIの`8766`とBiolog UIの`8501`は`127.0.0.1`だけに公開しています
+- 家計簿連携に使用する`kakeibo-bridge`の`8765`は専用Composeで管理し、ホストの`127.0.0.1`だけに公開しています
+- ループバック限定はAPI認証の代わりではなく、同一端末上の他プロセスからのアクセスを防ぐものではありません
+- `diskcache` 5.6.3以下には、キャッシュディレクトリへ書き込める第三者がキャッシュ読込時に任意コードを実行できるCVE-2025-69872が報告され、修正版は公開されていません。現在のアプリコードではディスクキャッシュを有効化する`LlamaDiskCache`や`set_cache`の呼び出しを確認できませんが、利用環境の導入バージョンと有効化状況を確認してください。将来有効化する場合は専用キャッシュディレクトリを使い、書き込み権限を利用者本人に限定してください。修正版の公開後は回帰テストを行ったうえで更新してください
 
 ### 推奨事項
 - `chat_logs/`フォルダへのアクセス権限を適切に設定してください
-- 機密性の高い会話にはゲストモードの使用を推奨します
+- ゲストモードだけを機密情報の保護策とせず、端末のアクセス制御、ログ、連携先、バックアップを含めて運用を評価してください
 - 本アプリの導入・運用に関するセキュリティ責任は導入者側にあります
 
 ---
@@ -446,4 +468,3 @@ A. pyttsx3はBluetooth出力デバイスとの相性問題があり、出力先�
 ### 準拠法
 
 本免責事項は日本法に準拠します。
-

@@ -13,13 +13,54 @@ resource_monitor.py  —  VRAM安全フィルタ
   - この設計は確率的削減が目的であり、OOM の完全防止は保証しない
 """
 
+import gc
 import logging
+import os
 import subprocess
 import threading
 import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+MIN_HARD_RESERVE_MB = 512
+HARD_RESERVE_RATIO = 0.06
+INFERENCE_SOFT_LIMIT_MB = 1536
+WHISPER_GPU_MEDIUM_MIN_FREE_MB = 4096
+WHISPER_GPU_SMALL_MIN_FREE_MB = 2048
+WHISPER_MODES = ("auto", "gpu_small", "gpu_medium", "cpu_small")
+LLM_STARTUP_RESERVE_MB = 1024
+LLM_STARTUP_RESERVE_RATIO = 0.12
+
+
+def hard_reserve_mb(total_mb: int) -> int:
+    """GPU全体容量に応じた、推論中に残す最低空き容量。"""
+    return max(MIN_HARD_RESERVE_MB, int(total_mb * HARD_RESERVE_RATIO))
+
+
+def normalize_whisper_mode(value) -> str:
+    return value if isinstance(value, str) and value in WHISPER_MODES else "auto"
+
+
+def select_whisper_profile(mode: str, snapshot: dict) -> tuple[str, str]:
+    """設定希望と実空き容量から安全なWhisper配置と理由を返す。"""
+    mode = normalize_whisper_mode(mode)
+    free_mb = snapshot.get("free_mb", 0) if snapshot.get("available") else 0
+    if mode == "cpu_small":
+        return "cpu_small", "manual_cpu"
+    if mode == "gpu_medium":
+        if free_mb >= WHISPER_GPU_MEDIUM_MIN_FREE_MB:
+            return "gpu_medium", "manual_gpu_medium"
+        return "cpu_small", f"free<{WHISPER_GPU_MEDIUM_MIN_FREE_MB}mb"
+    if mode == "gpu_small":
+        if free_mb >= WHISPER_GPU_SMALL_MIN_FREE_MB:
+            return "gpu_small", "manual_gpu_small"
+        return "cpu_small", f"free<{WHISPER_GPU_SMALL_MIN_FREE_MB}mb"
+    if free_mb >= WHISPER_GPU_MEDIUM_MIN_FREE_MB:
+        return "gpu_medium", "auto_medium"
+    if free_mb >= WHISPER_GPU_SMALL_MIN_FREE_MB:
+        return "gpu_small", "auto_small"
+    return "cpu_small", f"free<{WHISPER_GPU_SMALL_MIN_FREE_MB}mb"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -45,8 +86,16 @@ class ResourceMonitor:
         self._handle    = None
         self._pynvml    = None
 
+        self._stop_event = threading.Event()
+
         self._init_pynvml()
-        threading.Thread(target=self._loop, daemon=True).start()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self, timeout: float = 2.0) -> None:
+        """ポーリングループを止め、スレッドの終了を待つ。"""
+        self._stop_event.set()
+        self._thread.join(timeout=timeout)
 
     # ── 初期化 ──────────────────────────────────────────
     def _init_pynvml(self) -> None:
@@ -98,10 +147,40 @@ class ResourceMonitor:
         except Exception:
             return 0, 0.0
 
+    def snapshot(self) -> dict:
+        """判定直前のVRAM実測値を同期取得する。取得不能時は available=False。"""
+        try:
+            if self._pynvml_ok:
+                info = self._pynvml.nvmlDeviceGetMemoryInfo(self._handle)
+                total = int(info.total // (1024 ** 2))
+                used = int(info.used // (1024 ** 2))
+            elif self.vram_total_mb > 0:
+                out = subprocess.check_output(
+                    ["nvidia-smi", "--query-gpu=memory.total,memory.used",
+                     "--format=csv,noheader,nounits"],
+                    timeout=3, encoding="utf-8",
+                )
+                total_str, used_str = out.strip().split("\n")[0].split(",")
+                total = int(total_str.strip())
+                used = int(used_str.strip())
+            else:
+                total = used = 0
+        except Exception:
+            total = used = 0
+
+        free = max(0, total - used)
+        return {
+            "available": total > 0,
+            "total_mb": total,
+            "used_mb": used,
+            "free_mb": free,
+            "used_ratio": (used / total) if total else 0.0,
+        }
+
     # ── ポーリングループ ────────────────────────────────
     def _loop(self) -> None:
         alpha = self.EMA_ALPHA
-        while True:
+        while not self._stop_event.is_set():
             try:
                 if self._pynvml_ok:
                     instant, gpu = self._collect_pynvml()
@@ -126,7 +205,7 @@ class ResourceMonitor:
                 )
             except Exception as exc:
                 logger.warning(f"[Monitor] poll error: {exc}")
-            time.sleep(self.POLL_SEC)
+            self._stop_event.wait(self.POLL_SEC)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -167,26 +246,60 @@ class VRAMGuard:
 # ═══════════════════════════════════════════════════════════════
 # 1-C  調整関数  （VRAM ベースの即時調整）
 # ═══════════════════════════════════════════════════════════════
-def adjust_llm(monitor: ResourceMonitor) -> dict:
-    """
-    LLM ロード前: VRAM 使用率だけを見て n_gpu_layers を決定。
-    GPU% は参考ログのみ。VRAM = 唯一の判断軸。
-    fallback=True / False 両ケースがログに出ることを保証。
-    """
-    if monitor.vram_total_mb == 0:
-        logger.debug("[Guard][llm_init] no GPU → n_gpu_layers=-1 (CPU fallback will be handled by llama.cpp)")
-        return {"n_gpu_layers": -1, "fallback": False, "reason": "no_gpu"}
+def _supports_gpu_offload() -> bool:
+    try:
+        from llama_cpp import llama_cpp
+        return bool(llama_cpp.llama_supports_gpu_offload())
+    except Exception:
+        return False
 
-    ratio = monitor.vram_instant_mb / monitor.vram_total_mb
 
-    if ratio > 0.85:
-        result = {"n_gpu_layers": 0, "fallback": True,  "reason": f"ratio={ratio:.2f}>0.85"}
+def adjust_llm(
+    monitor: ResourceMonitor,
+    model_path: str | None = None,
+    gpu_offload_supported: bool | None = None,
+) -> dict:
+    """
+    LLMロード前の実空き容量とモデルサイズからGPUオフロード可否を決める。
+    """
+    snap = monitor.snapshot()
+    supported = (
+        _supports_gpu_offload()
+        if gpu_offload_supported is None else bool(gpu_offload_supported)
+    )
+    model_mb = 0
+    if model_path:
+        try:
+            model_mb = int(os.path.getsize(model_path) / (1024 ** 2))
+        except OSError:
+            pass
+    startup_reserve = max(
+        LLM_STARTUP_RESERVE_MB,
+        int(snap["total_mb"] * LLM_STARTUP_RESERVE_RATIO),
+    )
+    required_mb = model_mb + startup_reserve
+
+    if not supported:
+        result = {"n_gpu_layers": 0, "fallback": True, "reason": "gpu_offload_unsupported"}
+    elif not snap["available"]:
+        result = {"n_gpu_layers": 0, "fallback": True, "reason": "gpu_memory_unavailable"}
+    elif snap["free_mb"] < required_mb:
+        result = {
+            "n_gpu_layers": 0,
+            "fallback": True,
+            "reason": f"free<{required_mb}mb",
+        }
     else:
-        result = {"n_gpu_layers": -1, "fallback": False, "reason": f"ratio={ratio:.2f}"}
+        result = {"n_gpu_layers": -1, "fallback": False, "reason": "gpu_full_offload"}
 
-    logger.debug(
-        f"[Guard][llm_init] vram={monitor.vram_instant_mb:.0f}mb ratio={ratio:.2f} "
-        f"→ {result} | gpu_pct={monitor.gpu_pct:.1f}% (non-decision metric)"
+    result.update({"snapshot": snap, "required_mb": required_mb, "model_mb": model_mb})
+    print(
+        f"[GPU] backend_offload_supported={supported} "
+        f"requested_layers={result['n_gpu_layers']} reason={result['reason']}"
+    )
+    print(
+        f"[VRAM] before_llm total={snap['total_mb']}MB used={snap['used_mb']}MB "
+        f"free={snap['free_mb']}MB required={required_mb}MB"
     )
     return result
 
@@ -197,30 +310,30 @@ def adjust_inference(
     delta_gpu_pct: Optional[float] = None,
 ) -> dict:
     """
-    LLM 推論直前: max_tokens を VRAM 使用量に応じて削減。
-    「現在値を見て対応」するだけ。予測・予約なし。
-    fallback=True / False 両ケースがログに出ることを保証。
-
-    ② 先読み係数: VRAM 帯に応じた +500/+800/+1200MB バッファを加算して判断。
-    ③ delta_gpu_pct が +10 以上 → Whisper GPU 突入スパイク → max_tokens 50% 追加削減。
+    LLM推論直前: 実空き容量を基準に生成量を制限する。
+    CPU推論時(n_gpu_layers=0)はGPU残量を理由に遮断しない。
     """
-    raw_used = monitor.vram_instant_mb
+    snap = monitor.snapshot()
+    gpu_inference = getattr(monitor, "llm_uses_gpu", True)
+    reserve = hard_reserve_mb(snap["total_mb"])
 
-    # ② バッファをレンジ化（KV cache 先読み係数）
-    if   raw_used < 4000: buffer = 500
-    elif raw_used < 6000: buffer = 800
-    else:                 buffer = 1200
-    virtual_used = raw_used + buffer
-
-    # 実行中止判定
-    if virtual_used > 7000:
-        logger.debug(f"[Guard][infer] virtual_used={virtual_used:.0f}mb → BLOCK")
-        return {"ok": False, "max_tokens": 0, "fallback": True, "reason": "vram>7000"}
-
-    # max_tokens 段階削減
-    if   virtual_used > 6000: max_t = max(256, default_max // 4)
-    elif virtual_used > 4500: max_t = max(256, default_max // 2)
-    else:                     max_t = default_max
+    if not gpu_inference or not snap["available"]:
+        max_t = default_max
+    elif snap["free_mb"] < reserve:
+        print(
+            f"[VRAM] inference blocked: used={snap['used_mb']}MB "
+            f"free={snap['free_mb']}MB reserve={reserve}MB"
+        )
+        return {
+            "ok": False, "max_tokens": 0, "fallback": True,
+            "reason": f"free<{reserve}mb",
+        }
+    elif snap["free_mb"] < 1024:
+        max_t = max(256, default_max // 4)
+    elif snap["free_mb"] < INFERENCE_SOFT_LIMIT_MB:
+        max_t = max(256, default_max // 2)
+    else:
+        max_t = default_max
 
     # ③ Whisper GPU 突入スパイク検知
     if delta_gpu_pct is not None and delta_gpu_pct > 10:
@@ -230,10 +343,10 @@ def adjust_inference(
         )
 
     fallback = max_t < default_max
-    logger.debug(
-        f"[Guard][infer] raw={raw_used:.0f}mb virtual={virtual_used:.0f}mb buffer={buffer} "
-        f"max_tokens={default_max}→{max_t} fallback={fallback} "
-        f"| gpu_pct={monitor.gpu_pct:.1f}% (non-decision metric)"
+    print(
+        f"[VRAM] inference allowed: used={snap['used_mb']}MB "
+        f"free={snap['free_mb']}MB reserve={reserve}MB "
+        f"max_tokens={max_t}"
     )
     return {"ok": True, "max_tokens": max_t, "fallback": fallback, "reason": "ok"}
 
@@ -253,16 +366,23 @@ class WhisperController:
 
     def __init__(self) -> None:
         self.state:          str   = "cpu"
+        self.gpu_available:  bool  = False
         self._prev_gpu_pct:  float = 0.0
         self.delta_gpu_pct:  float = 0.0   # 非判断 — adjust_inference に渡す
+        self._delta_lock = threading.Lock()
 
     def update(self, monitor: ResourceMonitor) -> str:
         """
         呼び出すたびに state を更新して現在の device 文字列を返す。
         副作用: self.delta_gpu_pct を更新（呼び出し元が adjust_inference に渡す）。
         """
-        self.delta_gpu_pct = monitor.gpu_pct - self._prev_gpu_pct
-        self._prev_gpu_pct = monitor.gpu_pct
+        with self._delta_lock:
+            self.delta_gpu_pct = monitor.gpu_pct - self._prev_gpu_pct
+            self._prev_gpu_pct = monitor.gpu_pct
+
+        if not self.gpu_available:
+            self.state = "cpu"
+            return self.state
 
         if self.state == "gpu" and monitor.gpu_pct > self.GPU_FALLBACK_PCT:
             self.state = "cpu"
@@ -274,7 +394,14 @@ class WhisperController:
         return self.state
 
     def uses_gpu(self) -> bool:
-        return self.state == "gpu"
+        return self.gpu_available and self.state == "gpu"
+
+    def consume_delta_gpu_pct(self) -> float:
+        """直近のGPU使用率変化を1回だけ返し、再利用を防ぐ。"""
+        with self._delta_lock:
+            delta = self.delta_gpu_pct
+            self.delta_gpu_pct = 0.0
+            return delta
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -290,37 +417,72 @@ class WhisperPool:
         self._gpu_model = None
         self._cpu_model = None
         self._ctrl      = WhisperController()
+        self.loaded_profile = "not_loaded"
+        self.active_model_name = "unknown"
 
-    def load(self, monitor: ResourceMonitor) -> None:
+    def load(self, monitor: ResourceMonitor, mode: str = "auto") -> None:
         """
         起動時に1回だけ呼ぶ。
         - CPU 版（small）は無条件でロード（VRAM 消費なし）
-        - GPU 版（medium）は VRAM 使用率 < 70% の場合のみロード
+        - autoは空き4096MB以上でGPU medium、2048MB以上でGPU small
+        - 手動GPU指定も安全閾値を満たさなければCPU smallへフォールバック
         - GPU ロード失敗時は例外を捕捉して CPU 版のみで運用
         """
         import whisper as _whisper
 
         self._cpu_model = _whisper.load_model("small", device="cpu")
-        logger.debug("[WhisperPool] CPU版(small)ロード完了")
+        self.loaded_profile = "cpu_small"
+        self.active_model_name = "small"
+        print("[Whisper] CPU small loaded")
 
-        # VRAM を唯一の判断軸として使用（GPU% は参考ログのみ）
-        vram_ok = (
-            monitor.vram_total_mb == 0
-            or monitor.vram_instant_mb / monitor.vram_total_mb < 0.70
+        snap = monitor.snapshot()
+        requested_mode = normalize_whisper_mode(mode)
+        selected, reason = select_whisper_profile(requested_mode, snap)
+        print(
+            f"[Whisper] requested_mode={requested_mode} selected={selected} "
+            f"free={snap['free_mb']}MB reason={reason}"
         )
-        if vram_ok:
+        if selected.startswith("gpu_"):
+            model_name = selected.removeprefix("gpu_")
             try:
-                self._gpu_model  = _whisper.load_model("medium", device="cuda")
+                self._gpu_model = _whisper.load_model(model_name, device="cuda")
+                post = monitor.snapshot()
+                if post["available"] and post["free_mb"] < hard_reserve_mb(post["total_mb"]):
+                    self._release_gpu_model()
+                    print(
+                        f"[Whisper] GPU {model_name} released: free={post['free_mb']}MB "
+                        f"reserve={hard_reserve_mb(post['total_mb'])}MB"
+                    )
+                    return
+                self._ctrl.gpu_available = True
                 self._ctrl.state = "gpu"
-                logger.debug("[WhisperPool] GPU版(medium)ロード完了")
+                self.loaded_profile = selected
+                self.active_model_name = model_name
+                print(
+                    f"[Whisper] GPU {model_name} loaded: free_before={snap['free_mb']}MB "
+                    f"free_after={post['free_mb']}MB"
+                )
             except Exception as exc:
-                logger.warning(f"[WhisperPool] GPU版ロード失敗 → CPU版のみ: {exc}")
+                self._release_gpu_model()
+                print(f"[Whisper] GPU {model_name} failed; using CPU small: {exc}")
         else:
-            vram_ratio = monitor.vram_instant_mb / monitor.vram_total_mb
-            logger.debug(
-                f"[WhisperPool] VRAM使用率高({vram_ratio:.2f})のためCPU版のみ "
-                f"| gpu_pct={monitor.gpu_pct:.1f}% (non-decision metric)"
+            print(
+                f"[Whisper] fallback=cpu_small reason={reason}; using CPU small"
             )
+
+    def _release_gpu_model(self) -> None:
+        self._gpu_model = None
+        self._ctrl.gpu_available = False
+        self._ctrl.state = "cpu"
+        self.loaded_profile = "cpu_small"
+        self.active_model_name = "small"
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     def get_model(self, monitor: ResourceMonitor) -> tuple:
         """
@@ -330,8 +492,21 @@ class WhisperPool:
         """
         state   = self._ctrl.update(monitor)
         use_gpu = (self._ctrl.uses_gpu() and self._gpu_model is not None)
+        self.active_model_name = (
+            self.loaded_profile.removeprefix("gpu_") if use_gpu else "small"
+        )
         logger.debug(
             f"[WhisperPool] state={state} use_gpu={use_gpu} "
             f"delta_gpu={self._ctrl.delta_gpu_pct:.1f}%"
         )
         return (self._gpu_model if use_gpu else self._cpu_model), use_gpu
+
+    def consume_delta_gpu_pct(self) -> float:
+        return self._ctrl.consume_delta_gpu_pct()
+
+    def status_label(self) -> str:
+        if self._ctrl.uses_gpu() and self._gpu_model is not None:
+            return f"GPU {self.loaded_profile.removeprefix('gpu_')}"
+        if self._cpu_model is not None:
+            return "CPU small"
+        return "未読込"

@@ -87,16 +87,28 @@ class PromptBuilder:
         return (
             f"{user_text}\n\n"
             f"---\n"
-            f"上記のメッセージに対して自然に返答した後、必ず以下のJSON形式で家計簿データを出力してください。\n"
+            f"取引が1件だけ含まれる場合に限り、上記のメッセージに自然に返答した後、"
+            f"必ず以下の形式でJSONを1個だけ出力してください。\n"
             f"今日の日付: {today}\n\n"
             f'```json\n'
-            f'{{"date": "{today}", "store": "店名(不明は空文字)", '
-            f'"amount": 金額(整数), "category": "カテゴリ名", '
-            f'"type": "支出", "memo": "メモ(省略可)"}}\n'
+            f'{{\n'
+            f'  "date": "{today}",\n'
+            f'  "store": null,\n'
+            f'  "amount": null,\n'
+            f'  "category": null,\n'
+            f'  "type": null,\n'
+            f'  "memo": null\n'
+            f'}}\n'
             f'```\n\n'
+            f"判定できたフィールドだけ値を設定し、それ以外は null のままにしてください。\n"
+            f"type は必ず「支出」または「収入」のどちらかにしてください"
+            f"(それ以外の文字列は使わないでください)。\n"
+            f"category は次の一覧の中から1つだけ選んでください"
+            f"(一覧にない値は使わないでください)。\n"
             f"支出カテゴリ: {exp_cats}\n"
             f"収入カテゴリ: {inc_cats}\n"
-            f"金額・店名が不明な場合は null を使用してください。"
+            f"複数の取引が含まれる場合はJSONを出力せず、"
+            f"「1回につき1件ずつ入力してください」と自然文だけで案内してください。"
         )
 
     def build_health_prompt(self, user_text: str) -> str:
@@ -104,7 +116,7 @@ class PromptBuilder:
         return (
             f"{user_text}\n\n"
             f"---\n"
-            f"上記のメッセージに対して自然に返答した後、必ず以下のJSON形式で健康記録データを出力してください。\n"
+            f"必ず最初に以下のJSON形式で健康記録データを出力し、その後に自然な返答を1〜2文だけ続けてください。\n"
             f"今日の日付: {today}\n\n"
             f'```json\n'
             f'{{"date": "{today}", "weight": 体重(kg, 不明はnull), '
@@ -116,8 +128,36 @@ class PromptBuilder:
             f'"systolic_bp": 収縮期血圧(mmHg整数, 不明はnull), '
             f'"diastolic_bp": 拡張期血圧(mmHg整数, 不明はnull), '
             f'"meal_detail": "食べた食品名（ユーザーの発言通りの表記、不明はnull）", '
-            f'"activity_log": "運動・作業・出来事など（ユーザーの発言通りの表記、不明はnull）"}}\n'
+            f'"activity_log": "実際に行った運動・作業・外出など（ユーザーの発言通りの表記、不明はnull）", '
+            f'"memo": "メモ・備考として明示された内容（ユーザーの発言通りの表記、不明はnull）"}}\n'
             f'```\n\n'
             f"数値が不明な場合は null を使用。"
-            f"meal_detail・activity_log はユーザーの発言に含まれる単語をそのまま使い、言い換え・造語・変換を禁止します。"
+            f"meal_detail・activity_log・memo は、該当する内容が発言にある場合だけユーザーの単語をそのまま使い、言い換え・造語・変換を禁止します。"
+            f"食事・行動・メモだけの入力も有効な健康記録です。該当内容が1つでもあれば全項目をnullにしないでください。"
+            f'例:「食事ログ コーヒー 水 メモ テストデータ」なら "meal_detail":"コーヒー 水", "memo":"テストデータ" とします。'
+            f"体重・体脂肪率・体温・脈拍・血圧・筋肉量・基礎代謝などの測定文を activity_log に複製しないでください。"
+            f"同じ測定文を memo にも複製しないでください。memoは「メモ」または「メモ追加」で明示された内容だけにしてください。"
+            f"入力が測定値だけの場合は activity_log と memo を null にしてください。"
+            f'例:「体脂肪率17.9%」なら "body_fat":17.9, "activity_log":null, "memo":null とします。'
+        )
+
+    def build_health_extraction_prompt(self, user_text: str) -> str:
+        today = datetime.date.today().isoformat()
+        return (
+            f"次の発言から健康記録を抽出し、説明を付けずJSONオブジェクト1個だけを出力してください。\n"
+            f"発言: {user_text}\n"
+            f"日付: {today}\n"
+            f'{{"date":"{today}","weight":null,"body_fat":null,'
+            f'"muscle_mass":null,"bmr":null,"temperature":null,'
+            f'"pulse":null,"systolic_bp":null,"diastolic_bp":null,'
+            f'"meal_detail":null,"activity_log":null,"memo":null}}\n'
+            f"weight=体重kg、body_fat=体脂肪率%、muscle_mass=筋肉量kg、"
+            f"bmr=基礎代謝kcal、temperature=体温℃、pulse=脈拍bpm、"
+            f"systolic_bp=上の血圧、diastolic_bp=下の血圧です。"
+            f"発言にない値はnullにしてください。食事と実際の運動・作業・外出だけを各ログへ入れ、"
+            f"メモ・備考として明示された内容だけをmemoへ原文のまま入れてください。"
+            f"食事・行動・メモだけの入力も有効です。該当内容が1つでもあれば全項目をnullにしないでください。"
+            f'例:「食事ログ コーヒー 水 メモ テストデータ」なら "meal_detail":"コーヒー 水", "memo":"テストデータ" とします。'
+            f"測定文をactivity_logやmemoへ複製しないでください。memoは「メモ」または「メモ追加」で明示された内容だけにしてください。"
+            f'測定値だけの発言ではactivity_logとmemoをnullにしてください。例:「体脂肪率17.9%」ならbody_fat=17.9、activity_log=null、memo=nullです。'
         )

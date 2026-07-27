@@ -1,7 +1,7 @@
 # LLM Local Chat 現行仕様
 
-作成日: 2026-07-11 / 最終更新: 2026-07-11(不具合2件の修正を反映)
-基準: gitコミット `3a35b2d` 時点のコードを静的に読解した結果。
+作成日: 2026-07-11 / 最終更新: 2026-07-22
+基準: 開発用作業ツリーの現行コードを静的に読解し、回帰テストで確認した結果。
 このファイルは「現在実装されている事実」だけを記載する。将来予定・改善案は含まない。
 確認済み事実と推測は区別して記載する(推測には「推測」と明記)。
 
@@ -27,14 +27,14 @@
   - `start.sh` は Dockerコンテナ+X11転送前提のLinux用であり、Windows通常経路ではない(推測)。
 - **起動から画面表示までの処理順**(`main` → `ChatApp.__init__`):
   1. `tk.Tk()` でルートウィンドウ生成
-  2. `app_composition.create_app_deps(LOG_DIR)` — `ResourceMonitor`(監視デーモン開始)・`VRAMGuard`・`WhisperPool`(空)・`SessionStore` を生成
+  2. `app_composition.create_app_deps(LOG_DIR)` — `ResourceMonitor`(監視デーモン開始)・`WhisperPool`(空)・`SessionStore` を生成
   3. `ChatApp.__init__` — `load_settings()` → `AvatarWindow` → `TTSWorker`(再生スレッド開始) → `_build_ui()` → `_new_session()` → `Controller` 生成
   4. `_reload_llm()` — **バックグラウンドスレッドで** `init_llm()`(モデルロード)。UIはブロックされない
-  5. `_load_whisper_async()` — 条件付きでWhisperロード(下記)
+  5. LLMロード完了後、`_load_whisper_async()`で条件付きWhisperロード(下記)。LLMとWhisperは同時ロードしない
   6. `root.mainloop()`
 - **モデルを読み込むタイミング**: 起動直後(手順4)と、設定画面で `model_path` または `n_ctx` を変更したとき(`ChatApp._open_settings` → `_reload_llm`)。
-- **Whisperを読み込む条件**: 設定の `mic_enabled` または `tts_enabled` のどちらかが true の場合のみ(`ChatApp._load_whisper_async`)。両方 false なら**ロード自体をスキップ**し(`_whisper_load_skipped` フラグ)、音声認識は起動中ずっと利用不可。この状態で🎤を押すと「設定で起動時マイクを有効にして再起動」の案内が表示される(`_toggle_mic`)。
-- **import時の副作用**: モジュールimportだけではTkウィンドウ・モデルロード・監視スレッドは発生しない(すべて `main()` 起動時に生成)。ただし `from llama_cpp import Llama` 等の重量DLLロード、`sys.stdout.reconfigure`、`audio_workers.py` の pyaudio/pyttsx3/pywin32 の try-import は import 時に走る。
+- **Whisperを読み込む条件**: 設定の `mic_enabled` が true の場合のみ。TTSだけが有効な場合はWhisperをロードせず、起動発話は独立して一度だけ実行する。
+- **import時の副作用**: モジュールimportだけではTkウィンドウ・モデルロード・監視スレッドは発生しない。ただし `from llama_cpp import Llama` 等の重量DLLロード、`sys.stdout.reconfigure`、`audio_workers.py` の pyaudio/pywin32 の try-importは実行される。
 
 ## 3. 主要機能
 
@@ -54,7 +54,7 @@
 - 概要: 会話を `{title, history, summary}` 形式のJSONで保存。左サイドバーで一覧・検索・読込・削除・名前変更。
 - 操作: Ctrl+S / メニュー「保存」、一覧クリックで読込、右クリックで削除・名前変更、検索ボックスでタイトル+要約の部分一致絞り込み。
 - 実装: `session_store.py` `SessionStore`(save/load/list_sessions/delete/rename)、`ChatApp._save_now` `_load_selected` `_delete_chat` `_rename_chat` `_refresh_chat_list`。
-- 保存: `chat_logs/chat_YYYYMMDD_HHMMSS.json`。
+- 保存: アプリ配置フォルダ内の `chat_logs/chat_YYYYMMDD_HHMMSS_ffffff.json`（衝突時は連番）。
 
 ### 要約メモリ
 - 概要: 会話履歴を50文字以内で要約し、以後のシステムプロンプトに注入。画面上部に「📝 メモリ:」として表示。
@@ -71,7 +71,7 @@
 - 概要: 常駐マイク監視 → RMS-VADで発話検知 → Whisperで日本語認識 → 自動送信。
 - 操作: 🎤ボタンでON/OFF(Whisperロード済みの場合のみ)。
 - 実装: `audio_workers.py` `VoiceRecognizer`(`_loop`、`_rms`)、認識結果は `Controller.handle_voice` へ。
-- 使用条件: 起動時に `mic_enabled` または `tts_enabled` が true(Whisperロード条件)+ pyaudio利用可+マイクデバイス存在。初回はWhisperモデルのダウンロードが発生(`~/.cache/whisper`)。
+- 使用条件: 起動時に`mic_enabled`がtrue + pyaudio利用可 + マイクデバイス存在。初回はWhisperモデルのダウンロードが発生(`~/.cache/whisper`)。
 - 誤認識対策: ノイズ語句フィルタ(`WHISPER_NOISE` / `WHISPER_NOISE_PARTIAL`)、100文字超の破棄、同一テキスト10秒以内の重複破棄、TTS再生中のチャンク読み捨て。
 
 ### TTS(読み上げ)
@@ -102,9 +102,9 @@
 - 外部影響: **あり**(ローカル家計簿APIへの登録)。詳細は§10。
 
 ### Biolog連携(健康記録)
-- 概要: 健康記録モード中の発話から体重・食事等のJSONを抽出し、確認ダイアログ後にローカルAPIへPOST。
+- 概要: 健康記録モード中の発話から体重・食事等を抽出し、確認ダイアログ後にローカルAPIへPOST。
 - 操作: 💪ボタンでモードON/OFF。
-- 実装: `PromptBuilder.build_health_prompt` → `extract_health_json` → `IntegrationBridge.confirm_and_send_biolog`。
+- 実装: `PromptBuilder.build_health_prompt` → `extract_health_json` → `prepare_biolog_record` → `IntegrationBridge.confirm_and_send_biolog`。ユーザー原文の `食事ログ`／`行動ログ`／`メモ`（各「追加」形式を含む）は決定的に解析され、同じフィールドのLLM抽出値より優先される。
 - 外部影響: **あり**(ローカルBiolog APIへの登録)。詳細は§10。
 
 ### 付属ユーティリティ
@@ -138,23 +138,23 @@
 
 | ファイル | 主な責務 | 主なクラス・関数 | 呼び出し元 | 呼び出し先 |
 |---|---|---|---|---|
-| LLM_Local_Chat.py | エントリーポイント、Tkinter UI、設定I/O、LLMロード | `main` `ChatApp` `SettingsDialog` `AvatarWindow` `load_settings` `save_settings` `init_llm` `count_tokens` `_strip_code_blocks` | 起動スクリプト | app_composition, controller, audio_workers, integrations, resource_monitor(adjust_llm) |
+| LLM_Local_Chat.py | エントリーポイント、Tkinter UI、設定I/O、LLMロード | `main` `ChatApp` `SettingsDialog` `AvatarWindow` `load_settings` `save_settings` `init_llm` `count_tokens` | 起動スクリプト | app_composition, controller, audio_workers, integrations, resource_monitor(adjust_llm) |
 | app_composition.py | 起動時依存の生成(composition root) | `AppDeps` `create_app_deps` | `main` | resource_monitor, session_store |
-| controller.py | 送信・停止・LLM完了処理のオーケストレーション | `Controller` `ControllerDeps`(`handle_text` `handle_voice` `stop` `_on_llm_done` `_on_llm_error`) | `ChatApp.__init__` | llm_service, prompt_builder, resource_manager, json_extractors |
-| llm_service.py | ストリーミング推論の純実行(別スレッド)+[Perf]計測ログ | `LLMService`(`generate` `abort` `is_running`) | Controller | llama_cpp |
+| controller.py | 送信・停止・要約、操作世代ID、トークンコストLRUの管理 | `Controller` `ControllerDeps` `TokenCostCache` | `ChatApp.__init__` | llm_service, prompt_builder, resource_manager, json_extractors |
+| llm_service.py | 通常生成と要約の排他的な別スレッド実行+[Perf]計測ログ | `LLMService`(`generate` `summarize` `abort` `is_running`) | Controller | llama_cpp |
 | prompt_builder.py | messages構築、履歴トークン予算管理、モード別プロンプト | `PromptBuilder`(`build` `build_kakeibo_prompt` `build_health_prompt`) | Controller | — |
 | json_extractors.py | LLM応答からのJSON抽出(正規表現) | `extract_kakeibo_json` `extract_health_json` | Controller._on_llm_done | — |
-| session_store.py | セッションJSONの保存/読込/一覧/検索/削除/改名 | `SessionStore` | create_app_deps → ChatApp | — |
+| session_store.py | セッションJSONの保存/読込/削除/改名、検索メタデータキャッシュ | `SessionStore` | create_app_deps → ChatApp | — |
 | integrations.py | 連携payloadサニタイズ、localhost制限、確認ダイアログ、POST | `IntegrationBridge` `sanitize_kakeibo_record` `sanitize_biolog_record` `is_allowed_local_api_url` | ChatApp(委譲メソッド経由) | urllib |
 | audio_workers.py | SAPI5 TTSワーカー、VAD+Whisper音声認識 | `TTSWorker` `VoiceRecognizer` | ChatApp | win32com, pyaudio, WhisperPool.get_model |
 | resource_manager.py | 推論直前のmax_tokens決定の薄いラッパー | `ResourceManager`(`decide`) | Controller | resource_monitor.adjust_inference |
 | resource_monitor.py | VRAM/GPU/CPU観測、ロード前/推論前調整、Whisper GPU/CPU切替 | `ResourceMonitor` `VRAMGuard` `adjust_llm` `adjust_inference` `WhisperController` `WhisperPool` | app_composition, init_llm, resource_manager, VoiceRecognizer | pynvml / nvidia-smi / psutil / whisper |
 
-スレッド構成: メイン(Tk mainloop、UI更新は必ず `root.after` 経由)/LLM推論(`LLMService.generate` 内 worker)/TTS再生(`TTSWorker._play_loop` daemon)/音声認識(`VoiceRecognizer._loop` daemon)/リソース監視(`ResourceMonitor._loop` daemon)/要約(`_update_summary` 都度生成)/連携POST(`IntegrationBridge._send_to_*` 都度生成)。
+スレッド構成: メイン(Tk mainloop)/通常生成・要約(`LLMService`で排他実行)/TTS再生/音声認識/リソース監視/連携POST。UI更新は `root.after` 経由。
 
 ## 6. 設定仕様(chat_settings.json)
 
-パスはカレントディレクトリ相対の `chat_settings.json`(`SETTINGS_FILE` 定数)。起動batがアプリフォルダへcdするため、実質アプリフォルダ直下。ファイル欠損・JSON破損時は全キー既定値で継続(通知なし)。
+設定はアプリ配置フォルダ基準の `chat_settings.json`。履歴・アバターも同じ基準で解決する。`model_path` が絶対パスなら維持し、相対パスだけアプリ配置フォルダ基準で解決する。ファイル欠損・JSON破損時は全キー既定値で継続(通知なし)。
 
 | キー | 型 | 既定値 | 用途 | 設定画面から変更 | 再起動が必要か | 使用コード位置 |
 |---|---|---|---|---|---|---|
@@ -164,6 +164,7 @@
 | temperature | float | 0.7 | 生成温度 | ○(0.0〜2.0) | 不要(即時) | `LLMService.generate` |
 | tts_enabled | bool | false | 起動時TTS状態 | ○ | 不要(切替は即時。ただしWhisperロード条件には起動時値が使われる) | `TTSWorker.enabled`, `_load_whisper_async` |
 | mic_enabled | bool | false | 起動時マイク状態 | ○ | **条件付きで必要**(起動時にWhisper未ロードの場合、有効化には再起動が必要) | `VoiceRecognizer.enabled`, `_load_whisper_async` |
+| whisper_mode | str | auto | auto / gpu_small / gpu_medium / cpu_small | ○ | **必要** | `WhisperPool.load` |
 | vad_threshold | int | 150 | VAD感度(RMS閾値) | ○ | 不要(即時) | `VoiceRecognizer` |
 | n_threads_batch | int | 12 | llama.cppバッチスレッド数 | ✕(ファイルのみ) | モデル再ロードが必要 | `init_llm`(`_valid_positive_int` 検証あり) |
 | n_batch | int | 1024 | バッチサイズ | ✕ | モデル再ロードが必要 | `init_llm`(検証あり) |
@@ -176,39 +177,40 @@
 
 - 値検証: perf系6キー(`n_threads_batch`〜`use_mmap`)のみ `_valid_positive_int` / `_valid_bool` でフォールバックあり。その他のキーはファイル値をそのまま採用(型不正時は後段処理でエラーになり得る)。
 - 自動保存: 終了時(`_on_close`)・設定ダイアログ保存時・TTSメニュー切替時に `save_settings` で全体を上書き保存。
-- `chat_settings.json.example` がテンプレート。※exampleの `tts_enabled` は true になっており、コード既定値(false)と異なる。
+- `chat_settings.json.example` がテンプレート。`tts_enabled` はコード既定値と同じ `false`。
 
 ## 7. モデルと生成処理
 
-- **対応モデル形式**: GGUF(llama-cpp-python 0.3.20)。
+- **対応モデル形式**: GGUF(llama-cpp-python 0.3.34 CUDA 12.4版)。
 - **読み込み処理**: `init_llm(model_path, n_ctx, res_monitor, perf_settings)`。
   1. パス存在チェック(なければ `FileNotFoundError`)
-  2. `adjust_llm(res_monitor)` でVRAM使用率から `n_gpu_layers` を決定(使用率>0.85 → 0=CPU実行、それ以外 → -1=全層GPU。GPU未検出時は -1)
-  3. 3段階リトライ: perf設定込み → flash_attnのみOFF → 基本設定のみ(`n_threads=8, n_batch=512`)
+  2. `adjust_llm(res_monitor, model_path)`でCUDA対応と実空き容量を確認。空きがGGUFサイズ+予約領域以上なら`n_gpu_layers=-1`、不足・CUDA非対応・GPU情報取得不能なら`0`
+  3. 3段階リトライ: perf設定込み → flash_attnのみOFF → 基本設定のみ(`n_threads=8, n_batch=512`)。GPUロード失敗時はCPUで一度だけ同系列を再試行
 - **コンテキスト長/最大トークン/temperature**: 設定値(§6)。temperatureはUIで0.0〜2.0に制限。
-- **推論直前の動的制限**: `ResourceManager.decide` → `adjust_inference`。VRAM使用量+先読みバッファ(500/800/1200MB)で仮想使用量を計算し、>7000MBで実行ブロック(エラーメッセージ表示)、>6000MBで max_tokens 1/4、>4500MBで 1/2(下限256)。WhisperのGPU使用率スパイク(Δ>10%)でさらに半減。
+- **推論直前の動的制限**: `ResourceManager.decide` → `adjust_inference`。実空き容量が予約領域(512MBまたは総容量の6%)未満ならブロック、512〜1024MBでmax_tokensを1/4、1024〜1536MBで1/2(下限256)。CPU推論はGPU残量で遮断しない。WhisperのGPU使用率スパイク(Δ>10%)は補助的にさらに半減。
 - **読み込み失敗時**: ステータスバー「❌ モデル読込失敗」+エラーダイアログ(`_on_llm_ready`)。アプリは落ちない(送信時は「準備中」警告)。
-- **生成停止**: ⏹ → `Controller.stop`。`_llm_abort` フラグ+`LLMService.abort()`(ストリーミングループ内で中断)+TTS停止+アバター停止。最大3秒待機後にUIロック解除。中断時は履歴保存・TTSをスキップ。
+- **生成停止**: ⏹ → `Controller.stop`。`_llm_abort` フラグ+`LLMService.abort()`(ストリーミングループ内で中断)+TTS停止+アバター停止。最大3秒待機し、終了済みならUIロックを解除する。3秒以内に停止できない場合は安全のため`stopping`状態と操作ロックを維持して再起動を案内し、低頻度の監視を継続する。ワーカーが遅れて終了した場合は、同じ操作世代であることを確認してロックを解除する。中断時は履歴保存・TTSをスキップ。
 - **プロンプト構築**: `PromptBuilder.build`。system prompt(「シロ」ペルソナ固定文)+モードヒント+要約(あれば)+トークン予算内の直近履歴+ユーザー入力。履歴予算は `(n_ctx - max_tokens - system - user) × 0.60`、ペアごとのトークンコストをキャッシュ。
+- **性能ログ**: `tokens_per_sec` はストリームチャンク数ではなく、完了・中断時点の生成本文をモデルtokenizerで数えた出力トークン数から算出する。
 - **要約メモリの発生条件**: §3参照(4ターンごと、別スレッド、max_tokens=80/temperature=0.3/stop=["\n"])。
 
 ## 8. 音声仕様
 
-- **マイク入力**: PyAudio 16kHz/mono/1024チャンク常駐読み取り(`VoiceRecognizer._loop`)。マイク初期化失敗時は例外を出さず音声認識を無効化。
+- **マイク入力**: PyAudio 16kHz/mono/1024チャンク常駐読み取り(`VoiceRecognizer._loop`)。マイク初期化失敗時は例外を出さず音声認識を無効化。実行中の読取障害は例外クラスだけを初回と30秒間隔で記録し、復旧時にも一度記録する。
 - **VAD**: RMS閾値方式。閾値超えが6チャンク連続で発話開始、閾値未満が30チャンク連続または6秒で録音終了。閾値は設定 `vad_threshold`(既定150、設定画面から即時変更可)。
-- **Whisper**: openai-whisper。`language="ja"`, `beam_size=1`, `temperature=0.0`, `no_speech_threshold=0.8`, `logprob_threshold=-1.5`, `condition_on_previous_text=False`, `initial_prompt` あり。
-- **GPU/CPU切り替え**: `WhisperPool` がCPU版(small)を常時ロード、起動時VRAM使用率<70%ならGPU版(medium)もロード。推論ごとに `WhisperController` がヒステリシス切替(GPU使用率>88%でCPUへ、<70%でGPUへ)。再ロードなしの即時切替。
+- **Whisper**: openai-whisper。`language="ja"`, `beam_size=1`, `temperature=0.0`, `no_speech_threshold=0.8`, `logprob_threshold=-1.5`, `condition_on_previous_text=False`。認識後の品質ゲートでは、実発話保護・無音確率・平均logprob・短句反復に加え、`compression_ratio >= 2.40`かつ`no_speech_prob >= 0.50`の実測型を無音ハルシネーションとして破棄する。高compression単独、または`no_speech_prob < 0.50`ではこの追加条件だけを理由に破棄しない。
+- **GPU/CPU切り替え**: `whisper_mode=auto`ではLLMロード後の実空き容量が4096MB以上ならGPU medium、2048MB以上ならGPU small、それ未満ならCPU smallを選ぶ。手動GPU指定も同じ安全閾値を下回ればCPU smallへフォールバックする。GPU版が存在する場合のみ、`WhisperController`がGPU使用率>88%でCPUへ、<70%でGPUへ切り替える。
 - **TTS**: SAPI5非同期再生(キュー方式)。停止は purge 相当(`Speak("", 3)`)。読み上げ前に ```コードブロック``` を除去。
-- **音声入力とTTSの排他**: TTS発話開始で `VoiceRecognizer._tts_active=True` になり、マイクチャンクを完全読み捨て(ハウリング・自己認識防止)。発話終了の800ms後、TTSキューが空なら解除(`ChatApp._on_tts_start` / `_on_tts_stop` / `_restore_vad`)。
-- **起動時の読み込み条件**: `mic_enabled` または `tts_enabled` が true のときだけWhisperをロード(§2)。
-- **設定変更後に再起動が必要な項目**: 起動時にWhisperがロードされなかった場合の `mic_enabled`(§6)。perf系6キーもモデル再ロードが必要(設定画面からは変更不可)。
+- **音声入力とTTSの排他**: TTS発話開始で `VoiceRecognizer._tts_active=True` になり、マイクチャンクを完全読み捨て(ハウリング・自己認識防止)。発話終了時のTTS世代を保存し、800ms後もVoiceRecognizerインスタンスと世代が変わっていない場合だけ解除する(`ChatApp._on_tts_start` / `_on_tts_stop` / `_restore_vad`)。待機中に次の発話が始まった場合、古い復帰処理は何もしない。
+- **起動時の読み込み条件**: `mic_enabled` が true のときだけ、LLMロード完了後にWhisperをロード(§2)。
+- **設定変更後に再起動が必要な項目**: 起動時にWhisperがロードされなかった場合の`mic_enabled`と`whisper_mode`(§6)。perf系6キーもモデル再ロードが必要(設定画面からは変更不可)。
 
 ## 9. 保存データ
 
 | データ | 保存場所 | 形式 | 読み込み処理 | 書き込み処理 | 削除される条件 |
 |---|---|---|---|---|---|
 | 設定 | chat_settings.json(アプリフォルダ) | JSON | `load_settings` | `save_settings`(終了時・設定保存時・TTS切替時) | 自動削除なし |
-| 会話履歴・セッション | chat_logs/chat_YYYYMMDD_HHMMSS.json | JSON `{title, history:[{user,assistant}], summary}` | `SessionStore.load` / `list_sessions` | `SessionStore.save`(応答完了ごと・Ctrl+S・終了時) | ユーザーが右クリック「削除」を確認した場合のみ(`SessionStore.delete`) |
+| 会話履歴・セッション | chat_logs/chat_YYYYMMDD_HHMMSS_ffffff.json | JSON `{title, history:[{user,assistant}], summary}` | `SessionStore.load` / `list_sessions` | `SessionStore.save`(応答完了ごと・Ctrl+S・終了時) | ユーザーが右クリック「削除」を確認した場合のみ(`SessionStore.delete`) |
 | 要約メモリ | セッションJSON内 `summary` | 文字列 | `_load_selected` | `_update_summary` → `_save_now` | セッション削除に従属 |
 | テキストエクスポート | ユーザー指定パス | .txt | — | `_save_as_text` | 自動削除なし |
 | ログ | 専用ファイルなし(標準出力へのprint。loggingはハンドラ未設定で既定非表示) | — | — | — | — |
@@ -229,22 +231,19 @@
 - **サニタイズ**(`sanitize_kakeibo_record` / `sanitize_biolog_record`):
   - 許可キーのホワイトリスト方式(未知キー・`user_id`・`token`・`url`・`headers` 等はここで脱落)
   - 家計簿: `amount` は bool を拒否し、正の数値のみ許可
-  - Biolog: 記録値が1つもないpayloadは送信しない。`user_id` はLLM出力を使わず送信時に固定値 `"self"` を付与
+  - Biolog: APIスキーマと同じ日付・型・有限値・数値範囲を確認する。整数項目は整数値floatだけ整数へ正規化し、bool・文字列数値・NaN/Infinity・範囲外・dict/listを含むレコードは全体を拒否する。記録値が1つもないpayloadは送信しない。明示ラベル由来のフィールド情報は最終サニタイズまで保持するがAPI payloadには含めない。`user_id` はLLM出力を使わず送信時に固定値 `"self"` を付与
+- **健康JSON候補**: fenced/bare候補を出現位置と内容で重複排除し、厳格JSONとして有効な最後の健康候補を採用する。NaN/Infinityを含む非標準JSONは抽出・表示除去の対象にしない。この規則は「例示の後に本番JSON」が続く応答への緩和策であり、JSONの意味を判定するものではないため、逆順の応答を完全には識別できない。
 - **実際に外部データを変更する操作**: 確認ダイアログで「はい」を選んだ場合のPOSTのみ(家計簿登録・Biolog記録登録)。それ以外に外部へデータを送る処理はない。POSTは都度生成のdaemonスレッドで実行、タイムアウト5秒、結果はチャット欄に表示。
 
 ## 11. 終了処理
 
 `ChatApp._on_close`(ウィンドウ×・メニュー「終了」共通)の処理順:
 
-1. `VoiceRecognizer.stop()` — 認識ループの `_active` を False(スレッドは自然終了)
-2. 現在のマイク/TTS状態を設定dictへ反映
-3. `save_settings` — 設定ファイル上書き保存
-4. `TTSWorker.stop_all()` — 読み上げキュー破棄+再生中断フラグ
-5. `_save_now()` — 現在セッションを保存(ゲスト時はスキップ)
-6. `root.after(200, root.destroy)` — 200ms後にウィンドウ破棄(TclError防止)
-
-- スレッド終了: 各ワーカー(TTS/音声認識/監視)はdaemonスレッドのため、プロセス終了とともに消滅。`TTSWorker.terminate()` は定義されているが終了処理からは呼ばれていない。
-- モデル/リソースの明示解放処理はない(プロセス終了に委ねる)。
+1. closing状態へ移行し、Controllerを停止世代へ進めてLLMをabortする。
+2. `IntegrationBridge.begin_closing()`で新規API送信とUI通知を拒否する。
+3. `VoiceRecognizer.stop()`、設定・セッション保存、`TTSWorker.terminate()`を実行する。
+4. LLM・モデルロード・連携APIスレッドを`root.after()`で最大6秒監視する。
+5. 全処理終了時、またはタイムアウト時にTkを破棄する。closing後のワーカー通知は共通`_post_ui`で破棄される。
 
 ## 12. 現在確認されている不整合・既知の問題
 
@@ -260,13 +259,7 @@
 
 | # | 内容 | 分類 |
 |---|---|---|
-| 1 | `build_messages_safe`(LLM_Local_Chat.py) — 全コードから呼び出しゼロ。`PromptBuilder.build` と同機能の旧実装 | **未使用コード** |
-| 2 | `VRAMGuard`(resource_monitor.py) — `create_app_deps` で生成され `AppDeps.guard` に格納されるが、`guard`・`is_safe()` の参照が全コードにゼロ | **未使用コード** |
-| 3 | `pyttsx3` — audio_workers.py で import 可否判定のみ行い、実使用箇所ゼロ(TTSは win32com SAPI5 直接)。requirements.txt には記載あり | **未使用コード**(依存整理は仕様判断が必要) |
-| 4 | `vram_danger_gpu_pct` / `vram_danger_vram_pct` — CHANGELOG v1.2.0 に追加と記載され設定ファイルにも存在するが、現行コードに読む箇所がない。閾値は resource_monitor.py の定数(`VRAMGuard.SCORE_LIMIT`、`WhisperController.GPU_FALLBACK_PCT` 等)にハードコード | **未使用設定**(設定化するか削除するかは仕様判断が必要) |
-| 5 | `_update_summary` は別スレッドで `self.llm` を直接呼ぶが、要約実行中にユーザー送信をブロックする仕組みがない(`_is_thinking` は要約開始時のチェックのみ)。同一 `Llama` オブジェクトへの並行呼び出しが理論上起こり得る | **実機確認が必要**(高リスク領域のため現状変更なし) |
-| 6 | `chat_settings.json.example` の `tts_enabled` が true(コード既定値・CHANGELOG記載の「デフォルトOFF」と不一致) | **表示上の不整合**(ドキュメント/テンプレートの整合は仕様判断が必要) |
-| 7 | `_restore_mic`(LLM_Local_Chat.py)はコメントで「旧方式の残骸」と明示された空メソッド | **未使用コード** |
+| 1 | `vram_danger_gpu_pct` / `vram_danger_vram_pct` — 設定ファイルに存在するが、現行コードに読む箇所がない | **未使用設定** |
 
 ## 13. 未確認事項
 
@@ -275,14 +268,14 @@
 - 実機での起動・モデルロード・基本チャット・音声・TTS・連携の動作可否(静的読解のみで、実行確認は未実施)
 - `Start_Shiro.bat` が現在の実運用の起動経路かどうか(実行用フォルダにのみ存在し、内容からは実運用向けと推測されるが未確認)
 - 開発用フォルダ(C側)での起動可否(`.venv` が存在しないため、現状のままでは依存が満たされない可能性が高い)
-- §12-5(要約の並行実行)の実使用時の影響度、および今回修正した2件(TTSフラグ属性名・マイク案内)の実機での動作確認
+- 実機での要約待機、停止、TTSフラグ、マイク案内の操作確認
 - `llm_service.py`・`resource_manager.py` の正確な作成経緯(CHANGELOG未記載。ファイル日時と内容から、それぞれ速度最適化作業・v1.2.0後の作業で作成と推測)
 - README・操作マニュアルPDFの記述と実装の逐条一致(見出しレベルの確認のみ実施)
 - CHANGELOG未記載の実装: 速度最適化一式([Perf]計測、`init_llm` の3段階リトライ、perf系6設定キー、Whisper条件付きロードスキップ)が、どのバージョン番号に属するか
 
 ## 14. 仕様の根拠
 
-本書の各記載は、以下のファイルの直接読解による(2026-07-11、gitコミット `3a35b2d` の状態)。主な根拠はクラス名・関数名で本文中に併記した。行番号は変動しやすいため記載していない。
+本書の各記載は、以下のファイルの直接読解と2026-07-19時点の回帰テストによる。主な根拠はクラス名・関数名で本文中に併記した。
 
 - LLM_Local_Chat.py(`main`, `ChatApp`, `SettingsDialog`, `AvatarWindow`, `load_settings`, `save_settings`, `init_llm`)
 - app_composition.py(`create_app_deps`)/ controller.py(`Controller`)/ llm_service.py(`LLMService`)

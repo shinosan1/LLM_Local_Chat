@@ -13,8 +13,7 @@
 #  - _on_whisper_ready(): 完了後に _update_status() / _mic_idle() を呼ぶ
 #    → Whisperロード完了後もマイク状態がUIに反映されなかった
 #  - _on_whisper_ready(): Whisperロード失敗時にステータスバーへエラー表示
-#  - _update_summary(): _is_thinking 中は LLM 競合をスキップ
-#  - _update_summary(): _save_now() を root.after() 経由でメインスレッドから呼ぶ
+#  - 要約処理も LLMService 経由で直列実行
 #  - _save_now(): _refresh_chat_list() を root.after() 経由に変更（スレッド安全）
 #  - _stop_voice() → _stop_all() に刷新
 #    → LLM生成・TTS・マイクをすべて即時停止
@@ -54,7 +53,7 @@
 #  ・アバター瞬きアニメーション（BLINK_DURATION / INTERVAL）
 #  ・アバター口パクアニメーション
 #  ・PyAudio + RMS-VAD + Whisper 常駐音声認識
-#  ・pyttsx3 TTS（アバター連動）
+#  ・Windows SAPI5 TTS（アバター連動）
 #  ・ストリーミング表示（create_chat_completion stream=True）
 #  ・タイトル自動生成（最初のメッセージ先頭20文字）
 #  ・ゲストモード（保存しない）
@@ -67,10 +66,10 @@
 import os
 import sys
 import json
+import gc
 import threading
 import time
 import random
-import re  # v1.1.1
 
 import tkinter as tk
 from tkinter import (
@@ -84,9 +83,26 @@ from PIL import Image, ImageTk
 
 # ADDED: VRAM安全フィルタ（resource_monitor.py）
 from app_composition import AppDeps, create_app_deps
-from audio_workers import DEFAULT_VAD_RMS, TTSWorker, VoiceRecognizer
+from atomic_io import atomic_write_json
+from audio_workers import (
+    DEFAULT_TTS_RATE,
+    DEFAULT_VAD_RMS,
+    MAX_VAD_RMS,
+    MAX_TTS_RATE,
+    MIN_VAD_RMS,
+    MIN_TTS_RATE,
+    TTSWorker,
+    VoiceRecognizer,
+    normalize_tts_rate,
+    normalize_vad_threshold,
+    should_load_whisper,
+    should_queue_initial_greeting,
+)
 from integrations import IntegrationBridge
-from resource_monitor import adjust_llm
+from kakeibo_amount import normalize_manual_amount_input
+from kakeibo_confirmation import can_submit_kakeibo_candidate
+from prompt_builder import KAKEIBO_EXPENSE_CATS, KAKEIBO_INCOME_CATS
+from resource_monitor import adjust_llm, normalize_whisper_mode
 
 # ─────────────────────────────────────────────
 #  Windows UTF-8 出力設定（起動直後に実行）
@@ -102,13 +118,26 @@ if sys.platform == "win32":
 # ═══════════════════════════════════════════════════════
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def app_path(*parts: str) -> str:
+    """カレントディレクトリに依存しないアプリ内パスを返す。"""
+    return os.path.join(APP_DIR, *parts)
+
+
+def resolve_model_path(path: str) -> str:
+    """絶対パスは維持し、相対モデルパスだけアプリ基準で解決する。"""
+    return path if os.path.isabs(path) else app_path(path)
+
+
 DEFAULT_MODEL_PATH = r"models\gemma-3-4b-it-q4_k_m.gguf"
-AVATAR_DEFAULT     = r"avatars\default_avatar.png"
-AVATAR_SPEAKING    = r"avatars\speaking_avatar.png"
-AVATAR_BLINK       = r"avatars\blink_avatar.png"
-AVATAR_BLINK_SPK   = r"avatars\blink_speaking_avatar.png"
-LOG_DIR            = "chat_logs"
-SETTINGS_FILE      = "chat_settings.json"
+AVATAR_DEFAULT     = app_path("avatars", "default_avatar.png")
+AVATAR_SPEAKING    = app_path("avatars", "speaking_avatar.png")
+AVATAR_BLINK       = app_path("avatars", "blink_avatar.png")
+AVATAR_BLINK_SPK   = app_path("avatars", "blink_speaking_avatar.png")
+LOG_DIR            = app_path("chat_logs")
+SETTINGS_FILE      = app_path("chat_settings.json")
 
 SYSTEM_PROMPT = (
     "あなたは「シロ」という名前の、親しみやすく丁寧な日本語を話すアシスタントです。"
@@ -161,6 +190,12 @@ FONT_BOLD  = (_FONT_JP, 10, "bold")
 FONT_TITLE = (_FONT_JP, 12, "bold")
 FONT_CHAT  = (_FONT_JP, 11)
 FONT_SMALL = (_FONT_JP,  9)
+WHISPER_MODE_LABELS = {
+    "auto": "自動（推奨）",
+    "gpu_small": "GPU small（高速）",
+    "gpu_medium": "GPU medium（高精度・高VRAM）",
+    "cpu_small": "CPU small（省VRAM）",
+}
 
 
 def _valid_positive_int(value, fallback: int) -> int:
@@ -185,7 +220,9 @@ def load_settings() -> dict:
         max_tokens    = DEFAULT_MAX_TOKENS,
         temperature   = DEFAULT_TEMP,
         tts_enabled   = False,
+        tts_rate      = DEFAULT_TTS_RATE,
         mic_enabled   = False,
+        whisper_mode  = "auto",
         vad_threshold = DEFAULT_VAD_RMS,
         n_threads_batch = DEFAULT_N_THREADS_BATCH,
         n_batch       = DEFAULT_N_BATCH,
@@ -212,13 +249,18 @@ def load_settings() -> dict:
         defaults.get("offload_kqv"), DEFAULT_OFFLOAD_KQV)
     defaults["use_mmap"] = _valid_bool(
         defaults.get("use_mmap"), DEFAULT_USE_MMAP)
+    defaults["tts_rate"] = normalize_tts_rate(
+        defaults.get("tts_rate"), DEFAULT_TTS_RATE)
+    defaults["vad_threshold"] = normalize_vad_threshold(
+        defaults.get("vad_threshold"), DEFAULT_VAD_RMS)
+    defaults["whisper_mode"] = normalize_whisper_mode(
+        defaults.get("whisper_mode"))
     return defaults
 
 
 def save_settings(d: dict) -> None:
     try:
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=2)
+        atomic_write_json(SETTINGS_FILE, d)
     except Exception as e:
         print(f"[設定保存エラー] {e}")
 
@@ -227,15 +269,16 @@ def save_settings(d: dict) -> None:
 #  ■ LLM ユーティリティ
 # ═══════════════════════════════════════════════════════
 def init_llm(model_path: str, n_ctx: int, res_monitor, perf_settings: dict | None = None) -> Llama:
+    model_path = resolve_model_path(model_path)
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"モデルが見つかりません:\n{model_path}")
-    params = adjust_llm(res_monitor)   # ADDED: VRAMベースで n_gpu_layers を決定
+    params = adjust_llm(res_monitor, model_path=model_path)
     perf = perf_settings or {}
     base_kwargs = dict(
         model_path   = model_path,
         n_ctx        = n_ctx,
         n_threads    = 8,
-        n_gpu_layers = params["n_gpu_layers"],   # MODIFIED (-1 or 0)
+        n_gpu_layers = params["n_gpu_layers"],
         n_batch      = 512,
         verbose      = False,
     )
@@ -251,32 +294,59 @@ def init_llm(model_path: str, n_ctx: int, res_monitor, perf_settings: dict | Non
         use_mmap = _valid_bool(perf.get("use_mmap"), DEFAULT_USE_MMAP),
     )
 
-    attempts = [("perf", {**base_kwargs, **perf_kwargs})]
-    if perf_kwargs["flash_attn"]:
-        no_flash = dict(perf_kwargs)
-        no_flash["flash_attn"] = False
-        attempts.append(("perf_no_flash_attn", {**base_kwargs, **no_flash}))
-    attempts.append(("base", base_kwargs))
-
     last_err = None
-    for idx, (label, kwargs) in enumerate(attempts[:3], 1):
-        try:
-            if label != "perf":
-                print(f"[LLM] retry load with {label}")
-            return Llama(**kwargs)
-        except Exception as e:
-            last_err = e
-            shown = {k: kwargs.get(k) for k in (
-                "n_threads", "n_threads_batch", "n_batch", "n_ubatch",
-                "n_gpu_layers", "flash_attn", "offload_kqv", "use_mmap"
-            ) if k in kwargs}
-            print(f"[LLM] load attempt {idx} failed ({label}): {shown} -> {type(e).__name__}: {e}")
-            if label == "perf" and not (
-                isinstance(e, TypeError) or perf_kwargs["flash_attn"]
-            ):
-                raise
-            if label == "perf_no_flash_attn" and not isinstance(e, TypeError):
-                raise
+    layer_modes = [params["n_gpu_layers"]]
+    if params["n_gpu_layers"] == -1:
+        layer_modes.append(0)
+
+    before = params["snapshot"]
+    for layer_index, layers in enumerate(layer_modes):
+        layer_base = {**base_kwargs, "n_gpu_layers": layers}
+        attempts = [("perf", {**layer_base, **perf_kwargs})]
+        if perf_kwargs["flash_attn"]:
+            no_flash = dict(perf_kwargs)
+            no_flash["flash_attn"] = False
+            attempts.append(("perf_no_flash_attn", {**layer_base, **no_flash}))
+        attempts.append(("base", layer_base))
+
+        if layer_index:
+            print("[LLM] GPU load failed; retrying once on CPU")
+            try:
+                import gc
+                import torch
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        for idx, (label, kwargs) in enumerate(attempts[:3], 1):
+            try:
+                if label != "perf":
+                    print(f"[LLM] retry load with {label}")
+                llm = Llama(**kwargs)
+                res_monitor.llm_uses_gpu = layers == -1
+                after = res_monitor.snapshot()
+                print(
+                    f"[VRAM] after_llm total={after['total_mb']}MB "
+                    f"used={after['used_mb']}MB free={after['free_mb']}MB "
+                    f"delta={after['used_mb'] - before['used_mb']}MB"
+                )
+                print(
+                    f"[LLM] load complete device={'GPU' if layers == -1 else 'CPU'} "
+                    f"requested_layers={layers}"
+                )
+                return llm
+            except Exception as e:
+                last_err = e
+                shown = {k: kwargs.get(k) for k in (
+                    "n_threads", "n_threads_batch", "n_batch", "n_ubatch",
+                    "n_gpu_layers", "flash_attn", "offload_kqv", "use_mmap"
+                ) if k in kwargs}
+                print(
+                    f"[LLM] load attempt {idx} failed ({label}): {shown} "
+                    f"-> {type(e).__name__}: {e}"
+                )
     raise last_err
 
 
@@ -285,50 +355,6 @@ def count_tokens(llm: Llama, text: str) -> int:
         return len(llm.tokenize(text.encode("utf-8"), add_bos=False))
     except Exception:
         return max(1, len(text) // 2)
-
-
-def build_messages_safe(
-    llm: Llama,
-    history: list,
-    user_text: str,
-    n_ctx: int,
-    max_tokens: int,
-    summary: str = "",
-) -> list:
-    """トークン予算内に収まる履歴メッセージリストを構築する"""
-    sys_content = SYSTEM_PROMPT
-    if summary:
-        sys_content += f"\n\n[これまでの会話の要約]: {summary}"
-
-    sys_tokens  = count_tokens(llm, sys_content) + SYSTEM_BUF_TOKENS
-    user_tokens = count_tokens(llm, user_text)
-    budget = int(
-        (n_ctx - max_tokens - sys_tokens - user_tokens) * HISTORY_BUDGET_RATIO
-    )
-    budget = max(0, budget)
-
-    selected: list = []
-    for h in reversed(history):
-        cost = (count_tokens(llm, h.get("user", ""))
-                + count_tokens(llm, h.get("assistant", "")) + 12)
-        if budget - cost < 0:
-            break
-        selected.insert(0, h)
-        budget -= cost
-
-    msgs = [{"role": "system", "content": sys_content}]
-    for h in selected:
-        msgs.append({"role": "user",      "content": h.get("user",      "")})
-        msgs.append({"role": "assistant", "content": h.get("assistant", "")})
-    msgs.append({"role": "user", "content": user_text})
-    return msgs
-
-
-def _strip_code_blocks(text: str) -> str:
-    """TTSに渡す前にコードブロック（```...```）を除去する。 v1.1.2"""
-    text = re.sub(r'```[\s\S]*?```', '', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
 
 
 # ═══════════════════════════════════════════════════════
@@ -396,6 +422,33 @@ class SettingsDialog(tk.Toplevel):
                  bg=C["bg_main"], fg=C["fg_sub"],
                  font=FONT_SMALL).grid(row=4, column=2, sticky="w", **P)
 
+        # TTS 読み上げ速度
+        lbl(5, "読み上げ速度 (-10 ～ 10):")
+        self.e_tts_rate = ent(5, cfg.get("tts_rate", DEFAULT_TTS_RATE))
+        tk.Label(
+            self,
+            text="0: 標準 / +2: 速め（次の読み上げから反映）",
+            bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
+        ).grid(row=5, column=2, sticky="w", **P)
+
+        # Whisper 実行モード（起動時のみ反映）
+        lbl(6, "Whisper実行モード:")
+        current_mode = normalize_whisper_mode(cfg.get("whisper_mode"))
+        self.v_whisper_mode = tk.StringVar(
+            value=WHISPER_MODE_LABELS[current_mode])
+        whisper_menu = tk.OptionMenu(
+            self, self.v_whisper_mode, *WHISPER_MODE_LABELS.values())
+        whisper_menu.config(
+            bg=C["bg_input"], fg=C["fg_main"],
+            activebackground=C["accent"], bd=0, width=25,
+        )
+        whisper_menu["menu"].config(bg=C["bg_input"], fg=C["fg_main"])
+        whisper_menu.grid(row=6, column=1, sticky="w", **P)
+        tk.Label(
+            self, text="変更は次回起動時に反映",
+            bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
+        ).grid(row=6, column=2, sticky="w", **P)
+
         # 起動時マイクON/OFF
         self.v_mic = BooleanVar(value=cfg.get("mic_enabled", False))
         tk.Checkbutton(
@@ -403,7 +456,7 @@ class SettingsDialog(tk.Toplevel):
             variable=self.v_mic,
             bg=C["bg_main"], fg=C["fg_main"],
             selectcolor=C["bg_input"], activebackground=C["bg_main"],
-        ).grid(row=5, column=0, columnspan=3, sticky="w", padx=16, pady=4)
+        ).grid(row=7, column=0, columnspan=3, sticky="w", padx=16, pady=4)
 
         # 起動時TTS ON/OFF
         self.v_tts = BooleanVar(value=cfg.get("tts_enabled", False))
@@ -412,11 +465,17 @@ class SettingsDialog(tk.Toplevel):
             variable=self.v_tts,
             bg=C["bg_main"], fg=C["fg_main"],
             selectcolor=C["bg_input"], activebackground=C["bg_main"],
-        ).grid(row=6, column=0, columnspan=3, sticky="w", padx=16, pady=4)
+        ).grid(row=8, column=0, columnspan=3, sticky="w", padx=16, pady=4)
+
+        tk.Label(
+            self,
+            text="※ 体感速度はWindowsの音声エンジンによって異なります",
+            bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
+        ).grid(row=9, column=0, columnspan=3, sticky="w", padx=16, pady=(2, 4))
 
         # ボタン
         bf = tk.Frame(self, bg=C["bg_main"])
-        bf.grid(row=7, column=0, columnspan=3, pady=16)
+        bf.grid(row=10, column=0, columnspan=3, pady=16)
         tk.Button(
             bf, text="保存して適用",
             bg=C["accent"], fg="white", width=14, bd=0,
@@ -445,13 +504,26 @@ class SettingsDialog(tk.Toplevel):
             tok = int(self.e_tok.get())
             tmp = float(self.e_temp.get())
             vad = int(self.e_vad.get())
+            tts_rate = int(self.e_tts_rate.get())
             if not (0.0 <= tmp <= 2.0):
                 raise ValueError("会話の自由度は 0.0〜2.0 の範囲で入力してください")
             if tok < 1 or ctx < 512:
                 raise ValueError("トークン数が小さすぎます (n_ctx は 512 以上)")
+            if not MIN_TTS_RATE <= tts_rate <= MAX_TTS_RATE:
+                raise ValueError("読み上げ速度は -10〜10 の整数で入力してください")
+            if not MIN_VAD_RMS <= vad <= MAX_VAD_RMS:
+                raise ValueError(
+                    f"音声検出の感度は {MIN_VAD_RMS}〜{MAX_VAD_RMS} "
+                    "の整数で入力してください")
+            whisper_mode = next(
+                key for key, label in WHISPER_MODE_LABELS.items()
+                if label == self.v_whisper_mode.get()
+            )
             self.result = dict(
                 model_path=mp, n_ctx=ctx, max_tokens=tok,
                 temperature=tmp, vad_threshold=vad,
+                tts_rate=tts_rate,
+                whisper_mode=whisper_mode,
                 mic_enabled=self.v_mic.get(),
                 tts_enabled=self.v_tts.get())
             self.destroy()
@@ -459,6 +531,186 @@ class SettingsDialog(tk.Toplevel):
             messagebox.showerror("入力エラー", str(e), parent=self)
         except Exception:
             messagebox.showerror("入力エラー", "数値が無効です", parent=self)
+
+
+# ═══════════════════════════════════════════════════════
+#  ■ 家計簿 確認ダイアログ
+# ═══════════════════════════════════════════════════════
+class KakeiboConfirmDialog(tk.Toplevel):
+    """家計簿候補の編集可能な確認画面。
+
+    LLM候補・原文由来amountはあくまで初期候補であり、ユーザーが確認チェックを
+    有効にするまで登録ボタンは無効のまま。type/category/amount/date/store/memo
+    のいずれかを編集すると確認チェックは自動的に解除される(初期化中のプログラム
+    的な値設定はこの対象に含めない)。
+    """
+
+    def __init__(self, parent: tk.Tk, candidate: dict, user_text: str):
+        super().__init__(parent)
+        self.title("家計簿へ登録")
+        self.configure(bg=C["bg_main"])
+        self.resizable(False, False)
+        self.result: dict | None = None
+        self._initializing = True
+        P = dict(padx=16, pady=6)
+
+        def lbl(row: int, text: str) -> None:
+            tk.Label(self, text=text, bg=C["bg_main"], fg=C["fg_main"]
+                     ).grid(row=row, column=0, sticky="w", **P)
+
+        lbl(0, "認識・入力内容:")
+        self.original_text = tk.Text(
+            self, width=46, height=4, wrap="word",
+            bg=C["bg_input"], fg=C["fg_sub"], bd=1)
+        self.original_text.insert("1.0", user_text)
+        self.original_text.config(state="disabled")
+        self.original_text.grid(row=0, column=1, columnspan=2, sticky="ew", **P)
+
+        lbl(1, "日付 (YYYY-MM-DD):")
+        self.v_date = tk.StringVar(value=candidate.get("date") or "")
+        tk.Entry(
+            self, width=16, textvariable=self.v_date,
+            bg=C["bg_input"], fg=C["fg_main"], bd=1,
+        ).grid(row=1, column=1, sticky="w", **P)
+
+        lbl(2, "金額 (円):")
+        amount = candidate.get("amount")
+        self.v_amount = tk.StringVar(value=str(amount) if amount is not None else "")
+        tk.Entry(
+            self, width=16, textvariable=self.v_amount,
+            bg=C["bg_input"], fg=C["fg_main"], bd=1,
+        ).grid(row=2, column=1, sticky="w", **P)
+
+        lbl(3, "支出・収入:")
+        self.v_type = tk.StringVar(value=candidate.get("type") or "")
+        type_frame = tk.Frame(self, bg=C["bg_main"])
+        type_frame.grid(row=3, column=1, columnspan=2, sticky="w", **P)
+        tk.Radiobutton(
+            type_frame, text="支出", value="支出", variable=self.v_type,
+            bg=C["bg_main"], fg=C["fg_main"], selectcolor=C["bg_input"],
+            activebackground=C["bg_main"],
+        ).pack(side=tk.LEFT)
+        tk.Radiobutton(
+            type_frame, text="収入", value="収入", variable=self.v_type,
+            bg=C["bg_main"], fg=C["fg_main"], selectcolor=C["bg_input"],
+            activebackground=C["bg_main"],
+        ).pack(side=tk.LEFT, padx=(12, 0))
+
+        lbl(4, "カテゴリ:")
+        self.v_category = tk.StringVar(value=candidate.get("category") or "")
+        self.category_menu = tk.OptionMenu(self, self.v_category, "")
+        self.category_menu.config(
+            bg=C["bg_input"], fg=C["fg_main"], bd=0, width=20)
+        self.category_menu.grid(row=4, column=1, sticky="w", **P)
+
+        lbl(5, "取引先・店舗:")
+        self.v_store = tk.StringVar(value=candidate.get("store") or "")
+        tk.Entry(
+            self, width=30, textvariable=self.v_store,
+            bg=C["bg_input"], fg=C["fg_main"], bd=1,
+        ).grid(row=5, column=1, columnspan=2, sticky="ew", **P)
+
+        lbl(6, "メモ:")
+        self.v_memo = tk.StringVar(value=candidate.get("memo") or "")
+        tk.Entry(
+            self, width=30, textvariable=self.v_memo,
+            bg=C["bg_input"], fg=C["fg_main"], bd=1,
+        ).grid(row=6, column=1, columnspan=2, sticky="ew", **P)
+
+        self.v_confirmed = BooleanVar(value=False)
+        tk.Checkbutton(
+            self, text="原文と登録内容を確認しました", variable=self.v_confirmed,
+            bg=C["bg_main"], fg=C["fg_main"], selectcolor=C["bg_input"],
+            activebackground=C["bg_main"], command=self._update_submit_state,
+        ).grid(row=7, column=0, columnspan=3, sticky="w", padx=16, pady=(8, 4))
+
+        bf = tk.Frame(self, bg=C["bg_main"])
+        bf.grid(row=8, column=0, columnspan=3, pady=16)
+        self.btn_submit = tk.Button(
+            bf, text="登録", bg=C["accent"], fg="white", width=12, bd=0,
+            command=self._submit,
+        )
+        self.btn_submit.pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            bf, text="キャンセル", bg=C["bg_input"], fg=C["fg_main"], width=10, bd=0,
+            command=self.destroy,
+        ).pack(side=tk.LEFT, padx=8)
+
+        # 初期化中はcategory一覧の構築・初期値セットが確認チェックを解除しないようにする
+        self._refresh_category_options(initial_category=candidate.get("category"))
+        self._initializing = False
+
+        self.v_date.trace_add("write", self._on_field_edited)
+        self.v_amount.trace_add("write", self._on_field_edited)
+        self.v_store.trace_add("write", self._on_field_edited)
+        self.v_memo.trace_add("write", self._on_field_edited)
+        self.v_category.trace_add("write", self._on_field_edited)
+        self.v_type.trace_add("write", self._on_type_changed)
+
+        self._update_submit_state()
+        self.grab_set()
+
+    def _refresh_category_options(self, initial_category=None) -> None:
+        type_value = self.v_type.get()
+        options = (
+            KAKEIBO_EXPENSE_CATS if type_value == "支出"
+            else KAKEIBO_INCOME_CATS if type_value == "収入"
+            else []
+        )
+
+        menu = self.category_menu["menu"]
+        menu.delete(0, "end")
+        for option in options:
+            menu.add_command(
+                label=option,
+                command=lambda value=option: self.v_category.set(value),
+            )
+
+        if type_value not in ("支出", "収入"):
+            self.v_category.set("")
+            self.category_menu.config(state="disabled")
+            return
+
+        self.category_menu.config(state="normal")
+        if initial_category in options:
+            self.v_category.set(initial_category)
+        else:
+            self.v_category.set("その他支出" if type_value == "支出" else "その他収入")
+
+    def _on_type_changed(self, *_args) -> None:
+        was_initializing = self._initializing
+        self._refresh_category_options()
+        if not was_initializing:
+            self.v_confirmed.set(False)
+        self._update_submit_state()
+
+    def _on_field_edited(self, *_args) -> None:
+        if self._initializing:
+            return
+        self.v_confirmed.set(False)
+        self._update_submit_state()
+
+    def _current_record(self) -> dict:
+        return {
+            "date": self.v_date.get().strip(),
+            "amount": normalize_manual_amount_input(self.v_amount.get()),
+            "type": self.v_type.get() or None,
+            "category": self.v_category.get() or None,
+            "store": self.v_store.get(),
+            "memo": self.v_memo.get(),
+        }
+
+    def _update_submit_state(self) -> None:
+        can_submit = can_submit_kakeibo_candidate(
+            self._current_record(), self.v_confirmed.get())
+        self.btn_submit.config(state="normal" if can_submit else "disabled")
+
+    def _submit(self) -> None:
+        record = self._current_record()
+        if not can_submit_kakeibo_candidate(record, self.v_confirmed.get()):
+            return
+        self.result = record
+        self.destroy()
 
 
 # ═══════════════════════════════════════════════════════
@@ -632,12 +884,16 @@ class ChatApp:
 
         # ── ランタイム変数 ────────────────────────
         self._is_thinking  = False
+        self._closing      = False
         self._llm_abort    = False   # 生成中断フラグ
         self._is_guest     = False
         self._llm_loading  = True
         self.llm: Llama | None        = None
         self._whisper_model           = None   # バックグラウンドでロード
         self._whisper_load_skipped    = False  # 起動時にWhisperロードをスキップしたか
+        self._whisper_load_started    = False  # LLM準備後に初回だけロードする
+        self._llm_load_generation     = 0
+        self._llm_load_active         = threading.Event()
         self._files: list[str]        = []
         self._current_session: dict   = {}
         self._current_path: str | None = None
@@ -661,6 +917,7 @@ class ChatApp:
         # TTSWorker側のエラーを回避するため self.avatar と root を渡す
         self.tts         = TTSWorker(self.avatar, root)
         self.tts.enabled = self._cfg.get("tts_enabled", False)
+        self.tts.rate    = self._cfg.get("tts_rate", DEFAULT_TTS_RATE)
         
         # TTSのイベントとマイク制御を紐付け
         self.tts.on_start = self._on_tts_start
@@ -678,104 +935,199 @@ class ChatApp:
         deps = ControllerDeps(
             res_monitor       = self._deps.res_monitor,
             whisper_pool      = self._deps.whisper_pool,
-            strip_code_blocks = _strip_code_blocks,
             summary_threshold = SUMMARY_THRESHOLD,
         )
         self._ctrl = Controller(self, deps)
 
         # ── バックグラウンドロード ─────────────────
         self._reload_llm()
-        self._load_whisper_async()
 
     # ── 停止・制御 ──────────────────────────────
 
     def _stop_all(self) -> None:
         self._ctrl.stop()
 
+    def _post_ui(self, callback) -> bool:
+        """終了後のTkへワーカースレッドが通知しないための共通入口。"""
+        if self._closing:
+            return False
+
+        def _run_if_open():
+            if not self._closing:
+                callback()
+
+        try:
+            self.root.after(0, _run_if_open)
+            return True
+        except (tk.TclError, RuntimeError):
+            return False
+
     # ══════════════════════════════════════════════
     #  LLM ロード
     # ══════════════════════════════════════════════
-    def _reload_llm(self) -> None:
-        self._llm_loading = True
+    @staticmethod
+    def _close_llm_instance(llm) -> None:
+        if llm is None:
+            return
+        close = getattr(llm, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as exc:
+                print(f"[LLM] モデル解放エラー: {exc}")
+        del llm
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+    def _detach_current_llm(self) -> None:
+        current = self.llm
         self.llm = None
+        try:
+            service_llm = self._ctrl._llm_service.detach_llm()
+        except RuntimeError:
+            self.llm = current
+            raise
+        self._close_llm_instance(service_llm)
+        if current is not service_llm:
+            self._close_llm_instance(current)
+
+    def _reload_llm(
+        self,
+        rollback_config: tuple[str, int] | None = None,
+        recovery: bool = False,
+    ) -> None:
+        if self._ctrl._llm_service.is_running():
+            raise RuntimeError("LLM実行中はモデルを再読込できません")
+        self._llm_load_generation += 1
+        generation = self._llm_load_generation
+        self._llm_loading = True
+        self._detach_current_llm()
+        model_path = self._model_path
+        n_ctx = self._n_ctx
+        perf_settings = dict(self._llm_perf_settings)
         self._status_set(
-            f"⏳ モデル読込中: {os.path.basename(self._model_path)} …")
+            f"⏳ モデル読込中: {os.path.basename(model_path)} …")
 
         def _worker() -> None:
+            self._llm_load_active.set()
             try:
                 llm = init_llm(
-                    self._model_path, self._n_ctx, self._deps.res_monitor,
-                    self._llm_perf_settings)
-                self.root.after(0, lambda: self._on_llm_ready(llm, None))
+                    model_path, n_ctx, self._deps.res_monitor, perf_settings)
+                if generation != self._llm_load_generation or self._closing:
+                    self._close_llm_instance(llm)
+                    return
+                self._post_ui(lambda: self._on_llm_ready(
+                    generation, llm, None, rollback_config, recovery))
             except Exception as e:
-                self.root.after(0, lambda err=e: self._on_llm_ready(None, err))
+                self._post_ui(lambda err=e: self._on_llm_ready(
+                    generation, None, err, rollback_config, recovery))
+            finally:
+                self._llm_load_active.clear()
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_llm_ready(self, llm, err) -> None:
+    def _on_llm_ready(
+        self, generation, llm, err, rollback_config=None, recovery=False
+    ) -> None:
+        if generation != self._llm_load_generation or self._closing:
+            self._close_llm_instance(llm)
+            return
         self._llm_loading = False
         if llm:
             self.llm = llm
-            self._ctrl._llm_service.llm = llm  # モデル差し替え時に LLMService へ反映
+            self._ctrl._llm_service.attach_llm(llm)
             self._ctrl.clear_token_cache()
             self._update_status()
+            if recovery:
+                print("[LLM] 以前のモデル設定へ復旧しました")
         else:
+            if rollback_config is not None and not recovery:
+                self._model_path, self._n_ctx = rollback_config
+                self._cfg["model_path"] = self._model_path
+                self._cfg["n_ctx"] = self._n_ctx
+                save_settings(self._cfg)
+                print(f"[LLM] 新モデル読込失敗。以前の設定へ復旧します: {err}")
+                self._reload_llm(recovery=True)
+                return
             self._status_set("❌ モデル読込失敗")
             messagebox.showerror(
                 "モデル読込エラー",
                 f"モデルの読み込みに失敗しました。\n"
                 f"設定からパスを確認してください。\n\n{err}")
+        self._start_whisper_after_llm_once()
+
+    def _start_whisper_after_llm_once(self) -> None:
+        """LLMのVRAM確保後に、Whisperを初回だけロードする。"""
+        if self._whisper_load_started:
+            return
+        self._whisper_load_started = True
+        self._load_whisper_async()
 
     # ══════════════════════════════════════════════
     #  Whisper ロード（バックグラウンド）
     # ══════════════════════════════════════════════
     def _load_whisper_async(self) -> None:
-        # ── 追加: マイクもTTSも無効なら、モデルロード自体をスキップ ──
-        if not self._cfg.get("mic_enabled") and not self._cfg.get("tts_enabled"):
-            print("[System] マイク/TTSが無効なため、Whisperのロードをスキップします。")
+        if not should_load_whisper(self._cfg.get("mic_enabled")):
+            print("[System] マイクが無効なため、Whisperのロードをスキップします。")
             self._whisper_load_skipped = True
-            self.root.after(0, lambda: self._on_whisper_ready(None))
+            self._post_ui(self._on_whisper_skipped)
             return
         
         def _worker() -> None:
             # MODIFIED: WhisperPool が GPU+CPU 両ロードを管理（VRAMベースで判断）
-            self._deps.whisper_pool.load(self._deps.res_monitor)
+            self._deps.whisper_pool.load(
+                self._deps.res_monitor,
+                mode=self._cfg.get("whisper_mode", "auto"),
+            )
             wm = (
                 self._deps.whisper_pool
                 if self._deps.whisper_pool._cpu_model is not None
                 else None
             )
-            self.root.after(0, lambda m=wm: self._on_whisper_ready(m))
+            self._post_ui(lambda m=wm: self._on_whisper_ready(m))
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_whisper_skipped(self) -> None:
+        self._whisper_model = None
+        self._update_status()
+        self._queue_initial_greeting()
 
     def _on_whisper_ready(self, wm) -> None:
         self._whisper_model = wm
         if wm is None:
             print("[Whisper] ロード無効 → 音声認識は無効")
             self._status_set("⚠ Whisper ロード無効（音声認識無効）")
+            self._queue_initial_greeting()
             return
         print("[Whisper] VoiceRecognizer を起動します")
         self._voice = VoiceRecognizer(
             wm,
-            on_text=lambda t: self.root.after(
-                0, lambda tx=t: self._voice_input(tx)),
+            on_text=lambda t: self._post_ui(
+                lambda tx=t: self._voice_input(tx)),
             vad_threshold=self._vad_thresh,
             res_monitor=self._deps.res_monitor,
         )
-        self._voice.on_idle       = lambda: self.root.after(0, self._mic_idle)
-        self._voice.on_listening  = lambda: self.root.after(
-            0, self._mic_listening)
-        self._voice.on_processing = lambda: self.root.after(
-            0, self._mic_processing)
+        self._voice.on_idle       = lambda: self._post_ui(self._mic_idle)
+        self._voice.on_listening  = lambda: self._post_ui(self._mic_listening)
+        self._voice.on_processing = lambda: self._post_ui(self._mic_processing)
         # スレッド起動後に設定ファイルのmic_enabledを反映する
         self._voice.enabled = self._cfg.get("mic_enabled", False)
         print(f"[Whisper] 音声認識開始 / VAD閾値={self._vad_thresh}")
         self._update_status()
         self._mic_idle()
 
-        # Whisper準備完了後にTTS起動発話（TTS ONかつ未発話の場合のみ）
-        if self.tts.enabled and not self.tts._initial_greeting_done:
+        self._queue_initial_greeting()
+
+    def _queue_initial_greeting(self) -> None:
+        if should_queue_initial_greeting(
+            self.tts.enabled, self.tts._initial_greeting_done
+        ):
             self.tts._initial_greeting_done = True
             self.tts.speak("システムを起動しました。")
             print("[TTS] 起動発話をキューに追加")
@@ -997,7 +1349,7 @@ class ChatApp:
             bd=0, font=(_FONT_ICON, 18),
             cursor="hand2",
         )
-        self._btn_mic.pack(side=tk.LEFT, padx=(6, 0), pady=6)
+        self._btn_mic.pack(side=tk.LEFT, padx=(6, 0), pady=6, anchor="s")
 
         # 停止ボタン（TTS / 音声認識）
         self._btn_stop = tk.Button(
@@ -1007,7 +1359,7 @@ class ChatApp:
             bd=0, font=(_FONT_ICON, 18),
             cursor="hand2",
         )
-        self._btn_stop.pack(side=tk.LEFT, padx=(4, 0), pady=6)
+        self._btn_stop.pack(side=tk.LEFT, padx=(4, 0), pady=6, anchor="s")
 
         # 家計簿モードボタン
         self._btn_kakeibo = tk.Button(
@@ -1017,7 +1369,7 @@ class ChatApp:
             bd=0, font=(_FONT_ICON, 18),
             cursor="hand2",
         )
-        self._btn_kakeibo.pack(side=tk.LEFT, padx=(4, 0), pady=6)
+        self._btn_kakeibo.pack(side=tk.LEFT, padx=(4, 0), pady=6, anchor="s")
 
         # 健康記録モードボタン
         self._btn_health = tk.Button(
@@ -1027,16 +1379,19 @@ class ChatApp:
             bd=0, font=(_FONT_ICON, 18),
             cursor="hand2",
         )
-        self._btn_health.pack(side=tk.LEFT, padx=(4, 0), pady=6)
+        self._btn_health.pack(side=tk.LEFT, padx=(4, 0), pady=6, anchor="s")
 
         # ─────────────────────────────────────────
         #  ★ バグ修正箇所 ①:
         #    tk.Text を直接 pack し、state は常に NORMAL のまま維持。
         #    _entry を disable にする処理を一切設けない。
         # ─────────────────────────────────────────
+        # width=1: 未指定だとTkの既定値(80文字)が要求幅になり、ウィンドウ幅次第で
+        # in_box全体の要求幅が実幅を超え、送信ボタンが1pxに潰れることがあるため、
+        # 実際の幅はfill=X/expand=Trueに委ねる。
         self._entry = tk.Text(
             in_box,
-            height=3,
+            height=5, width=1,
             bg=C["bg_input"], fg=C["fg_main"],
             insertbackground="white",
             bd=0, font=FONT_CHAT,
@@ -1061,7 +1416,7 @@ class ChatApp:
             bg=C["accent"], fg="white",
             width=8, bd=0, cursor="hand2",
         )
-        self._btn_send.pack(side=tk.RIGHT, padx=(0, 8), pady=6)
+        self._btn_send.pack(side=tk.RIGHT, padx=(0, 8), pady=6, anchor="s")
 
         tk.Label(
             in_outer,
@@ -1108,6 +1463,10 @@ class ChatApp:
             ctx.grab_release()
 
     def _delete_chat(self, idx: int) -> None:
+        if self._ctrl.is_busy():
+            messagebox.showwarning(
+                "警告", "AIの処理中はチャットを削除できません。")
+            return
         if idx < 0 or idx >= len(self._files):
             return
         target = self._files[idx]
@@ -1130,6 +1489,10 @@ class ChatApp:
         self._refresh_chat_list()
 
     def _rename_chat(self, idx: int) -> None:
+        if self._ctrl.is_busy():
+            messagebox.showwarning(
+                "警告", "AIの処理中は名前を変更できません。")
+            return
         if idx < 0 or idx >= len(self._files):
             return
         target  = self._files[idx]
@@ -1173,7 +1536,7 @@ class ChatApp:
     def _on_tts_start(self) -> None:
         """TTS発話中はVAD閾値を大幅に上げてハウリングを防ぐ"""
         if self._voice:
-            self._voice._tts_active = True
+            self._voice.mark_tts_started()
             print("[TTS] 発話開始 → VAD感度を下げる")
 
     def _on_tts_stop(self) -> None:
@@ -1181,16 +1544,20 @@ class ChatApp:
         print(f"[TTS] 発話終了 → muted={getattr(self, '_tts_muted_mic', False)}")
         if self._voice:
             # 少し待ってから感度を戻す（残響が消えるのを待つ）
-            self.root.after(800, self._restore_vad)
+            voice = self._voice
+            generation = voice._tts_generation
+            self.root.after(
+                800,
+                lambda v=voice, g=generation: self._restore_vad(v, g),
+            )
 
-    def _restore_vad(self) -> None:
+    def _restore_vad(self, voice, generation: int) -> None:
         """VAD感度を通常に戻す"""
-        if self._voice and self.tts._q.empty():
-            self._voice._tts_active = False
+        if (
+            self._voice is voice
+            and voice.finish_tts_if_generation(generation)
+        ):
             print("[TTS] VAD感度を通常に戻す")
-
-    def _restore_mic(self) -> None:
-        pass  # 旧方式の残骸（互換性のため残す）
 
     def _toggle_mic(self) -> None:
         if self._voice is None:
@@ -1230,8 +1597,13 @@ class ChatApp:
                 "divider",
             )
 
-    def _confirm_and_send_kakeibo(self, record: dict) -> None:
-        self._integrations.confirm_and_send_kakeibo(record)
+    def _confirm_and_send_kakeibo(self, candidate: dict, user_text: str) -> None:
+        dialog = KakeiboConfirmDialog(self.root, candidate, user_text)
+        self.root.wait_window(dialog)
+        if dialog.result is None:
+            self._chat_write("家計簿への登録をキャンセルしました。\n", "divider")
+            return
+        self._integrations.send_kakeibo(dialog.result)
 
     # ══════════════════════════════════════════════
     #  健康記録連携
@@ -1254,8 +1626,10 @@ class ChatApp:
                 "divider",
             )
 
-    def _confirm_and_send_biolog(self, record: dict) -> None:
-        self._integrations.confirm_and_send_biolog(record)
+    def _confirm_and_send_biolog(
+        self, record: dict, explicit_fields=None
+    ) -> None:
+        self._integrations.confirm_and_send_biolog(record, explicit_fields)
 
     def _voice_input(self, text: str) -> None:
         self._ctrl.handle_voice(text)
@@ -1281,40 +1655,29 @@ class ChatApp:
     # ══════════════════════════════════════════════
     #  要約メモリ
     # ══════════════════════════════════════════════
-    def _update_summary(self) -> None:
-        if self.llm is None or self._is_thinking:
-            return
-        try:
-            history_text = "\n".join(
-                f"User: {h['user']}\nAssistant: {h.get('assistant', '')}"
-                for h in self._current_session.get("history", [])
-                if h.get("assistant")
-            )
-            prompt = (
-                "以下の会話を50文字以内の日本語で1行に要約してください。\n\n"
-                f"{history_text}\n\n要約:"
-            )
-            self.llm.reset()
-            res = self.llm(
-                prompt, max_tokens=80, temperature=0.3, stop=["\n"])
-            summary = res["choices"][0]["text"].strip()
-            if summary:
-                self._current_session["summary"] = summary
-                self.root.after(
-                    0,
-                    lambda s=summary: self._summary_var.set(
-                        f"📝 メモリ: {s}"))
-                self.root.after(0, self._save_now)
-        except Exception as e:
-            print(f"[要約エラー] {e}")
+    def _build_summary_prompt(self) -> str:
+        history_text = "\n".join(
+            f"User: {h['user']}\nAssistant: {h.get('assistant', '')}"
+            for h in self._current_session.get("history", [])
+            if h.get("assistant")
+        )
+        return (
+            "以下の会話を50文字以内の日本語で1行に要約してください。\n\n"
+            f"{history_text}\n\n要約:"
+        )
+
+    def _apply_summary(self, summary: str) -> None:
+        self._current_session["summary"] = summary
+        self._summary_var.set(f"📝 メモリ: {summary}")
+        self._save_now()
 
     # ══════════════════════════════════════════════
     #  セッション管理
     # ══════════════════════════════════════════════
     def _new_session(self) -> None:
-        if self._is_thinking:
+        if hasattr(self, "_ctrl") and self._ctrl.is_busy():
             messagebox.showwarning(
-                "警告", "AI が応答中です。しばらくお待ちください。")
+                "警告", "AIの処理中です。しばらくお待ちください。")
             return
         self._current_session = self._session_store.new_session()
         self._current_path = None
@@ -1341,7 +1704,7 @@ class ChatApp:
                 return
             self._current_path = saved_path
             # リスト更新は必ずメインスレッドで行う
-            self.root.after(0, self._refresh_chat_list)
+            self._post_ui(self._refresh_chat_list)
         except Exception as e:
             print(f"[保存エラー] {e}")
 
@@ -1376,6 +1739,10 @@ class ChatApp:
             self._files.append(session["path"])
 
     def _load_selected(self, _event=None) -> None:
+        if self._ctrl.is_busy():
+            messagebox.showwarning(
+                "警告", "AIの処理中はチャットを切り替えられません。")
+            return
         sel = self._chat_list.curselection()
         if not sel:
             return
@@ -1388,9 +1755,6 @@ class ChatApp:
 
         self._current_session = data
         self._current_path    = fp
-        self._is_thinking     = False   # 安全のためリセット
-        self._btn_send.config(state=tk.NORMAL)
-
         self._title_var.set(data.get("title", "不明"))
         summary = data.get("summary", "")
         self._summary_var.set(f"📝 メモリ: {summary}" if summary else "")
@@ -1421,6 +1785,10 @@ class ChatApp:
     #  ゲストモード
     # ══════════════════════════════════════════════
     def _toggle_guest(self) -> None:
+        if self._ctrl.is_busy():
+            messagebox.showwarning(
+                "警告", "AIの処理中はゲストモードを切り替えられません。")
+            return
         self._is_guest = not self._is_guest
         self._btn_guest.config(
             text="ゲストモード: ON"  if self._is_guest else "ゲストモード: OFF",
@@ -1443,7 +1811,9 @@ class ChatApp:
             max_tokens    = self._max_tokens,
             temperature   = self._temperature,
             vad_threshold = self._vad_thresh,
+            tts_rate      = self.tts.rate,
             mic_enabled = self._cfg.get("mic_enabled", False),
+            whisper_mode = self._cfg.get("whisper_mode", "auto"),
             tts_enabled   = self.tts.enabled,
         ))
         self.root.wait_window(dlg)
@@ -1451,10 +1821,22 @@ class ChatApp:
             return
 
         new = dlg.result
+        whisper_mode_changed = (
+            new["whisper_mode"] != self._cfg.get("whisper_mode", "auto")
+        )
         model_changed = (
             new["model_path"] != self._model_path
             or new["n_ctx"] != self._n_ctx
         )
+        if model_changed and (self._ctrl.is_busy() or self._llm_loading):
+            messagebox.showwarning(
+                "設定",
+                "AIの処理中またはモデル読込中はモデル設定を変更できません。\n"
+                "その他の設定だけを適用します。",
+            )
+            new["model_path"] = self._model_path
+            new["n_ctx"] = self._n_ctx
+            model_changed = False
         self._max_tokens  = new["max_tokens"]
         self._temperature = new["temperature"]
         self._vad_thresh  = new["vad_threshold"]
@@ -1462,15 +1844,23 @@ class ChatApp:
             self._voice.vad_threshold = self._vad_thresh
             self._voice.enabled = new["mic_enabled"]
         self.tts.enabled = new["tts_enabled"]
+        self.tts.rate = new["tts_rate"]
         self._tts_var.set(new["tts_enabled"])  # メニューのチェック状態を同期
 
         self._cfg.update(new)
         save_settings(self._cfg)
 
+        if whisper_mode_changed:
+            messagebox.showinfo(
+                "Whisper設定",
+                "Whisper実行モードは次回起動時に反映されます。",
+            )
+
         if model_changed:
+            rollback_config = (self._model_path, self._n_ctx)
             self._model_path = new["model_path"]
             self._n_ctx      = new["n_ctx"]
-            self._reload_llm()
+            self._reload_llm(rollback_config=rollback_config)
         else:
             self._update_status()
 
@@ -1507,27 +1897,61 @@ class ChatApp:
         mic_stat = "マイク無効"
         if self._voice:
             mic_stat = "マイクON" if self._voice.enabled else "マイクOFF"
-        think = "⏳ 生成中…" if self._is_thinking else "✅ 待機中"
+        status_label = getattr(self._deps.whisper_pool, "status_label", None)
+        whisper_stat = status_label() if status_label else "不明"
+        think = (
+            self._ctrl.operation_label()
+            if hasattr(self, "_ctrl")
+            else ("⏳ 生成中…" if self._is_thinking else "✅ 待機中")
+        )
         mn    = os.path.basename(self._model_path)
         turns = len(self._current_session.get("history", []))
         guest = " [ゲスト]" if self._is_guest else ""
         self._status_var.set(
             f"{think}{guest} | {mn} | "
             f"{self._max_tokens}tok / temp:{self._temperature} | "
-            f"{turns}ターン | {mic_stat}")
+            f"{turns}ターン | {mic_stat} / Whisper:{whisper_stat}")
 
     # ══════════════════════════════════════════════
     #  終了処理
     # ══════════════════════════════════════════════
     def _on_close(self) -> None:
+        if self._closing:
+            return
+        self._closing = True
+        self._llm_load_generation += 1
+        self._ctrl.begin_shutdown()
+        self._integrations.begin_closing()
         if self._voice:
             self._voice.stop()
             self._cfg["mic_enabled"] = self._voice.enabled
         self._cfg["tts_enabled"] = self.tts.enabled
         save_settings(self._cfg)
-        self.tts.stop_all()
+        self.tts.terminate()
+        self._deps.res_monitor.stop()
         self._save_now()
-        self.root.after(200, self.root.destroy)
+        deadline = time.monotonic() + 6.0
+
+        def _wait_for_workers() -> None:
+            llm_running = self._ctrl._llm_service.is_running()
+            loading = self._llm_load_active.is_set()
+            pending_api = self._integrations.pending_operations()
+            if not llm_running and not loading and not pending_api:
+                self.root.destroy()
+                return
+            if time.monotonic() >= deadline:
+                pending = []
+                if llm_running:
+                    pending.append("llm")
+                if loading:
+                    pending.append("llm_load")
+                pending.extend(pending_api)
+                print(f"[Shutdown] timeout pending={pending}")
+                self.root.destroy()
+                return
+            self.root.after(100, _wait_for_workers)
+
+        self.root.after(0, _wait_for_workers)
 
 
 # ═══════════════════════════════════════════════════════

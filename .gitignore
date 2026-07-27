@@ -14,6 +14,9 @@ chat_logs/
 
 # ── 設定ファイル（個人パスが含まれる）────────
 chat_settings.json
+*.env
+.env.*
+!.env.example
 
 # ── デバッグ・旧バージョン ────────────────────
 tk_chat_debug.py
@@ -24,12 +27,19 @@ tk_chat_local.py(*)
 
 # ── 開発メモ ──────────────────────────────────
 *.docx
+/CLAUDE.md
 
 # ── Pythonキャッシュ ──────────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # ── Whisperキャッシュ ─────────────────────────
 ~/.cache/whisper/
@@ -38,15 +48,26 @@ __pycache__/
 Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+nul
 
 # ── データフォルダ ────────────────────────────
 data/
 
 # ── バックアップ・旧データ（実行用フォルダ）──
 backup_before_*/
+backup_*/
 OLD_DATA/
 *.bak
 *.bak_*
+*.before-*.md
 
 # ── 実行環境固有の設定 ────────────────────────
 advanced_settings.json
+
+# ── ログ・一時ファイル ────────────────────────
+*.log
+*.tmp
+*.temp
+
+# ── 誤作成されたGit除外設定の複製 ─────────────
+/gitignore
