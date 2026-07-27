@@ -125,6 +125,7 @@ if sys.platform == "win32":
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_VERSION = "1.4.3"
 
 
 def app_path(*parts: str) -> str:
@@ -1271,6 +1272,16 @@ class ChatApp:
             label="アバター表示/非表示",
             command=self.avatar.toggle_visible)
 
+        mh = Menu(bar, tearoff=0)
+        bar.add_cascade(label="ヘルプ", menu=mh)
+        mh.add_command(label="基本的な使い方", command=self._show_help)
+        mh.add_command(
+            label="履歴の暗号化と復旧",
+            command=self._show_history_help,
+        )
+        mh.add_separator()
+        mh.add_command(label="バージョン情報", command=self._show_about)
+
         self.root.config(menu=bar)
         self.root.bind("<Control-n>", lambda e: self._new_session())
         self.root.bind("<Control-s>", lambda e: self._save_now())
@@ -1936,6 +1947,36 @@ class ChatApp:
         self.tts.enabled = self._tts_var.get()
         self._cfg["tts_enabled"] = self.tts.enabled
         save_settings(self._cfg)
+
+    def _show_help(self) -> None:
+        messagebox.showinfo(
+            "基本的な使い方",
+            "入力欄へメッセージを書き、送信してください。\n"
+            "マイクとTTSは画面のボタン・表示メニューから切り替えられます。\n"
+            "停止は生成・読み上げを中断します。ゲストモードでは履歴を保存しません。\n"
+            "家計簿・健康記録の登録内容は確認画面を確認してから送信してください。",
+            parent=self.root,
+        )
+
+    def _show_history_help(self) -> None:
+        messagebox.showinfo(
+            "履歴の暗号化と復旧",
+            "会話履歴は現在のWindowsユーザー用DPAPIで暗号化されます。\n"
+            "別ユーザー、OS再インストール後、別PCでは復号できない場合があります。\n\n"
+            "起動時に破損・復号不能と表示された場合は、全Shiroを終了し、"
+            "chat_logsを非公開の場所へバックアップしてください。"
+            "対象ファイルは削除せずchat_logs外へ退避してから再起動してください。",
+            parent=self.root,
+        )
+
+    def _show_about(self) -> None:
+        messagebox.showinfo(
+            "バージョン情報",
+            f"LLM Local Chat v{APP_VERSION}\n"
+            "Copyright (c) 2026 shinosan1\n"
+            "Licensed under the MIT License",
+            parent=self.root,
+        )
 
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.root, dict(

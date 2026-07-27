@@ -160,14 +160,31 @@ def is_allowed_local_api_url(url: str) -> bool:
     host = (parsed.hostname or "").lower()
     return (
         parsed.scheme == "http"
+        and parsed.username is None
+        and parsed.password is None
         and host in LOCAL_API_HOSTS
         and port in LOCAL_API_PORTS
     )
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _open_local_api(request, timeout):
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _NoRedirectHandler(),
+    )
     return opener.open(request, timeout=timeout)
+
+
+def _read_json_response(response, max_bytes=1024 * 1024):
+    raw = response.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise ValueError("ローカルAPIの応答サイズが上限を超えました。")
+    return json.loads(raw.decode("utf-8"))
 
 
 def extract_explicit_health_fields(user_text: str) -> tuple[dict, frozenset[str]]:
@@ -361,7 +378,7 @@ class IntegrationBridge:
                     method="POST",
                 )
                 with _open_local_api(req, timeout=5) as resp:
-                    json.loads(resp.read().decode("utf-8"))
+                    _read_json_response(resp)
                 store  = record.get("store") or "不明"
                 amount = record.get("amount", 0)
                 cat    = record.get("category", "")
@@ -436,7 +453,7 @@ class IntegrationBridge:
                     headers={"Content-Type": "application/json"}, method="POST",
                 )
                 with _open_local_api(req, timeout=5) as resp:
-                    json.loads(resp.read().decode("utf-8"))
+                    _read_json_response(resp)
                 msg = f"✅ Biolog記録完了: {payload.get('date', '?')}\n"
                 self._post_ui(lambda m=msg: self._chat_write(m, "health_ok"))
             except urllib.error.HTTPError as e:

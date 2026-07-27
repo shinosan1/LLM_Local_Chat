@@ -6,9 +6,9 @@
 ローカル処理を重視した構成です。機密情報を扱う業務環境へ導入する場合は、端末のアクセス制御、Windowsユーザープロファイル、ディスク暗号化、Dockerポート、依存ライブラリ、バックアップ方法を含め、組織の情報セキュリティ担当者による事前評価を行ってください。
 
 ![Python](https://img.shields.io/badge/Python-3.12.10-blue)
-![Version](https://img.shields.io/badge/Version-1.4.2-green)
+![Version](https://img.shields.io/badge/Version-1.4.3-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
-![License](https://img.shields.io/badge/License-All%20Rights%20Reserved-red)
+![License](https://img.shields.io/badge/License-MIT-blue)
 
 ---
 
@@ -65,11 +65,7 @@ Whisper品質ゲートは誤認識を完全に防止するものではありま�
 
 初回移行中は旧版Shiroを同時起動しないでください。ロックファイルはv1.4.2同士の移行を調整するもので、旧版による平文履歴の新規保存までは防げません。
 
-### v1.4.2からのロールバック
-
-初回暗号化前であれば、ソースの部分バックアップから変更対象を戻し、新規追加された`history_crypto.py`、`tests/test_history_crypto.py`、`ROLLBACK_v1.4.2.md`、`tests/test_app_composition.py`を除くことで旧版ソースへ戻せます。バックアップ名に`v1.4.2`が含まれていても、内容はv1.4.2適用前の部分バックアップです。
-
-1件でもDPAPI暗号化した後は、v1.4.1以前のソースへ戻すだけでは履歴を読み込めません。「テキストとして保存」の出力も完全なセッションJSONではないため、データ形式のロールバックには使用できません。暗号化後はv1.4.2以降を維持して履歴を利用・救出してください。詳細は`ROLLBACK_v1.4.2.md`を参照してください。
+暗号化後の履歴はv1.4.1以前では読み込めません。必要な履歴は、同じWindowsユーザーと環境で復号できる間に「テキストとして保存」などで安全な非公開領域へ退避してください。
 
 ---
 
@@ -199,40 +195,27 @@ Whisper実行モードは設定画面で`自動`・`GPU small`・`GPU medium`・
 git clone https://github.com/shinosan1/LLM_Local_Chat.git
 cd LLM_Local_Chat
 ```
->⚠️ PowerShellでの実行について：
->Windowsのデフォルト設定ではスクリプトの実行が制限されており、仮想環境の有効化（activate）などが弾かれる場合があります。
->エラーが発生した場合は、内容を理解・同意した上で以下のコマンドを実行し、実行制限を緩和してください。
-```bash
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-> **⚠️ Privateリポジトリの場合：**  
-> git cloneの際にGitHubのユーザー名とパスワード（Personal Access Token）の入力を求められる場合があります。  
-> その場合はGitHubにログインした状態でクローンするか、Personal Access Token（PAT）を発行してご利用ください。  
-> PATの発行方法は [GitHub公式ドキュメント](https://docs.github.com/ja) をご参照ください。
-
 ### 2. 仮想環境の作成（推奨）
 
 依存ライブラリの競合を避けるため、仮想環境の使用を強く推奨します。
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate
 ```
 
-> 以降のインストールコマンドはすべて仮想環境を有効化した状態で実行してください。  
-> プロンプトの先頭に `(.venv)` と表示されていれば有効化されています。
+PowerShellの実行ポリシーを変更せず、以降は仮想環境のPythonを直接指定します。
 
 ### 3. 依存ライブラリのインストール
 
 **① 必ず先に、利用環境に合うPyTorchをインストールします：**
 
 ```bash
-pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+.\.venv\Scripts\python.exe -m pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
 ```
 
 > CPUのみの場合：
 > ```bash
-> pip install torch torchvision torchaudio
+> .\.venv\Scripts\python.exe -m pip install torch torchvision torchaudio
 > ```
 
 > **重要:** この手順を飛ばして `requirements.txt` を先に適用すると、
@@ -245,17 +228,14 @@ pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124
 **③ 残りのライブラリをインストールします：**
 
 ```bash
-pip install -r requirements.txt --no-cache-dir
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt --no-cache-dir
 ```
 
 > **Permission Deniedエラーが出る場合：**  
 > `--no-cache-dir`オプションを付けることで解決できます。管理者権限は不要です。
 
 > **PyAudioのインストールでエラーが出る場合：**
-> ```bash
-> pip install pipwin
-> pipwin install pyaudio
-> ```
+> PythonとPyAudioの対応バージョンを確認し、PyPIで配布されている公式wheelを利用してください。非公式インストーラーを経由した導入は推奨しません。
 
 ### 4. GGUFモデルを用意する
 
@@ -489,6 +469,7 @@ A. `win32com.client.Dispatch("SAPI.SpVoice")` により、Windows SAPI5をワー
 - 保存期間を設定しても外部バックアップ、連携先API、OSログは自動削除されません。それぞれ独立した保持・削除方針を定めてください
 - ゲストモードやDPAPIだけを機密情報の完全な保護策とせず、端末、アカウント、ログ、連携先、バックアップを含めて運用を評価してください
 - 本アプリの導入・運営に関するリスク判断とアクセス管理は、導入・運営主体が行ってください
+- 同じ`chat_logs/`を使用するShiroを複数同時に起動しないでください。同一履歴を同時保存した場合は後から保存した内容で上書きされる可能性があります
 
 ---
 
@@ -497,26 +478,10 @@ A. `win32com.client.Dispatch("SAPI.SpVoice")` により、Windows SAPI5をワー
 本アプリは個人が学習・研究目的で開発したものです。  
 動作保証・サポートは一切行っておりません。利用により生じたいかなる損害についても作者は責任を負いません。
 
-### 禁止事項
+## ライセンス
 
-以下の行為を明示的に禁止します。また、以下に列挙されていない行為であっても、
-本アプリの趣旨・精神に反すると作者が判断した場合は禁止事項とみなします：
+本ソフトウェアは[MIT License](LICENSE)で公開しています。利用、複製、変更、結合、公開、配布、サブライセンスおよび販売は、MIT Licenseの条件に従って許可されます。
 
-- リバースエンジニアリング・逆コンパイル・解析・改ざん
-- 本アプリおよびそのコードを使用した商用サービスの構築・販売・配布
-- 本アプリを用いた違法行為・他者への迷惑行為
-- 著作権表示・免責事項の削除または改ざん
-- 本アプリの全部または一部を無断で複製・転載・再配布すること
-- 本アプリを使用して生成したコンテンツを作者の許可なく商業利用すること
-- その他、作者が不適切と判断する一切の行為
+GGUFモデル、音声モデル、依存ライブラリおよび生成物には、それぞれ別のライセンスや利用条件が適用される場合があります。利用者自身で配布元の条件を確認してください。
 
-### 保証の否認
-
-- 本アプリの動作・出力内容・AIの回答精度について一切保証しません
-- 環境・設定・使用モデルにより動作結果が異なる場合があります
-- 予告なく開発・メンテナンスを終了する場合があります
-- 本アプリを利用したことによる直接的・間接的損害について作者は一切の責任を負いません
-
-### 準拠法
-
-本免責事項は日本法に準拠します。
+本ソフトウェアは現状有姿で提供され、動作・出力内容・AI回答の正確性を保証しません。詳細な保証の否認は`LICENSE`を参照してください。

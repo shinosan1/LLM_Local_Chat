@@ -7,8 +7,7 @@
 #   CPU版へ差し替えないでください。CUDA以外の環境ではこの行を環境に合わせて変更してください。
 #
 # ※ PyAudioのインストールでエラーが出る場合：
-#   pip install pipwin
-#   pipwin install pyaudio
+# PyAudioが導入できない場合はPython/PyAudioの対応版と公式wheelを確認すること。
 
 # --- 既存のライブラリ ---
 --extra-index-url https://download.pytorch.org/whl/cu124
@@ -29,7 +28,7 @@ pywin32==309
 # GPU memory monitoring (required for VRAM safety filter)
 # pynvml が未インストールの場合、nvidia-smi コマンド経由でフォールバックする。
 # GPU なし環境では両方不要（CPU-only モードで自動動作）。
-pynvml>=11.5.0
+nvidia-ml-py==13.610.43
 
 # CPU/GPU load metrics (non-decision metric — ログ・診断専用)
 psutil>=5.9.0

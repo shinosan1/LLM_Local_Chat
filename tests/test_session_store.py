@@ -93,6 +93,16 @@ class SessionStoreIndexTests(unittest.TestCase):
         self.assertEqual(titles, ["New", "After with longer title"])
         self.assertEqual(self.store.metadata_reads, 3)
 
+    def test_external_replace_is_detected_with_same_mtime(self):
+        path = self._write("chat_1.json", "Before")
+        self.store.list_sessions()
+        before = os.stat(path)
+        self.store._write_encrypted(
+            path, {"title": "After!", "history": []})
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        titles = [item["title"] for item in self.store.list_sessions()]
+        self.assertEqual(titles, ["After!"])
+
     def test_broken_envelope_is_ignored_until_it_changes(self):
         broken = os.path.join(self.temp_dir.name, "chat_2.json")
         with open(broken, "wb") as handle:

@@ -68,6 +68,7 @@ backup_*/
 OLD_DATA/
 *.bak
 *.bak_*
+ROLLBACK*.md
 *.before-*.md
 
 # ── 実行環境固有の設定 ────────────────────────

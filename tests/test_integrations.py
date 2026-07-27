@@ -28,6 +28,18 @@ class LocalApiProxyTests(unittest.TestCase):
         self.assertEqual(handler.proxies, {})
         opener.open.assert_called_once_with(request, timeout=5)
 
+    def test_open_local_api_disables_redirects(self):
+        request = urllib.request.Request("http://localhost:8765/api/test")
+        opener = Mock()
+        with patch(
+            "integrations.urllib.request.build_opener", return_value=opener
+        ) as build_opener:
+            integrations._open_local_api(request, timeout=5)
+        self.assertTrue(any(
+            isinstance(handler, integrations._NoRedirectHandler)
+            for handler in build_opener.call_args.args
+        ))
+
 
 class LocalApiUrlAllowlistTests(unittest.TestCase):
     def test_allows_default_bridge_ports_on_local_hosts(self):
@@ -57,10 +69,18 @@ class LocalApiUrlAllowlistTests(unittest.TestCase):
             "http://example.invalid:8765/api/kakeibo/record",
             "http://192.168.1.10:8765/api/kakeibo/record",
             "http://localhost:8765@example.invalid/api/kakeibo/record",
+            "http://user@localhost:8765/api/kakeibo/record",
+            "http://user:pass@localhost:8765/api/kakeibo/record",
             "http://localhost:notaport/api/kakeibo/record",
         ):
             with self.subTest(url=url):
                 self.assertFalse(integrations.is_allowed_local_api_url(url))
+
+    def test_json_response_size_is_limited(self):
+        response = Mock()
+        response.read.return_value = b"x" * 11
+        with self.assertRaises(ValueError):
+            integrations._read_json_response(response, max_bytes=10)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -36,6 +37,20 @@ class HistoryMigrationError(HistoryCryptoError):
 
 
 class SessionStore:
+    @staticmethod
+    def _file_signature(path: str, stat_result=None) -> tuple:
+        stat_result = stat_result or os.stat(path)
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return (
+            stat_result.st_mtime_ns,
+            stat_result.st_size,
+            stat_result.st_ctime_ns,
+            digest.digest(),
+        )
+
     def __init__(self, log_dir: str, protector=None):
         self._log_dir = log_dir
         self._protector = protector if protector is not None else DPAPIProtector()
@@ -127,11 +142,7 @@ class SessionStore:
     def _cache_session(self, path: str, session: dict) -> None:
         stat = os.stat(path)
         self._index[path] = {
-            "signature": (
-                stat.st_mtime_ns,
-                stat.st_size,
-                stat.st_ctime_ns,
-            ),
+            "signature": self._file_signature(path, stat),
             "metadata": {
                 "path": path,
                 "title": session.get("title", os.path.basename(path)),
@@ -152,11 +163,7 @@ class SessionStore:
             current_paths.add(path)
             try:
                 stat = entry.stat()
-                signature = (
-                    stat.st_mtime_ns,
-                    stat.st_size,
-                    stat.st_ctime_ns,
-                )
+                signature = self._file_signature(path, stat)
                 cached = self._index.get(path)
                 if cached and cached["signature"] == signature:
                     continue

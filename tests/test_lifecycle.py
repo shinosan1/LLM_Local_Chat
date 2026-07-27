@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from integrations import IntegrationBridge
 from history_crypto import HistoryCryptoError
-from LLM_Local_Chat import ChatApp, main
+from LLM_Local_Chat import APP_VERSION, ChatApp, main
 from llm_service import LLMService
 
 
@@ -34,6 +34,26 @@ class _Root:
 
     def destroy(self):
         self.destroyed = True
+
+
+class HelpDialogTests(unittest.TestCase):
+    def setUp(self):
+        self.app = ChatApp.__new__(ChatApp)
+        self.app.root = object()
+
+    @patch("LLM_Local_Chat.messagebox.showinfo")
+    def test_about_shows_current_version_and_license(self, showinfo):
+        self.app._show_about()
+        message = showinfo.call_args.args[1]
+        self.assertIn(APP_VERSION, message)
+        self.assertIn("MIT License", message)
+
+    @patch("LLM_Local_Chat.messagebox.showinfo")
+    def test_history_help_explains_dpapi_recovery(self, showinfo):
+        self.app._show_history_help()
+        message = showinfo.call_args.args[1]
+        self.assertIn("DPAPI", message)
+        self.assertIn("削除せず", message)
 
 
 class ModelReferenceTests(unittest.TestCase):

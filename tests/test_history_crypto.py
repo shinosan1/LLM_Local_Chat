@@ -75,6 +75,16 @@ class HistoryCryptoTests(unittest.TestCase):
         with self.assertRaises(HistoryCryptoError):
             decode_document(envelope, self.protector)
 
+    def test_history_item_must_be_an_object(self):
+        raw = json.dumps({"history": ["invalid"]}).encode()
+        with self.assertRaises(HistoryCryptoError):
+            decode_document(raw, self.protector)
+
+    def test_history_text_fields_must_be_strings(self):
+        raw = json.dumps({"history": [{"user": 123}]}).encode()
+        with self.assertRaises(HistoryCryptoError):
+            decode_document(raw, self.protector)
+
     @unittest.skipUnless(sys.platform == "win32", "Windows DPAPI専用")
     def test_real_windows_dpapi_roundtrip(self):
         protector = DPAPIProtector()

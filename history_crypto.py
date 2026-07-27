@@ -56,8 +56,15 @@ def validate_session(data) -> dict:
         raise HistoryCryptoError("会話履歴のタイトル形式が不正です。")
     if not isinstance(data.get("summary", ""), str):
         raise HistoryCryptoError("会話履歴の要約形式が不正です。")
-    if not isinstance(data.get("history", []), list):
+    history = data.get("history", [])
+    if not isinstance(history, list):
         raise HistoryCryptoError("会話履歴の本文形式が不正です。")
+    for item in history:
+        if not isinstance(item, dict):
+            raise HistoryCryptoError("会話履歴の発言形式が不正です。")
+        for field in ("user", "assistant"):
+            if field in item and not isinstance(item[field], str):
+                raise HistoryCryptoError("会話履歴の発言形式が不正です。")
     return data
 
 
