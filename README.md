@@ -162,7 +162,7 @@ Whisper品質ゲートは誤認識を完全に防止するものではありま�
 テストファイルは `tests/` 配下にまとめてあります（`.venv` がプロジェクト直下にあるため、素の `unittest discover -v` を使うと `.venv` 内の依存パッケージのテストまで収集してしまいます。`-s tests` で収集範囲を限定し、`-t .` でプロジェクトルートをトップレベルディレクトリに指定してください）。
 
 ```bash
-python -m unittest discover -s tests -t . -p "test*.py" -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -t . -p "test*.py" -v
 ```
 
 ---
@@ -194,7 +194,7 @@ LLM（Gemma 4 E4B、総8B／有効4B）とWhisper mediumを同一GPUで動かす
 ### DEBUGログの見方
 
 ```
-python -c "import logging; logging.basicConfig(level=logging.DEBUG); exec(open('LLM_Local_Chat.py').read())"
+.\.venv\Scripts\python.exe -c "import logging; logging.basicConfig(level=logging.DEBUG); exec(open('LLM_Local_Chat.py').read())"
 ```
 
 | プレフィックス | 内容 |
@@ -266,12 +266,10 @@ Whisper実行モードは設定画面で`自動`・`GPU small`・`GPU medium`・
 > インストール時はほぼデフォルト設定のままで問題ありません。  
 > ただし「Use a TrueType font in all console windows」という項目は**チェックを外してください**。チェックを入れると日本語が文字化けする場合があります。
 
-> **⚠️ 事前準備③：CUDA Toolkitのインストール（GPU使用の場合のみ）**  
-> NVIDIA GPUでCUDAを使用する場合は、CUDA Toolkit 12.4をインストールしてください。  
-> [https://developer.nvidia.com/cuda-12-4-0-download-archive](https://developer.nvidia.com/cuda-12-4-0-download-archive)  
->  
-> CPUのみで使用する場合はインストール不要です。  
-> インストール後は必ずPCを再起動してください。
+> **⚠️ 事前準備③：NVIDIA GPUを使用する場合**
+> 本リポジトリの`requirements.txt`は、CUDA 12.4対応のビルド済みwheelを使用する構成です。対応するNVIDIAドライバーが必要です。
+> CUDA Toolkit本体は、ビルド済みwheelだけで動作する環境では常に必須とは限りませんが、ソースからビルドする場合や実行環境によっては必要です。CUDA関連のエラーが出る場合は、使用するwheel・ドライバー・CUDA環境の対応関係を確認してください。
+> CPUのみで使用する場合、CUDA Toolkitは不要です。後述の`requirements-cpu.txt`を使用してください。
 
 ### 1. リポジトリをクローン
 
@@ -291,29 +289,24 @@ PowerShellの実行ポリシーを変更せず、以降は仮想環境のPython�
 
 ### 3. 依存ライブラリのインストール
 
-**① 必ず先に、利用環境に合うPyTorchをインストールします：**
+#### NVIDIA GPU・CUDA 12.4を使用する場合
 
-```bash
-.\.venv\Scripts\python.exe -m pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
-```
-
-> CPUのみの場合：
-> ```bash
-> .\.venv\Scripts\python.exe -m pip install torch torchvision torchaudio
-> ```
-
-> **重要:** この手順を飛ばして `requirements.txt` を先に適用すると、
-> CUDA利用環境でも `openai-whisper` の依存としてCPU版torchが入る場合があります。
-
-**② llama-cpp-pythonの配布方式を確認します：**
-
-現在の`requirements.txt`は、CUDA 12.4向けの`llama-cpp-python 0.3.34`ホイールを指定しています。CUDAのバージョンが異なる環境やCPUのみの環境では、そのまま適用せず、利用環境に対応する公式の配布方法を確認してください。
-
-**③ 残りのライブラリをインストールします：**
+`requirements.txt`は、Windows・NVIDIA GPU・CUDA 12.4向けに、PyTorchと`llama-cpp-python 0.3.34`を固定した構成です。
 
 ```bash
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt --no-cache-dir
 ```
+
+#### CPUのみで使用する場合
+
+`requirements-cpu.txt`は、Python 3.12・Windows 64bitのCPU環境向けです。PyTorchと`llama-cpp-python`のCPU版wheelを使用し、CUDA関連パッケージを導入しません。
+
+```bash
+.\.venv\Scripts\python.exe -m pip install -r requirements-cpu.txt --no-cache-dir
+```
+
+> **別のCUDAバージョンを使用する場合：**
+> どちらのファイルもそのまま適用せず、`torch`関連と`llama-cpp-python`を利用環境に対応する公式配布へ変更してください。
 
 > **Permission Deniedエラーが出る場合：**  
 > `--no-cache-dir`オプションを付けることで解決できます。管理者権限は不要です。
@@ -323,12 +316,11 @@ PowerShellの実行ポリシーを変更せず、以降は仮想環境のPython�
 
 ### 4. GGUFモデルを用意する
 
-[Hugging Face](https://huggingface.co/) から `.gguf` 形式のモデルをダウンロードして `models/` フォルダに配置してください。  
+[Hugging Face](https://huggingface.co/) など信頼できる配布元から、対応する`.gguf`形式のモデルをダウンロードしてください。保存場所は任意ですが、管理しやすいよう`models/`フォルダへの配置を推奨します。
 動作確認済み：`gemma-3-4b-it-q4_k_m.gguf`、`gemma-4-E4B-it-Q4_K_M.gguf`
 
 > **⚠️ 初回起動時の注意：**  
-> 音声認識（Whisper）のモデルが初回起動時に自動ダウンロードされます（約1.5GB）。  
-> ダウンロード完了まで時間がかかる場合があります。インターネット接続が必要です。
+> 起動時マイクを有効にしている場合、音声認識用Whisperモデルが初回ロード時に自動ダウンロードされます。目安はsmallが約0.5GB、mediumが約1.5GBですが、モデルの版により変動します。設定とVRAM状況によっては両方が必要になるため、十分なディスク空き容量を確保してください。ダウンロード時はインターネット接続が必要です。マイク無効時はWhisperをロードしません。
 
 ---
 
@@ -336,7 +328,7 @@ PowerShellの実行ポリシーを変更せず、以降は仮想環境のPython�
 
 本アプリで動作確認済みのGGUFモデルの一覧です。  
 すべて [Hugging Face](https://huggingface.co/) からダウンロードできます。  
-ファイルは `models/` フォルダに配置してください。
+ファイルは任意の場所に保存できます。管理しやすいよう`models/`フォルダへの配置を推奨します。
 
 > **⚠️ ダウンロードについて：**  
 > モデルによってはHugging Faceへのアカウント登録および利用規約への同意が必要です。  
@@ -347,7 +339,7 @@ PowerShellの実行ポリシーを変更せず、以降は仮想環境のPython�
 > ダウンロード前に必ず各モデルのHugging Faceページで利用規約を確認してください。  
 > 本アプリはモデルの利用に関して一切の責任を負いません。
 
-> **推奨量子化形式：** `Q4_K_M`（品質と速度のバランスが最良）
+> **量子化形式の目安：** `Q4_K_M`は、品質・容量・速度のバランスを取りやすい一般的な候補です。最適な形式はモデルと実行環境により異なります。
 
 | モデル名 | パラメータ | 備考 | ダウンロード |
 |---|---|---|---|
@@ -372,28 +364,17 @@ PowerShellの実行ポリシーを変更せず、以降は仮想環境のPython�
 
 画像がない場合は透明画像で代替されます（アバターなしで動作します）。
 
-### 6. 設定ファイルを用意する
+### 6. モデルを設定する
 
-`chat_settings.json.example` を `chat_settings.json` にコピーして、`model_path` をご自身のGGUFモデルのパスに書き換えてください。
+`chat_settings.json`がない場合も、アプリはコード既定値で起動を試みます。既定のモデルが見つからない場合は読込エラーが表示されますが、メイン画面の「ファイル」→「設定」を開き、「参照」ボタンから用意したGGUFモデルを選択して適用できます。保存した設定は`chat_settings.json`へ記録されます。
 
-```bash
-copy chat_settings.json.example chat_settings.json
-```
-
-その後、`chat_settings.json` の `model_path` を編集します：
-
-```json
-{
-  "model_path": "C:\\your\\path\\to\\models\\gemma-3-4b-it-q4_k_m.gguf",
-  ...
-}
-```
+起動前に手動設定したい場合だけ、`chat_settings.json.example`を`chat_settings.json`へコピーし、`model_path`などを編集してください。
 
 
 ### 7. 起動
 
 ```bash
-python LLM_Local_Chat.py
+.\.venv\Scripts\python.exe LLM_Local_Chat.py
 ```
 
 > **⚠️ 起動時間について**  
@@ -416,12 +397,12 @@ python LLM_Local_Chat.py
 
 ### 音声入力
 
-コード上の既定値と`chat_settings.json.example`では、起動時のマイク・TTS読み上げはともに**OFF**です。必要に応じて設定ファイルで変更してください。
+コード上の既定値と`chat_settings.json.example`では、起動時のマイク・TTS読み上げはともに**OFF**です。「ファイル」→「設定」で次回起動時の状態を変更できます。
 マイクボタンをクリックするとONになります。  
 ONの状態で一定以上の音量を検知すると自動的に録音を開始し、Whisperで文字起こしして送信します。  
 再度クリックするとOFFに戻ります。
 
-> 音声認識の有効化後、数秒のタイムラグがあります。  
+> 起動時マイクを有効にする設定とWhisper実行モードは、次回起動時に反映されます。初回のWhisperダウンロード・ロードには時間がかかる場合があります。
 > TTS読み上げ中はハウリング防止のため音声入力が自動的に抑制されます。
 
 ### TTS（読み上げ）
@@ -455,7 +436,7 @@ curl http://localhost:8766/api/health/health
 **環境変数でエンドポイントを変更できます：**
 ```powershell
 $env:BIOLOG_URL = "http://localhost:8766"  # デフォルト
-python LLM_Local_Chat.py
+.\.venv\Scripts\python.exe LLM_Local_Chat.py
 ```
 
 > 計測値・食事ログ・行動ログ・メモがすべて空の場合だけ送信しません。`食事ログ`・`行動ログ`・`メモ`を明示した入力は、ユーザー原文から決定的に解析されます。
@@ -486,9 +467,9 @@ python LLM_Local_Chat.py
 
 | 項目 | 内容 | 推奨値 / アドバイス |
 | :--- | :--- | :--- |
-| **モデルファイル** | 使用する GGUF モデルのパスを指定します。 | 「参照」ボタンから、`models/` フォルダ内のファイルを選択してください。 |
+| **モデルファイル** | 使用する GGUF モデルのパスを指定します。 | 「参照」ボタンから任意の場所にある対応GGUFファイルを選択できます。 |
 | **コンテキスト長** | AIが一度に記憶・処理できる情報の長さ（n_ctx）です。 | 通常は **8192** を推奨。VRAM不足で動作が不安定な場合は数値を下げてください。 |
-| **最大返答トークン数** | AIが一度の返答で出力する最大文字数の目安です。 | 短い会話なら **256〜512**、長文が必要なら **1024** 程度に設定します。 |
+| **最大返答トークン数** | AIが一度の返答で出力する最大トークン数です。文字数とは一致しません。 | 短い会話なら **256〜512**、長文が必要なら **1024** 程度が目安です。VRAM状況により実効値が自動的に削減される場合があります。 |
 | **会話の自由度** | AIの回答の多様性を調整します（temperature）。 | **0.1〜0.5**: 堅実・正確（事実確認向き）<br>**0.7〜1.0**: 標準的（自然な雑談向き）<br>**1.2〜1.5**: 独創的（アイデア出し向き） |
 | **音声検出感度** | マイクが音声を拾う際のしきい値（RMS 閾値）です。 | **数値が小さいほど高感度**になります。周囲の音で誤作動する場合は **200〜300** 程度に上げてください。 |
 
@@ -505,7 +486,7 @@ python LLM_Local_Chat.py
 A. llama.cppをPythonバインディング（llama-cpp-python）から直接呼び出し、LLM推論をローカルで実行するためです。必要な依存ライブラリとモデルを取得済みで、Biolog・家計簿の接続先をローカル環境に限定した構成では、通常の会話処理に外部のLLMサービスを使用しません。セットアップ、モデル取得、外部リンクの閲覧にはインターネット接続が必要です。
 
 **Q. CPUだけでも動きますか？**  
-A. 動作します。ただしモデルの応答速度が大幅に低下します。4Bクラスのモデルであれば実用範囲内です。
+A. CPU実行へフォールバックできます。CPU専用PCでは、セットアップ時に`requirements-cpu.txt`を使用してください。応答速度はモデルサイズ、量子化形式、CPU、メモリ帯域、コンテキスト長などに大きく依存し、実用的な速度になるとは一律に保証できません。
 
 **Q. Whisperのモデルは自動でダウンロードされますか？**  
 A. 起動時マイクを有効にした場合、初回ロード時にWhisperモデルが自動的にダウンロードされます。マイク無効時は、TTSが有効でもWhisperをロードしません。

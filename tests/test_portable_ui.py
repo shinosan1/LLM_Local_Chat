@@ -355,6 +355,19 @@ class PortableImportUiTests(unittest.TestCase):
         app._session_store.import_sessions.assert_not_called()
         self.assertFalse(app._portable_pending.is_set())
 
+    def test_policy_with_failing_equality_is_cancelled(self):
+        class FailingEquality:
+            def __eq__(self, _other):
+                raise RuntimeError("equality must not be evaluated")
+
+        app = self.make_app()
+        app._portable_pending.set()
+        with patch("LLM_Local_Chat.DuplicateImportDialog") as dialog:
+            dialog.return_value.show.return_value = FailingEquality()
+            app._confirm_portable_import([sample_session()], 0, 0)
+        app._session_store.import_sessions.assert_not_called()
+        self.assertFalse(app._portable_pending.is_set())
+
     def test_import_dialog_submit_rejects_empty_values(self):
         dialog = object.__new__(PortableImportDialog)
         dialog.path_entry = Mock()

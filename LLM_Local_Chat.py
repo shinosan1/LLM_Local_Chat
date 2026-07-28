@@ -2413,7 +2413,10 @@ class ChatApp:
             except Exception:
                 pass
             return
-        if policy not in (DuplicatePolicy.SKIP, DuplicatePolicy.COPY):
+        if (
+            policy is not DuplicatePolicy.SKIP
+            and policy is not DuplicatePolicy.COPY
+        ):
             self._portable_pending.clear()
             return
 
