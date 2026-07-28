@@ -71,6 +71,8 @@ import gc
 import threading
 import time
 import random
+import stat
+from enum import Enum
 
 import tkinter as tk
 from tkinter import (
@@ -133,7 +135,7 @@ if sys.platform == "win32":
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.2"
 
 
 def app_path(*parts: str) -> str:
@@ -373,6 +375,334 @@ def count_tokens(llm: Llama, text: str) -> int:
         return len(llm.tokenize(text.encode("utf-8"), add_bos=False))
     except Exception:
         return max(1, len(text) // 2)
+
+
+class DuplicatePolicy(Enum):
+    SKIP = "skip"
+    COPY = "copy"
+    CANCEL = "cancel"
+
+
+EXPORT_EXTENSION = ".shiro-export"
+
+
+def validate_export_destination(path: str) -> str:
+    normalized = os.path.abspath(path.strip())
+    if not normalized.lower().endswith(EXPORT_EXTENSION):
+        raise PortableHistoryError(
+            "保存先は .shiro-export ファイルを指定してください。"
+        )
+    return normalized
+
+
+def export_destination_signature(path: str):
+    try:
+        info = os.stat(path, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        raise PortableHistoryError(
+            "保存先には通常の .shiro-export ファイルを指定してください。"
+        )
+    return (
+        info.st_mode,
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def count_import_duplicates(sessions: list[dict], existing: set[str]) -> int:
+    seen = set(existing)
+    duplicates = 0
+    for item in sessions:
+        digest = session_digest(item)
+        if digest in seen:
+            duplicates += 1
+        seen.add(digest)
+    return duplicates
+
+
+class PortableExportDialog(tk.Toplevel):
+    def __init__(self, parent, *, current_only: bool, reference_count: int):
+        super().__init__(parent)
+        self.result = None
+        self.title("暗号化エクスポート")
+        self.configure(bg=C["bg_main"])
+        self.resizable(False, False)
+        self.transient(parent)
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.bind("<Escape>", lambda _event: self._cancel())
+
+        scope = (
+            "現在の保存済み会話 1件"
+            if current_only
+            else f"保存済みの全会話（現在の確認件数: {reference_count}件）"
+        )
+        tk.Label(
+            self, text=scope, bg=C["bg_main"], fg=C["fg_main"],
+            font=FONT_BOLD,
+        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=16, pady=(16, 4))
+        tk.Label(
+            self,
+            text=(
+                "ゲスト会話、未保存会話、保存後の未保存部分は含まれません。\n"
+                "実際の全件数は、処理開始後にディスクを再確認して確定します。"
+                if not current_only else
+                "ディスクに保存済みの内容を読み直します。"
+                "画面上の未保存部分は含まれません。"
+            ),
+            justify=tk.LEFT, bg=C["bg_main"], fg=C["fg_sub"],
+            font=FONT_SMALL,
+        ).grid(row=1, column=0, columnspan=3, sticky="w", padx=16, pady=(0, 12))
+
+        tk.Label(
+            self, text="保存先:", bg=C["bg_main"], fg=C["fg_main"]
+        ).grid(row=2, column=0, sticky="w", padx=(16, 8), pady=6)
+        self.path_entry = tk.Entry(
+            self, width=48, bg=C["bg_input"], fg=C["fg_main"],
+            insertbackground="white",
+        )
+        self.path_entry.grid(row=2, column=1, sticky="ew", pady=6)
+        tk.Button(
+            self, text="参照…", command=self._browse,
+            bg=C["accent"], fg="white", bd=0,
+        ).grid(row=2, column=2, padx=(8, 16), pady=6)
+
+        tk.Label(
+            self, text="パスフレーズ:", bg=C["bg_main"], fg=C["fg_main"]
+        ).grid(row=3, column=0, sticky="w", padx=(16, 8), pady=6)
+        self.passphrase_entry = tk.Entry(
+            self, width=48, show="*", bg=C["bg_input"], fg=C["fg_main"],
+            insertbackground="white",
+        )
+        self.passphrase_entry.grid(row=3, column=1, columnspan=2, sticky="ew",
+                                   padx=(0, 16), pady=6)
+        tk.Label(
+            self, text="確認入力:", bg=C["bg_main"], fg=C["fg_main"]
+        ).grid(row=4, column=0, sticky="w", padx=(16, 8), pady=6)
+        self.confirm_entry = tk.Entry(
+            self, width=48, show="*", bg=C["bg_input"], fg=C["fg_main"],
+            insertbackground="white",
+        )
+        self.confirm_entry.grid(row=4, column=1, columnspan=2, sticky="ew",
+                                padx=(0, 16), pady=6)
+
+        buttons = tk.Frame(self, bg=C["bg_main"])
+        buttons.grid(row=5, column=0, columnspan=3, pady=16)
+        run_button = tk.Button(
+            buttons, text="暗号化して保存", width=16, bd=0,
+            bg=C["accent"], fg="white", command=self._submit,
+        )
+        run_button.pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            buttons, text="キャンセル", width=12, bd=0,
+            bg=C["bg_input"], fg=C["fg_main"], command=self._cancel,
+        ).pack(side=tk.LEFT, padx=8)
+        self.bind("<Return>", lambda _event: self._submit())
+        self.grab_set()
+        self.path_entry.focus_set()
+
+    def _browse(self):
+        path = filedialog.asksaveasfilename(
+            title="暗号化エクスポート",
+            defaultextension=".shiro-export",
+            filetypes=[("Shiro暗号化履歴", "*.shiro-export")],
+            parent=self,
+        )
+        if path:
+            self.path_entry.delete(0, tk.END)
+            self.path_entry.insert(0, path)
+
+    def _submit(self):
+        path = self.path_entry.get().strip()
+        passphrase = self.passphrase_entry.get()
+        if not path:
+            messagebox.showerror("暗号化エクスポート", "保存先を選択してください。",
+                                 parent=self)
+            return
+        if len(passphrase) < 12:
+            messagebox.showerror(
+                "暗号化エクスポート",
+                "パスフレーズは12文字以上にしてください。",
+                parent=self,
+            )
+            return
+        if self.confirm_entry.get() != passphrase:
+            messagebox.showerror(
+                "暗号化エクスポート", "パスフレーズが一致しません。",
+                parent=self,
+            )
+            return
+        try:
+            path = validate_export_destination(path)
+        except PortableHistoryError as exc:
+            messagebox.showerror(
+                "暗号化エクスポート", str(exc), parent=self)
+            return
+        self.result = (path, passphrase)
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.destroy()
+
+    def show(self):
+        self.wait_window()
+        return self.result
+
+
+class PortableImportDialog(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.result = None
+        self.title("暗号化インポート")
+        self.configure(bg=C["bg_main"])
+        self.resizable(False, False)
+        self.transient(parent)
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.bind("<Escape>", lambda _event: self._cancel())
+
+        tk.Label(
+            self,
+            text="Shiro暗号化履歴（.shiro-export）を選択してください。",
+            bg=C["bg_main"], fg=C["fg_sub"],
+        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=16,
+               pady=(16, 10))
+        tk.Label(
+            self, text="ファイル:", bg=C["bg_main"], fg=C["fg_main"]
+        ).grid(row=1, column=0, sticky="w", padx=(16, 8), pady=6)
+        self.path_entry = tk.Entry(
+            self, width=48, bg=C["bg_input"], fg=C["fg_main"],
+            insertbackground="white",
+        )
+        self.path_entry.grid(row=1, column=1, sticky="ew", pady=6)
+        tk.Button(
+            self, text="参照…", command=self._browse,
+            bg=C["accent"], fg="white", bd=0,
+        ).grid(row=1, column=2, padx=(8, 16), pady=6)
+        tk.Label(
+            self, text="パスフレーズ:", bg=C["bg_main"], fg=C["fg_main"]
+        ).grid(row=2, column=0, sticky="w", padx=(16, 8), pady=6)
+        self.passphrase_entry = tk.Entry(
+            self, width=48, show="*", bg=C["bg_input"], fg=C["fg_main"],
+            insertbackground="white",
+        )
+        self.passphrase_entry.grid(row=2, column=1, columnspan=2, sticky="ew",
+                                   padx=(0, 16), pady=6)
+        buttons = tk.Frame(self, bg=C["bg_main"])
+        buttons.grid(row=3, column=0, columnspan=3, pady=16)
+        tk.Button(
+            buttons, text="内容を確認", width=14, bd=0,
+            bg=C["accent"], fg="white", command=self._submit,
+        ).pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            buttons, text="キャンセル", width=12, bd=0,
+            bg=C["bg_input"], fg=C["fg_main"], command=self._cancel,
+        ).pack(side=tk.LEFT, padx=8)
+        self.bind("<Return>", lambda _event: self._submit())
+        self.grab_set()
+        self.path_entry.focus_set()
+
+    def _browse(self):
+        path = filedialog.askopenfilename(
+            title="暗号化インポート",
+            filetypes=[("Shiro暗号化履歴", "*.shiro-export")],
+            parent=self,
+        )
+        if path:
+            self.path_entry.delete(0, tk.END)
+            self.path_entry.insert(0, path)
+
+    def _submit(self):
+        path = self.path_entry.get().strip()
+        if not path:
+            messagebox.showerror("暗号化インポート", "ファイルを選択してください。",
+                                 parent=self)
+            return
+        passphrase = self.passphrase_entry.get()
+        if not passphrase:
+            messagebox.showerror(
+                "暗号化インポート", "パスフレーズを入力してください。",
+                parent=self,
+            )
+            return
+        self.result = (path, passphrase)
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.destroy()
+
+    def show(self):
+        self.wait_window()
+        return self.result
+
+
+class DuplicateImportDialog(tk.Toplevel):
+    def __init__(
+        self, parent, *, session_count: int, duplicate_count: int,
+        expired_count: int,
+    ):
+        super().__init__(parent)
+        self.result = DuplicatePolicy.CANCEL
+        self.title("暗号化インポート")
+        self.configure(bg=C["bg_main"])
+        self.resizable(False, False)
+        self.transient(parent)
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.bind("<Escape>", lambda _event: self._cancel())
+
+        safe_duplicate_count = max(0, min(duplicate_count, session_count))
+        skip_count = session_count - safe_duplicate_count
+        warning = (
+            f"\n保存期間を超える履歴: {expired_count}件"
+            if expired_count else ""
+        )
+        tk.Label(
+            self,
+            text=(
+                f"履歴: {session_count}件\n重複: {safe_duplicate_count}件"
+                f"{warning}\n\n"
+                f"現時点の追加予定: スキップ時 {skip_count}件／"
+                f"コピー時 {session_count}件\n"
+                "重複した会話の扱いを選択してください。"
+            ),
+            justify=tk.LEFT, bg=C["bg_main"], fg=C["fg_main"],
+        ).pack(anchor="w", padx=16, pady=(16, 12))
+        buttons = tk.Frame(self, bg=C["bg_main"])
+        buttons.pack(padx=12, pady=(0, 16))
+        skip_button = tk.Button(
+            buttons, text="重複をスキップ（推奨）", width=20, bd=0,
+            bg=C["accent"], fg="white",
+            command=lambda: self._choose(DuplicatePolicy.SKIP),
+        )
+        skip_button.pack(side=tk.LEFT, padx=4)
+        tk.Button(
+            buttons, text="重複もコピー", width=14, bd=0,
+            bg=C["bg_input"], fg=C["fg_main"],
+            command=lambda: self._choose(DuplicatePolicy.COPY),
+        ).pack(side=tk.LEFT, padx=4)
+        tk.Button(
+            buttons, text="キャンセル", width=11, bd=0,
+            bg=C["bg_input"], fg=C["fg_main"], command=self._cancel,
+        ).pack(side=tk.LEFT, padx=4)
+        self.bind("<Return>", lambda _event: self._choose(DuplicatePolicy.SKIP))
+        self.grab_set()
+        skip_button.focus_set()
+
+    def _choose(self, policy):
+        self.result = policy
+        self.destroy()
+
+    def _cancel(self):
+        self._choose(DuplicatePolicy.CANCEL)
+
+    def show(self):
+        self.wait_window()
+        return self.result
 
 
 # ═══════════════════════════════════════════════════════
@@ -1265,9 +1595,15 @@ class ChatApp:
         bar.add_cascade(label="ファイル", menu=mf)
         mf.add_command(label="新規チャット",       command=self._new_session)
         mf.add_command(label="保存",              command=self._save_now)
-        mf.add_command(
-            label="暗号化エクスポート",
-            command=self._export_portable_history,
+        export_menu = Menu(mf, tearoff=0)
+        mf.add_cascade(label="暗号化エクスポート", menu=export_menu)
+        export_menu.add_command(
+            label="現在の保存済み会話をエクスポート…",
+            command=self._export_current_portable_history,
+        )
+        export_menu.add_command(
+            label="保存済みの全会話をエクスポート…",
+            command=self._export_all_portable_history,
         )
         mf.add_command(
             label="暗号化インポート",
@@ -1883,96 +2219,95 @@ class ChatApp:
             return False
         return True
 
-    def _ask_export_passphrase(self) -> str | None:
-        first = simpledialog.askstring(
-            "暗号化エクスポート",
-            "12文字以上のパスフレーズを入力してください。\n"
-            "紛失した場合、履歴を復元できません。",
-            show="*",
-            parent=self.root,
-        )
-        if first is None:
-            return None
-        if len(first) < 12:
-            messagebox.showerror(
-                "暗号化エクスポート",
-                "パスフレーズは12文字以上にしてください。",
-                parent=self.root,
-            )
-            return None
-        second = simpledialog.askstring(
-            "暗号化エクスポート",
-            "確認のため、同じパスフレーズを再入力してください。",
-            show="*",
-            parent=self.root,
-        )
-        if second != first:
-            messagebox.showerror(
-                "暗号化エクスポート",
-                "パスフレーズが一致しません。",
-                parent=self.root,
-            )
-            return None
-        return first
+    def _start_portable_thread(self, target) -> bool:
+        if self._portable_pending.is_set():
+            return False
+        self._portable_pending.set()
+        try:
+            threading.Thread(target=target, daemon=True).start()
+        except Exception:
+            self._portable_pending.clear()
+            raise
+        return True
 
-    def _export_portable_history(self) -> None:
+    def _export_current_portable_history(self) -> None:
+        self._export_portable_history(current_only=True)
+
+    def _export_all_portable_history(self) -> None:
+        self._export_portable_history(current_only=False)
+
+    def _export_portable_history(self, *, current_only: bool = False) -> None:
         if not self._portable_ready():
             return
-        current = self._current_session
-        has_current = bool(current.get("history"))
-        choice = messagebox.askyesnocancel(
-            "暗号化エクスポート",
-            "「はい」: 現在の会話だけ\n"
-            "「いいえ」: 保存済みの全会話\n\n"
-            "暗号化ファイルは人間が直接読めません。",
-            parent=self.root,
-        )
-        if choice is None:
-            return
-        if choice and not has_current:
-            messagebox.showinfo(
+        # エクスポート対象はDPAPIで保存済みの履歴だけに限定する。
+        if current_only and (self._is_guest or not self._current_path):
+            messagebox.showerror(
                 "暗号化エクスポート",
-                "現在の会話にエクスポートする履歴がありません。",
+                "ゲスト会話または未保存の会話はエクスポートできません。",
                 parent=self.root,
             )
             return
-        passphrase = self._ask_export_passphrase()
-        if passphrase is None:
+        try:
+            if current_only:
+                self._session_store.load_managed_session(self._current_path)
+                reference_count = 1
+            else:
+                reference_count = len(self._session_store.list_sessions())
+        except Exception as exc:
+            messagebox.showerror(
+                "暗号化エクスポート", str(exc), parent=self.root)
             return
-        path = filedialog.asksaveasfilename(
-            title="暗号化エクスポート",
-            defaultextension=".shiro-export",
-            filetypes=[("Shiro暗号化履歴", "*.shiro-export")],
-            parent=self.root,
-        )
-        if not path:
+        result = PortableExportDialog(
+            self.root,
+            current_only=current_only,
+            reference_count=reference_count,
+        ).show()
+        if result is None:
             return
-        if os.path.exists(path) and not messagebox.askyesno(
-            "上書き確認",
-            "既存の暗号化ファイルを置き換えますか？",
-            icon="warning",
-            parent=self.root,
-        ):
+        path, passphrase = result
+        try:
+            path = validate_export_destination(path)
+            destination_existed = os.path.exists(path)
+            if destination_existed and not messagebox.askyesno(
+                "上書き確認",
+                "既存の暗号化ファイルを置き換えますか？",
+                icon="warning",
+                parent=self.root,
+            ):
+                return
+            destination_signature = export_destination_signature(path)
+            if destination_existed != (destination_signature is not None):
+                raise PortableHistoryError(
+                    "保存先が確認中に変更されました。"
+                    "もう一度保存先を選択してください。"
+                )
+        except (OSError, PortableHistoryError) as exc:
+            messagebox.showerror(
+                "暗号化エクスポート", str(exc), parent=self.root)
             return
-        current_snapshot = json.loads(json.dumps(current, ensure_ascii=False))
-        self._portable_pending.set()
+        # 実行ボタン押下時のパスを不変値としてワーカーへ渡す。
+        current_path = self._current_path if current_only else None
 
         def _worker():
             try:
                 sessions = (
-                    [current_snapshot]
-                    if choice
+                    [self._session_store.load_managed_session(current_path)]
+                    if current_only
                     else self._session_store.exportable_sessions()
                 )
-                if not choice and has_current:
-                    digest = session_digest(current_snapshot)
-                    if all(session_digest(item) != digest for item in sessions):
-                        sessions.append(current_snapshot)
+                if not sessions:
+                    raise PortableHistoryError(
+                        "エクスポートできる保存済み会話がありません。")
                 raw = export_archive(sessions, passphrase)
+                if export_destination_signature(path) != destination_signature:
+                    raise PortableHistoryError(
+                        "保存先が確認後に変更されました。"
+                        "既存ファイルは変更していません。"
+                    )
                 atomic_write_bytes(path, raw)
-                self._post_ui(lambda: messagebox.showinfo(
+                self._post_ui(lambda count=len(sessions): messagebox.showinfo(
                     "暗号化エクスポート",
-                    f"{len(sessions)}件の会話履歴を暗号化して保存しました。",
+                    f"{count}件の会話履歴を暗号化して保存しました。",
                     parent=self.root,
                 ))
             except Exception as exc:
@@ -1984,35 +2319,30 @@ class ChatApp:
             finally:
                 self._portable_pending.clear()
 
-        threading.Thread(target=_worker, daemon=True).start()
+        try:
+            self._start_portable_thread(_worker)
+        except Exception as exc:
+            messagebox.showerror(
+                "暗号化エクスポート", str(exc), parent=self.root)
 
     def _import_portable_history(self) -> None:
         if not self._portable_ready():
             return
-        path = filedialog.askopenfilename(
-            title="暗号化インポート",
-            filetypes=[("Shiro暗号化履歴", "*.shiro-export")],
-            parent=self.root,
-        )
-        if not path:
+        result = PortableImportDialog(self.root).show()
+        if result is None:
             return
+        path, passphrase = result
         try:
+            if not os.path.isfile(path):
+                raise PortableHistoryError(
+                    "指定された暗号化ファイルを確認できません。")
             if os.path.getsize(path) > MAX_ARCHIVE_BYTES:
                 raise PortableHistoryError(
                     "暗号化ファイルのサイズが上限を超えています。")
-        except OSError as exc:
+        except (OSError, PortableHistoryError) as exc:
             messagebox.showerror(
                 "暗号化インポート", str(exc), parent=self.root)
             return
-        passphrase = simpledialog.askstring(
-            "暗号化インポート",
-            "エクスポート時のパスフレーズを入力してください。",
-            show="*",
-            parent=self.root,
-        )
-        if passphrase is None:
-            return
-        self._portable_pending.set()
 
         def _read_worker():
             try:
@@ -2020,8 +2350,7 @@ class ChatApp:
                     raw = handle.read(MAX_ARCHIVE_BYTES + 1)
                 sessions = import_archive(raw, passphrase)
                 existing = self._session_store.existing_session_digests()
-                duplicate_count = sum(
-                    session_digest(item) in existing for item in sessions)
+                duplicate_count = count_import_duplicates(sessions, existing)
                 days = normalize_retention_days(
                     self._cfg.get("history_retention_days", 0))
                 expired_count = 0
@@ -2049,7 +2378,11 @@ class ChatApp:
                     parent=self.root,
                 ))
 
-        threading.Thread(target=_read_worker, daemon=True).start()
+        try:
+            self._start_portable_thread(_read_worker)
+        except Exception as exc:
+            messagebox.showerror(
+                "暗号化インポート", str(exc), parent=self.root)
 
     def _post_portable_import_confirmation(
         self, sessions: list[dict], duplicate_count: int, expired_count: int
@@ -2065,29 +2398,38 @@ class ChatApp:
     def _confirm_portable_import(
         self, sessions: list[dict], duplicate_count: int, expired_count: int
     ) -> None:
-        warning = ""
-        if expired_count:
-            warning = (
-                f"\n\n保存期間を超える履歴が{expired_count}件あります。"
-                "日時は保持され、次回の期限処理で削除対象になります。"
-            )
-        choice = messagebox.askyesnocancel(
-            "暗号化インポート",
-            f"履歴: {len(sessions)}件\n重複: {duplicate_count}件\n"
-            "「はい」: 重複をスキップしてインポート\n"
-            "「いいえ」: 重複も別履歴としてインポート"
-            f"{warning}",
-            icon="warning" if expired_count else "question",
-            parent=self.root,
-        )
-        if choice is None:
+        try:
+            policy = DuplicateImportDialog(
+                self.root,
+                session_count=len(sessions),
+                duplicate_count=duplicate_count,
+                expired_count=expired_count,
+            ).show()
+        except Exception as exc:
+            self._portable_pending.clear()
+            try:
+                messagebox.showerror(
+                    "暗号化インポート", str(exc), parent=self.root)
+            except Exception:
+                pass
+            return
+        if policy not in (DuplicatePolicy.SKIP, DuplicatePolicy.COPY):
             self._portable_pending.clear()
             return
 
         def _commit_worker():
             try:
+                if policy is DuplicatePolicy.SKIP:
+                    skip_duplicates = True
+                elif policy is DuplicatePolicy.COPY:
+                    skip_duplicates = False
+                else:
+                    self._portable_pending.clear()
+                    return
                 paths, skipped = self._session_store.import_sessions(
-                    sessions, skip_duplicates=choice)
+                    sessions,
+                    skip_duplicates=skip_duplicates,
+                )
                 self._post_ui(self._refresh_chat_list)
                 self._post_ui(lambda: messagebox.showinfo(
                     "暗号化インポート",
@@ -2104,7 +2446,12 @@ class ChatApp:
             finally:
                 self._portable_pending.clear()
 
-        threading.Thread(target=_commit_worker, daemon=True).start()
+        try:
+            threading.Thread(target=_commit_worker, daemon=True).start()
+        except Exception as exc:
+            self._portable_pending.clear()
+            messagebox.showerror(
+                "暗号化インポート", str(exc), parent=self.root)
 
     def _refresh_chat_list(self) -> None:
         self._chat_list.delete(0, tk.END)
@@ -2210,13 +2557,17 @@ class ChatApp:
         messagebox.showinfo(
             "暗号化インポート／エクスポート",
             "別PC・別Windowsユーザーへ移す場合は、ファイルメニューの"
-            "「暗号化エクスポート」を使用します。出力はAES-256-GCMで"
+            "「暗号化エクスポート」から、現在の保存済み会話または"
+            "保存済みの全会話を選択します。出力はAES-256-GCMで"
             "暗号化され、人間が直接読めるテキストではありません。\n\n"
+            "エクスポート対象はDPAPIで保存済みの会話だけです。"
+            "ゲスト会話、未保存会話、保存後の未保存部分は出力されません。\n\n"
             "パスフレーズは保存されません。紛失すると復元できません。"
             "暗号化ファイルとパスフレーズを同じ場所へ保管しないでください。\n\n"
             "インポートした履歴は、このPCの現在のWindowsユーザー用DPAPIで"
             "再暗号化されます。保存期間を超えた日時の履歴は、次回の期限処理で"
-            "削除対象になる場合があります。",
+            "削除対象になる場合があります。重複する会話は、スキップするか"
+            "別のコピーとして追加するかを確認画面で選択できます。",
             parent=self.root,
         )
 

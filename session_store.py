@@ -216,6 +216,28 @@ class SessionStore:
                 )
             return data
 
+    def load_managed_session(self, path: str) -> dict:
+        """Load one saved session only when it is still managed by this store."""
+        if not isinstance(path, str) or not path:
+            raise HistoryCryptoError("保存済み会話のパスが無効です。")
+        log_dir = os.path.normcase(os.path.realpath(self._log_dir))
+        candidate = os.path.normcase(os.path.realpath(path))
+        try:
+            managed = os.path.commonpath((log_dir, candidate)) == log_dir
+        except ValueError:
+            managed = False
+        if (
+            not managed
+            or os.path.dirname(candidate) != log_dir
+            or not candidate.endswith(".json")
+            or not os.path.isfile(candidate)
+        ):
+            raise HistoryCryptoError(
+                "現在の保存済み会話を確認できません。"
+                "会話一覧を更新してから、もう一度実行してください。"
+            )
+        return self.load(candidate)
+
     def delete(self, path: str) -> None:
         with self._lock:
             os.remove(path)
