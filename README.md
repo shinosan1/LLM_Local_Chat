@@ -169,7 +169,7 @@ python -m unittest discover -s tests -t . -p "test*.py" -v
 
 ## VRAM安全フィルタ（v1.2.0）
 
-LLM（Gemma 4B）とWhisper mediumを同一GPUで動かす際のVRAM競合を緩和します。
+LLM（Gemma 4 E4B、総8B／有効4B）とWhisper mediumを同一GPUで動かす際のVRAM競合を緩和します。
 
 ### 設計思想
 
@@ -324,7 +324,7 @@ PowerShellの実行ポリシーを変更せず、以降は仮想環境のPython�
 ### 4. GGUFモデルを用意する
 
 [Hugging Face](https://huggingface.co/) から `.gguf` 形式のモデルをダウンロードして `models/` フォルダに配置してください。  
-動作確認済み：`gemma-3-4b-it-q4_k_m.gguf`、`gemma-4-E4B-Q4_K_M.gguf`（自前量子化）
+動作確認済み：`gemma-3-4b-it-q4_k_m.gguf`、`gemma-4-E4B-it-Q4_K_M.gguf`
 
 > **⚠️ 初回起動時の注意：**  
 > 音声認識（Whisper）のモデルが初回起動時に自動ダウンロードされます（約1.5GB）。  
@@ -352,7 +352,7 @@ PowerShellの実行ポリシーを変更せず、以降は仮想環境のPython�
 | モデル名 | パラメータ | 備考 | ダウンロード |
 |---|---|---|---|
 | gemma-3-4b-it-q4_k_m | 4B | 動作確認済み | [リンク](https://huggingface.co/lmstudio-community/gemma-3-4b-it-GGUF) |
-| gemma-4-E4B-Q4_K_M | 4B | 動作確認済み（自前量子化） | [リンク](https://huggingface.co/google/gemma-4) |
+| gemma-4-E4B-it-Q4_K_M | 8B（有効4B） | 動作確認済み | [リンク](https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF) |
 | phi-3.5-Q8_0 | 3.8B | 動作確認済み | [リンク](https://huggingface.co/lmstudio-community/Phi-3.5-mini-instruct-GGUF) |
 | LFM2.5-1.2B-Instruct-Q4_K_M | 1.2B | 動作確認済み（起動時に警告が出ますが動作に問題なし） | [リンク](https://huggingface.co/ggml-org/LFM2.5-1.2B-JP-GGUF) |
 
