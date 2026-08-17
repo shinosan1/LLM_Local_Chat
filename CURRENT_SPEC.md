@@ -1,6 +1,6 @@
 # LLM Local Chat 現行仕様
 
-作成日: 2026-07-11 / 最終更新: 2026-07-22
+作成日: 2026-07-11 / 最終更新: 2026-08-15
 基準: 開発用作業ツリーの現行コードを静的に読解し、回帰テストで確認した結果。
 このファイルは「現在実装されている事実」だけを記載する。将来予定・改善案は含まない。
 確認済み事実と推測は区別して記載する(推測には「推測」と明記)。
@@ -11,19 +11,16 @@
 
 - **目的**: ローカルPC上でLLM(llama.cpp / GGUF)と日本語チャットするWindowsデスクトップアプリ。音声入力(Whisper)、音声読み上げ(SAPI5 TTS)、アバター表示、家計簿・健康記録のローカルAPI連携を持つ。
 - **主な利用方法**: GUI(Tkinter)を起動し、テキストまたは音声で対話する。会話はセッションJSONとして保存・再読込できる。
-- **フォルダの役割**:
-  - `C:\Users\shino\python-mysql-dev\app\LLM_Local_Chat` — 開発用(git作業の正本)。`.venv` なし。
-  - `D:\AI\LLM\LLM_Local_Chat` — 実行用。`.venv`、モデルファイル、実行時設定を保持。
-  - 両者は同一gitリポジトリのクローンで、コード内容は一致(2026-07-11時点で確認)。
+- **実行に必要な構成**: リポジトリのコード一式に加え、`.venv`(Python実行環境)、`models/` へ配置するGGUFモデル、`chat_settings.json`(実行時設定)を各自で用意する。これらはリポジトリに含まれない。
 - **対応OS**: Windows専用(SAPI5 TTS が `win32com.client.Dispatch("SAPI.SpVoice")` に依存。`audio_workers.py` の `TTSWorker._execute_sapi_speak`)。README/CHANGELOGでは動作保証を Windows 11 のみと記載。
-- **想定Pythonバージョン**: 3.12(実行用 `.venv` の `pyvenv.cfg` が Python 3.12.10)。
+- **想定Pythonバージョン**: 3.12(動作確認は Python 3.12.10 の `.venv` で実施)。
 
 ## 2. 起動方法
 
 - **Pythonエントリーポイント**: `LLM_Local_Chat.py` の `main()`。`if __name__ == "__main__"` ガードあり。
 - **Windowsで通常使用する起動ファイル**:
   - `LLMローカル対話型AI.bat` — スクリプト位置の `.venv` を activate して `python LLM_Local_Chat.py` を実行(リポジトリ同梱)。
-  - `Start_Shiro.bat`(実行用フォルダのみに存在) — 家計簿/Biolog の Dockerサービスを起動後、`.venv` を activate し、連携APIのURLを環境変数で設定して `python LLM_Local_Chat.py` を実行。※これが実運用経路かはコードだけでは確定できない(§13)。
+  - 連携機能まで使う場合は、家計簿/Biolog の Dockerサービスを起動し、連携APIのURLを環境変数(`KAKEIBO_API_URL`・`KAKEIBO_BRIDGE_PORT`・`BIOLOG_URL`)で指定してから起動する。この一括起動スクリプトはローカル環境に依存するためリポジトリに含まれない。
   - `start.sh` は Dockerコンテナ+X11転送前提のLinux用であり、Windows通常経路ではない(推測)。
 - **起動から画面表示までの処理順**(`main` → `ChatApp.__init__`):
   1. `tk.Tk()` でルートウィンドウ生成
@@ -226,9 +223,10 @@
 
 - **対象**: 家計簿API と Biolog(健康記録)API。いずれもローカルで稼働している前提のHTTP POST。
 - **URL**(`integrations.py` 冒頭で決定):
-  - 家計簿: 環境変数 `KAKEIBO_API_URL`(既定 `http://localhost:8765`)+ `/api/kakeibo/record`
+  - 家計簿: 環境変数 `KAKEIBO_API_URL`(既定 `http://127.0.0.1:8767`。`KAKEIBO_BRIDGE_PORT` で上書き可)+ `/api/kakeibo/record`
   - Biolog: 環境変数 `BIOLOG_URL`(既定 `http://localhost:8766`)+ `/api/health/record`
 - **localhost制限**: `is_allowed_local_api_url` が scheme=http かつ host が `localhost` / `127.0.0.1` / `::1` の場合のみ許可。それ以外(https含む)は送信を中止しチャット欄へ警告表示。
+- **ポート制限**: 同じく `is_allowed_local_api_url` が `LOCAL_API_PORTS`(= `KAKEIBO_BRIDGE_PORT` と `8766`)以外のポートを拒否する。localhost上の無関係なサービスへJSONを送らないための多層防御。`KAKEIBO_API_URL` で別ポートを指定した場合も、`KAKEIBO_BRIDGE_PORT` を合わせないと送信は中止される。
 - **送信前確認**: サニタイズ済みpayloadを整形表示した確認ダイアログ(はい/いいえ)を必ず経由。
 - **サニタイズ**(`sanitize_kakeibo_record` / `sanitize_biolog_record`):
   - 許可キーのホワイトリスト方式(未知キー・`user_id`・`token`・`url`・`headers` 等はここで脱落)
@@ -267,9 +265,7 @@
 
 コードだけでは確定できない事項(実装済みの事実と混同しないこと):
 
-- 実機での起動・モデルロード・基本チャット・音声・TTS・連携の動作可否(静的読解のみで、実行確認は未実施)
-- `Start_Shiro.bat` が現在の実運用の起動経路かどうか(実行用フォルダにのみ存在し、内容からは実運用向けと推測されるが未確認)
-- 開発用フォルダ(C側)での起動可否(`.venv` が存在しないため、現状のままでは依存が満たされない可能性が高い)
+- 実機での起動・モデルロード・基本チャット・音声・TTS・連携の動作可否(静的読解のみで、GUI操作による実行確認は未実施)
 - 実機での要約待機、停止、TTSフラグ、マイク案内の操作確認
 - `llm_service.py`・`resource_manager.py` の正確な作成経緯(CHANGELOG未記載。ファイル日時と内容から、それぞれ速度最適化作業・v1.2.0後の作業で作成と推測)
 - README・操作マニュアルPDFの記述と実装の逐条一致(見出しレベルの確認のみ実施)
@@ -285,5 +281,5 @@
 - integrations.py(`IntegrationBridge`, `sanitize_*`, `is_allowed_local_api_url`)
 - audio_workers.py(`TTSWorker`, `VoiceRecognizer`)/ resource_manager.py(`ResourceManager`)
 - resource_monitor.py(`ResourceMonitor`, `VRAMGuard`, `adjust_llm`, `adjust_inference`, `WhisperController`, `WhisperPool`)
-- 設定・起動: chat_settings.json.example、LLMローカル対話型AI.bat、Start_Shiro.bat(実行用フォルダ)、start.sh
-- 参考ドキュメント(記載と実装の差異は§12参照): CHANGELOG.md、README.md、CLAUDE.md、docs/architecture_snapshot.md、skills.md
+- 設定・起動: chat_settings.json.example、LLMローカル対話型AI.bat、start.sh
+- 参考ドキュメント(記載と実装の差異は§12参照): CHANGELOG.md、README.md、architecture_snapshot.md

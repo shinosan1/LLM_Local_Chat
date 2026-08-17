@@ -135,7 +135,7 @@ if sys.platform == "win32":
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 
 
 def app_path(*parts: str) -> str:

@@ -570,7 +570,7 @@
       <div>
         <div class="col-label" style="color:var(--accent3)">💴 Kakeibo（家計簿）モード</div>
         <ul class="styled" style="font-size:13px;">
-          <li><strong>ポート:</strong> 8765</li>
+          <li><strong>ポート:</strong> 8767</li>
           <li><strong>プロンプト注入:</strong> <code>_kakeibo_build_prompt()</code> で支出カテゴリ一覧とスキーマを挿入</li>
           <li><strong>JSON 抽出:</strong> <code>_extract_kakeibo_json()</code> で <code>```json ... ```</code> ブロックを正規表現でパース</li>
           <li><strong>送信:</strong> <code>POST /api/kakeibo/record</code> をデーモンスレッドで非同期 POST</li>
