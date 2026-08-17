@@ -6,7 +6,7 @@
 ローカル処理を重視した構成です。機密情報を扱う業務環境へ導入する場合は、端末のアクセス制御、Windowsユーザープロファイル、ディスク暗号化、Dockerポート、依存ライブラリ、バックアップ方法を含め、組織の情報セキュリティ担当者による事前評価を行ってください。
 
 ![Python](https://img.shields.io/badge/Python-3.12.10-blue)
-![Version](https://img.shields.io/badge/Version-1.5.2-green)
+![Version](https://img.shields.io/badge/Version-1.6.0-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
@@ -25,6 +25,29 @@
 - **Biolog健康記録連携** — 💪ボタンで計測値・食事・活動内容・メモを入力し、確認後にBiolog APIへPOST（v1.1.0）
 - 家計簿連携（kakeibo-bridge API）
 - **VRAM安全フィルタ** — LLM・Whisper 同時動作時のVRAM枯渇によるクラッシュを確率的に削減（v1.2.0）
+
+---
+## v1.6.0の主な改善
+
+### 家計簿ブリッジの接続ポート
+
+- 家計簿ブリッジへの既定接続先を`http://localhost:8765`から`http://127.0.0.1:8767`へ変更
+- ローカルAPI送信の許可ポート`LOCAL_API_PORTS`を、固定値ではなく`KAKEIBO_BRIDGE_PORT`と連動する形へ変更
+- 環境変数`KAKEIBO_BRIDGE_PORT`で家計簿ブリッジのポートを上書きできるよう追加
+
+`8765`は同一端末上の別サービスが使用しているため、家計簿ブリッジ専用に`8767`を割り当てました。
+
+`KAKEIBO_BRIDGE_PORT`に`1`〜`65535`の範囲外を指定した場合は起動時にエラーになります。ポートが競合している場合の自動振替は行いません。
+
+送信先の許可ポート判定は`KAKEIBO_BRIDGE_PORT`と連動します。`KAKEIBO_API_URL`で別のポートを指定する場合は、`KAKEIBO_BRIDGE_PORT`にも同じ値を設定してください。両者が一致しない場合、送信は中止されます。
+
+既存の環境で家計簿ブリッジを`8765`で稼働させている場合は、ブリッジ側を`8767`へ移行するか、`KAKEIBO_BRIDGE_PORT`に実際のポートを設定してください。
+
+### 変更していないポート
+
+家計簿API（`8000`）、Biolog API（`8766`）、Biolog UI（`8501`）のポートは変更していません。
+
+回帰テストは`tests/test_integrations.py`の許可ポート判定を`8767`基準へ更新しています（6件）。
 
 ---
 ## v1.5系の主な改善
