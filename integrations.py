@@ -12,13 +12,18 @@ from tkinter import messagebox
 from kakeibo_confirmation import validate_kakeibo_payload
 
 
-KAKEIBO_API_URL = os.getenv("KAKEIBO_API_URL", "http://localhost:8765") + "/api/kakeibo/record"
+KAKEIBO_BRIDGE_PORT = int(os.getenv("KAKEIBO_BRIDGE_PORT", "8767"))
+if not 1 <= KAKEIBO_BRIDGE_PORT <= 65535:
+    raise RuntimeError("KAKEIBO_BRIDGE_PORTは1～65535で指定してください")
+KAKEIBO_API_URL = os.getenv(
+    "KAKEIBO_API_URL", f"http://127.0.0.1:{KAKEIBO_BRIDGE_PORT}"
+) + "/api/kakeibo/record"
 BIOLOG_API_URL = os.getenv("BIOLOG_URL", "http://localhost:8766") + "/api/health/record"  # v1.1.0
 LOCAL_API_HOSTS = {"localhost", "127.0.0.1", "::1"}
 # 既定のローカルブリッジのポートのみ許可する。環境変数でホストを差し替えられても、
 # localhost上の無関係なサービスへJSONを送らないための多層防御。
-# 運用ポートを変える場合はこの定数を編集する。
-LOCAL_API_PORTS = {8765, 8766}
+# bridgeの変更時は接続先と同じKAKEIBO_BRIDGE_PORTを明示する。
+LOCAL_API_PORTS = {KAKEIBO_BRIDGE_PORT, 8766}
 BIOLOG_RECORD_KEYS = (
     "date", "weight", "body_fat", "muscle_mass", "bmr",
     "temperature", "pulse", "systolic_bp", "diastolic_bp",

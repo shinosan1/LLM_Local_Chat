@@ -8,7 +8,7 @@ import integrations
 
 class LocalApiProxyTests(unittest.TestCase):
     def test_open_local_api_ignores_environment_proxies(self):
-        request = urllib.request.Request("http://localhost:8765/api/test")
+        request = urllib.request.Request("http://localhost:8767/api/test")
         response = object()
         opener = Mock()
         opener.open.return_value = response
@@ -29,7 +29,7 @@ class LocalApiProxyTests(unittest.TestCase):
         opener.open.assert_called_once_with(request, timeout=5)
 
     def test_open_local_api_disables_redirects(self):
-        request = urllib.request.Request("http://localhost:8765/api/test")
+        request = urllib.request.Request("http://localhost:8767/api/test")
         opener = Mock()
         with patch(
             "integrations.urllib.request.build_opener", return_value=opener
@@ -44,9 +44,9 @@ class LocalApiProxyTests(unittest.TestCase):
 class LocalApiUrlAllowlistTests(unittest.TestCase):
     def test_allows_default_bridge_ports_on_local_hosts(self):
         for url in (
-            "http://localhost:8765/api/kakeibo/record",
+            "http://localhost:8767/api/kakeibo/record",
             "http://localhost:8766/api/health/record",
-            "http://127.0.0.1:8765/api/kakeibo/record",
+            "http://127.0.0.1:8767/api/kakeibo/record",
             "http://[::1]:8766/api/health/record",
         ):
             with self.subTest(url=url):
@@ -65,12 +65,12 @@ class LocalApiUrlAllowlistTests(unittest.TestCase):
 
     def test_rejects_non_local_hosts_and_schemes(self):
         for url in (
-            "https://localhost:8765/api/kakeibo/record",
-            "http://example.invalid:8765/api/kakeibo/record",
-            "http://192.168.1.10:8765/api/kakeibo/record",
-            "http://localhost:8765@example.invalid/api/kakeibo/record",
-            "http://user@localhost:8765/api/kakeibo/record",
-            "http://user:pass@localhost:8765/api/kakeibo/record",
+            "https://localhost:8767/api/kakeibo/record",
+            "http://example.invalid:8767/api/kakeibo/record",
+            "http://192.168.1.10:8767/api/kakeibo/record",
+            "http://localhost:8767@example.invalid/api/kakeibo/record",
+            "http://user@localhost:8767/api/kakeibo/record",
+            "http://user:pass@localhost:8767/api/kakeibo/record",
             "http://localhost:notaport/api/kakeibo/record",
         ):
             with self.subTest(url=url):
