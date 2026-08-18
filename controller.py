@@ -16,9 +16,13 @@ from integrations import BiologValidationError, prepare_biolog_record
 from json_extractors import (
     extract_health_json,
     extract_kakeibo_json,
+    extract_kakeibo_transactions,
     strip_health_json,
 )
-from kakeibo_confirmation import build_kakeibo_candidate
+from kakeibo_split import (
+    MAX_KAKEIBO_TRANSACTIONS_PER_INPUT,
+    build_kakeibo_candidates,
+)
 from llm_service import LLMService
 from prompt_builder import PromptBuilder
 from resource_manager import ResourceManager
@@ -208,18 +212,29 @@ class Controller:
             self._app.root.after(0, callback)
 
     def is_busy(self) -> bool:
+        # 家計簿の確認・POSTシーケンス中も busy とする。前のPOST完了を待つ間は
+        # 操作状態が idle に戻っているため、これが無いと次の送信を受け付けてしまい、
+        # LLM処理を最後まで走らせてから「登録処理中」と断るUXになる。
         return (
             self._operation_state != "idle"
             or self._llm_service.is_running()
+            or bool(getattr(self._app, "_kakeibo_sequence_active", False))
         )
 
     def operation_label(self) -> str:
-        return {
+        label = {
             "generating": "⏳ 生成中…",
             "extracting_health": "🩺 健康データ再抽出中…",
             "summarizing": "📝 要約中…",
             "stopping": "⏳ 停止処理中…",
-        }.get(self._operation_state, "✅ 待機中")
+        }.get(self._operation_state)
+        if label is not None:
+            return label
+        # 生成自体は終わっていても家計簿の確認・POSTシーケンスが続いている間は
+        # is_busy() が真なので、待機中とは表示しない。
+        if getattr(self._app, "_kakeibo_sequence_active", False):
+            return "🏠 家計簿確認・登録中…"
+        return "✅ 待機中"
 
     def _begin_operation(self, state: str) -> int:
         self._operation_generation += 1
@@ -235,7 +250,11 @@ class Controller:
         self._operation_state = "idle"
         self._app._is_thinking = False
         self._app._llm_abort = False
-        self._app._btn_send.config(state="normal")
+        # 家計簿の確認・POSTシーケンスが進行中なら送信ボタンを戻さない。
+        # 戻すと is_busy() は真のままなのにUIだけ操作可能に見えてしまう。
+        # 再有効化はシーケンス側の終了処理(_finish)が担当する。
+        if not getattr(self._app, "_kakeibo_sequence_active", False):
+            self._app._btn_send.config(state="normal")
         self._app._stream_buf = ""
         self._active_mode = "default"
         self._health_json_filter.reset()
@@ -618,26 +637,72 @@ class Controller:
 
         if self._app._kakeibo_pending_text:
             try:
-                llm_record = extract_kakeibo_json(raw_reply)
-                candidate = build_kakeibo_candidate(llm_record, user_text)
-                if candidate["status"] == "ok":
-                    self._app._confirm_and_send_kakeibo(candidate, user_text)
-                elif candidate["status"] == "no_amount":
+                transactions = extract_kakeibo_transactions(raw_reply)
+                if transactions is None:
+                    # 旧形式(単一レコード)しか返らなかった場合のフォールバック。
+                    # 入力全体を1取引として扱う従来経路と同じ結果になる。
+                    llm_record = extract_kakeibo_json(raw_reply)
+                    transactions = [{
+                        "source_text": user_text,
+                        **{
+                            k: v for k, v in (llm_record or {}).items()
+                            if k in ("store", "category", "type", "memo")
+                        },
+                    }]
+                result = build_kakeibo_candidates(transactions, user_text)
+                status = result["status"]
+                if status == "ok":
+                    self._app._confirm_and_send_kakeibo(result["candidates"])
+                elif status == "too_many":
+                    self._app._chat_write(
+                        f"⚠ 一度に登録できる取引は最大"
+                        f"{MAX_KAKEIBO_TRANSACTIONS_PER_INPUT}件です。"
+                        "入力を分けてください。\n",
+                        "err",
+                    )
+                elif status == "invalid_split":
+                    self._app._chat_write(
+                        "⚠ 取引を正しく分割できませんでした。"
+                        "内容を分けて入力してください。\n",
+                        "err",
+                    )
+                elif status == "uncovered_amount":
+                    self._app._chat_write(
+                        "⚠ 入力に含まれる金額をすべて取引として扱えませんでした。"
+                        "登録漏れを避けるため、この入力は登録していません。"
+                        "1件ずつ入力を分けてください。\n",
+                        "err",
+                    )
+                elif status == "ambiguous_split":
+                    self._app._chat_write(
+                        "⚠ 取引の区切りを確定できませんでした。"
+                        "金額だけの取引が含まれている可能性があります。"
+                        "店名などを添えて1件ずつ入力してください。\n",
+                        "err",
+                    )
+                elif status == "ambiguous_date":
+                    self._app._chat_write(
+                        "⚠ 入力に複数の日付があり、日付の書かれていない取引に"
+                        "どれを使うか確定できませんでした。"
+                        "取引ごとに日付を書くか、入力を分けてください。\n",
+                        "err",
+                    )
+                elif status == "no_amount":
                     self._app._chat_write(
                         "⚠ 金額を確認できないため登録できません。"
                         "金額を入力してもう一度送信してください。\n",
                         "err",
                     )
-                elif candidate["status"] == "invalid_amount_format":
+                elif status == "invalid_amount_format":
                     self._app._chat_write(
                         "⚠ 金額の書き方を確認できません。"
                         "「1000円」「1万円」のように入力してください。\n",
                         "err",
                     )
-                elif candidate["status"] == "multiple_amounts":
+                elif status == "multiple_amounts":
                     self._app._chat_write(
-                        "⚠ 複数の金額が含まれています。"
-                        "1回の入力につき1取引ずつ入力してください。\n",
+                        "⚠ 取引を正しく分割できませんでした。"
+                        "1件ずつ金額が分かるように入力を分けてください。\n",
                         "err",
                     )
             except Exception as exc:

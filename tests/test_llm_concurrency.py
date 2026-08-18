@@ -137,8 +137,9 @@ class _App:
     def _append_stream_token(self, token):
         self._stream_buf += token
 
-    def _confirm_and_send_kakeibo(self, record, user_text):
-        self.kakeibo_confirm_calls.append((record, user_text))
+    def _confirm_and_send_kakeibo(self, candidates):
+        # 複数取引対応では候補リストを1引数で受け取り、1件ずつ確認・送信する。
+        self.kakeibo_confirm_calls.append(list(candidates))
 
     def _confirm_and_send_biolog(self, record, explicit_fields=None):
         self.biolog_records.append(record)
@@ -822,9 +823,10 @@ class KakeiboControllerTests(unittest.TestCase):
         ctrl._on_llm_done(user_text, "了解しました。", generation)
 
         self.assertEqual(len(app.kakeibo_confirm_calls), 1)
-        _record, passed_user_text = app.kakeibo_confirm_calls[0]
-        self.assertEqual(passed_user_text, user_text)
-        self.assertNotEqual(passed_user_text, "pending placeholder")
+        candidates = app.kakeibo_confirm_calls[0]
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["source_text"], user_text)
+        self.assertNotEqual(candidates[0]["source_text"], "pending placeholder")
 
     def test_broken_llm_json_still_opens_confirm_dialog_when_amount_found(self):
         app = _App()
@@ -837,9 +839,10 @@ class KakeiboControllerTests(unittest.TestCase):
         ctrl._on_llm_done(user_text, "壊れたJSON応答", generation)
 
         self.assertEqual(len(app.kakeibo_confirm_calls), 1)
-        record, _passed_user_text = app.kakeibo_confirm_calls[0]
-        self.assertEqual(record["amount"], 1000)
-        self.assertIsNone(record["type"])
+        candidates = app.kakeibo_confirm_calls[0]
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["amount"], 1000)
+        self.assertIsNone(candidates[0]["type"])
 
     def test_pending_is_cleared_after_normal_completion(self):
         app = _App()
@@ -853,13 +856,13 @@ class KakeiboControllerTests(unittest.TestCase):
         self.assertIsNone(app._kakeibo_pending_text)
 
     def _run_with_failing_candidate_builder(self, app, ctrl, generation):
-        original = controller_module.build_kakeibo_candidate
-        controller_module.build_kakeibo_candidate = lambda *_a, **_k: (
+        original = controller_module.build_kakeibo_candidates
+        controller_module.build_kakeibo_candidates = lambda *_a, **_k: (
             _ for _ in ()).throw(RuntimeError("boom"))
         try:
             ctrl._on_llm_done("1000円使った", "reply", generation)
         finally:
-            controller_module.build_kakeibo_candidate = original
+            controller_module.build_kakeibo_candidates = original
 
     def test_pending_is_cleared_even_when_candidate_build_raises(self):
         app = _App()
@@ -1060,3 +1063,83 @@ class TokenCostCacheTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KakeiboSequenceBusyTests(unittest.TestCase):
+    """家計簿の確認・POSTシーケンス中は新しい入力を開始しない。"""
+
+    def test_is_busy_reflects_kakeibo_sequence(self):
+        app = _App()
+        ctrl = _controller(app)
+        self.assertFalse(ctrl.is_busy())
+
+        app._kakeibo_sequence_active = True
+        self.assertTrue(ctrl.is_busy())
+
+        app._kakeibo_sequence_active = False
+        self.assertFalse(ctrl.is_busy())
+
+    def test_handle_text_does_not_start_while_sequence_active(self):
+        app = _App()
+        ctrl = _controller(app)
+        app._entry.text = "コンビニで500円"
+        app._kakeibo_sequence_active = True
+
+        ctrl.handle_text()
+
+        # 入力欄が消費されず、生成も始まっていない。
+        self.assertEqual(app._entry.text, "コンビニで500円")
+        self.assertEqual(ctrl._operation_state, "idle")
+
+    def test_handle_voice_does_not_start_while_sequence_active(self):
+        app = _App()
+        ctrl = _controller(app)
+        app._kakeibo_sequence_active = True
+
+        ctrl.handle_voice("コンビニで500円")
+
+        self.assertEqual(app._entry.text, "")
+        self.assertEqual(ctrl._operation_state, "idle")
+
+    def test_missing_attribute_does_not_make_controller_busy(self):
+        app = _App()
+        ctrl = _controller(app)
+        if hasattr(app, "_kakeibo_sequence_active"):
+            delattr(app, "_kakeibo_sequence_active")
+        self.assertFalse(ctrl.is_busy())
+
+    def test_operation_label_is_not_idle_during_kakeibo_sequence(self):
+        app = _App()
+        ctrl = _controller(app)
+        self.assertEqual(ctrl.operation_label(), "✅ 待機中")
+
+        app._kakeibo_sequence_active = True
+        self.assertTrue(ctrl.is_busy())
+        self.assertNotEqual(ctrl.operation_label(), "✅ 待機中")
+        self.assertIn("家計簿", ctrl.operation_label())
+
+        app._kakeibo_sequence_active = False
+        self.assertEqual(ctrl.operation_label(), "✅ 待機中")
+
+    def test_finish_operation_keeps_send_button_disabled_during_sequence(self):
+        app = _App()
+        ctrl = _controller(app)
+        generation = ctrl._begin_operation("generating")
+        app._kakeibo_sequence_active = True
+
+        ctrl._finish_operation(generation)
+
+        # 生成は終わったが家計簿シーケンス中なので送信ボタンは戻さない。
+        self.assertEqual(app._btn_send.state, "disabled")
+        self.assertTrue(ctrl.is_busy())
+
+    def test_finish_operation_restores_send_button_without_sequence(self):
+        app = _App()
+        ctrl = _controller(app)
+        generation = ctrl._begin_operation("generating")
+        app._kakeibo_sequence_active = False
+
+        ctrl._finish_operation(generation)
+
+        self.assertEqual(app._btn_send.state, "normal")
+        self.assertFalse(ctrl.is_busy())

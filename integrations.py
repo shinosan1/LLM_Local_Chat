@@ -352,10 +352,21 @@ class IntegrationBridge:
         with self._worker_lock:
             return sorted(self._workers.values())
 
-    def send_kakeibo(self, record: dict) -> None:
+    def send_kakeibo(self, record: dict, on_complete=None) -> None:
         """確認画面(KakeiboConfirmDialog)でユーザーが確定したペイロードの
-        最終検証とAPI送信だけを担当する。確認自体はダイアログ側で完結済み。"""
+        最終検証とAPI送信だけを担当する。確認自体はダイアログ側で完結済み。
+
+        `on_complete` を渡すと、送信の成否(bool)を引数にUIスレッドから1回だけ
+        呼び出す。複数取引を1件ずつ直列に送るために、呼び出し側はこの通知を
+        受けてから次の候補へ進む。送信を開始できなかった場合も失敗として通知する。
+        """
+        def _notify(success: bool) -> None:
+            if on_complete is None:
+                return
+            self._post_ui(lambda s=success: on_complete(s))
+
         if self._closing:
+            _notify(False)
             return
         payload = validate_kakeibo_payload(record)
         if not payload:
@@ -363,17 +374,20 @@ class IntegrationBridge:
                 "⚠ 家計簿へ送信可能な項目がないため登録しませんでした。\n",
                 "err",
             )
+            _notify(False)
             return
         if not is_allowed_local_api_url(KAKEIBO_API_URL):
             self._chat_write(
                 "⚠ 家計簿APIの送信先がローカルではないため登録を中止しました。\n",
                 "err",
             )
+            _notify(False)
             return
-        self._send_to_kakeibo_api(payload)
+        self._send_to_kakeibo_api(payload, _notify)
 
-    def _send_to_kakeibo_api(self, record: dict) -> None:
+    def _send_to_kakeibo_api(self, record: dict, notify=None) -> None:
         def _worker():
+            succeeded = False
             try:
                 body = json.dumps(record, ensure_ascii=False).encode("utf-8")
                 req = urllib.request.Request(
@@ -395,6 +409,7 @@ class IntegrationBridge:
                 )
                 self._post_ui(
                     lambda m=msg: self._chat_write(m, "kakeibo_ok"))
+                succeeded = True
             except urllib.error.URLError as e:
                 reason = getattr(e, "reason", None) or e
                 self._post_ui(
@@ -408,8 +423,13 @@ class IntegrationBridge:
                     lambda err=e: self._chat_write(
                         f"⚠ 家計簿登録エラー: {err}\n", "err"),
                 )
+            finally:
+                if notify is not None:
+                    notify(succeeded)
 
-        self._start_worker("kakeibo_api", _worker)
+        if not self._start_worker("kakeibo_api", _worker):
+            if notify is not None:
+                notify(False)
 
     def confirm_and_send_biolog(
         self, record: dict, explicit_fields=None

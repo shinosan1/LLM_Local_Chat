@@ -125,3 +125,35 @@ def normalize_manual_amount_input(raw: str) -> int | None:
         return None
     value = int(digits)
     return value if value > 0 else None
+
+
+def find_amount_spans(text: str) -> list[tuple[int, int, int]]:
+    """有効な金額表現を (開始位置, 終了位置, 円換算値) の一覧で返す。
+
+    位置は元の `text` に対する添字。`_normalize_digits` は1文字を1文字へ
+    置換するだけなので、正規化後の位置はそのまま元文字列の位置として使える。
+
+    extract_amount_result と同じパターン・同じ換算規則を使い、判定の二重実装を
+    避ける。不正な通貨表現(小数・符号付き・複合単位等)が含まれる場合は、
+    どこまでを1件と数えてよいか決められないため空リストを返す。有効な金額が
+    無い場合も空リストになるため、呼び出し側は必要に応じて
+    extract_amount_result の status と併せて判断する。
+    """
+    normalized = _normalize_digits(text)
+
+    if (
+        _SIGNED_AMOUNT_PATTERN.search(normalized)
+        or _DECIMAL_AMOUNT_PATTERN.search(normalized)
+        or _COMPOUND_UNIT_AMOUNT_PATTERN.search(normalized)
+        or _SPACED_DIGITS_AMOUNT_PATTERN.search(normalized)
+        or _EXPONENT_AMOUNT_PATTERN.search(normalized)
+    ):
+        return []
+
+    spans: list[tuple[int, int, int]] = []
+    for match in _AMOUNT_UNIT_PATTERN.finditer(normalized):
+        value = _parse_amount_match(match.group("number"), match.group("unit"))
+        if value is None or value <= 0:
+            return []
+        spans.append((match.start(), match.end(), value))
+    return spans

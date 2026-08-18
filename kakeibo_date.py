@@ -31,13 +31,13 @@ _DATE_MONTH_DAY_PATTERN = re.compile(
 )
 
 
-def extract_date_from_text(text: str, today: datetime.date | None = None) -> str:
-    """原文の日付表現をISO形式(YYYY-MM-DD)で返す。
+def find_explicit_date(text: str, today: datetime.date | None = None) -> str | None:
+    """原文に明示的な日付表現がある場合だけISO形式(YYYY-MM-DD)で返す。
 
-    年付き形式("2026/08/16"・"2026-08-16")を優先して採用し、無ければ月/日形式
-    ("7/17")を実行年で補って採用する。どちらも見つからない場合、または実在しない
-    暦日(例: 2/30)の場合は実行日を返す。
-    `today`はテスト用に実行日を固定するための任意引数(省略時は実際の今日)。
+    見つからない場合、または実在しない暦日(例: 2/30)しか無い場合は None を返す。
+    実行日へのフォールバックは行わない。複数取引を扱う際に「この断片自身が日付を
+    持っているか」を判定する必要があるため、extract_date_from_text から分離した。
+    対応形式は extract_date_from_text と同一で、新しい形式は追加していない。
     """
     if today is None:
         today = datetime.date.today()
@@ -62,4 +62,60 @@ def extract_date_from_text(text: str, today: datetime.date | None = None) -> str
             return datetime.date(today.year, month, day).isoformat()
         except ValueError:
             pass
-    return today.isoformat()
+    return None
+
+
+def extract_date_from_text(text: str, today: datetime.date | None = None) -> str:
+    """原文の日付表現をISO形式(YYYY-MM-DD)で返す。
+
+    年付き形式("2026/08/16"・"2026-08-16")を優先して採用し、無ければ月/日形式
+    ("7/17")を実行年で補って採用する。どちらも見つからない場合、または実在しない
+    暦日(例: 2/30)の場合は実行日を返す。
+    `today`はテスト用に実行日を固定するための任意引数(省略時は実際の今日)。
+    """
+    if today is None:
+        today = datetime.date.today()
+    found = find_explicit_date(text, today)
+    return found if found is not None else today.isoformat()
+
+
+def find_explicit_dates(text: str, today: datetime.date | None = None) -> list[str]:
+    """原文中の明示的な日付表現を、出現位置順にISO形式(YYYY-MM-DD)で返す。
+
+    複数取引の入力で「入力全体の日付を、日付を持たない取引へ適用してよいか」を
+    判断するために使う。日付が一意に定まらない入力を安全側で拒否できるよう、
+    find_explicit_date のように1件だけ返すのではなく全件を返す。
+
+    対応形式は find_explicit_date と同一で、新しい形式は追加していない。
+    実在しない暦日は候補に含めない。年付き形式が一致した範囲は月/日形式の
+    lookbehind により二重に数えられない。
+    """
+    if today is None:
+        today = datetime.date.today()
+    normalized = _normalize_digits(text)
+
+    found: list[tuple[int, str]] = []
+    for match in _DATE_FULL_PATTERN.finditer(normalized):
+        try:
+            iso = datetime.date(
+                int(match.group("year")),
+                int(match.group("month")),
+                int(match.group("day")),
+            ).isoformat()
+        except ValueError:
+            continue
+        found.append((match.start(), iso))
+
+    for match in _DATE_MONTH_DAY_PATTERN.finditer(normalized):
+        try:
+            iso = datetime.date(
+                today.year,
+                int(match.group("month")),
+                int(match.group("day")),
+            ).isoformat()
+        except ValueError:
+            continue
+        found.append((match.start(), iso))
+
+    found.sort()
+    return [iso for _, iso in found]

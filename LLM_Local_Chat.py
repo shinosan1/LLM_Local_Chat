@@ -135,7 +135,7 @@ if sys.platform == "win32":
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.6.3"
+APP_VERSION = "1.7.0"
 
 
 def app_path(*parts: str) -> str:
@@ -922,12 +922,20 @@ class KakeiboConfirmDialog(tk.Toplevel):
     的な値設定はこの対象に含めない)。
     """
 
-    def __init__(self, parent: tk.Tk, candidate: dict, user_text: str):
+    def __init__(self, parent: tk.Tk, candidate: dict, user_text: str,
+                 position: int = 1, total: int = 1):
         super().__init__(parent)
-        self.title("家計簿へ登録")
+        self.title(
+            "家計簿へ登録"
+            if total <= 1 else f"家計簿へ登録 ({position} / {total})"
+        )
         self.configure(bg=C["bg_main"])
         self.resizable(False, False)
         self.result: dict | None = None
+        # 複数候補のときだけ「残りを中止」で以降の候補をすべて破棄する。
+        # 1件のときは従来どおり「キャンセル」= result None だけを扱う。
+        self.aborted = False
+        self._total = total
         self._initializing = True
         P = dict(padx=16, pady=6)
 
@@ -935,7 +943,7 @@ class KakeiboConfirmDialog(tk.Toplevel):
             tk.Label(self, text=text, bg=C["bg_main"], fg=C["fg_main"]
                      ).grid(row=row, column=0, sticky="w", **P)
 
-        lbl(0, "認識・入力内容:")
+        lbl(0, "認識・入力内容:" if total <= 1 else "この取引の原文:")
         self.original_text = tk.Text(
             self, width=46, height=4, wrap="word",
             bg=C["bg_input"], fg=C["fg_sub"], bd=1)
@@ -1009,9 +1017,19 @@ class KakeiboConfirmDialog(tk.Toplevel):
         )
         self.btn_submit.pack(side=tk.LEFT, padx=8)
         tk.Button(
-            bf, text="キャンセル", bg=C["bg_input"], fg=C["fg_main"], width=10, bd=0,
+            bf,
+            text="キャンセル" if total <= 1 else "この取引をスキップ",
+            bg=C["bg_input"], fg=C["fg_main"],
+            width=10 if total <= 1 else 16, bd=0,
             command=self.destroy,
         ).pack(side=tk.LEFT, padx=8)
+        if total > 1:
+            tk.Button(
+                bf, text="残りを中止", bg=C["bg_input"], fg=C["fg_main"],
+                width=12, bd=0, command=self._abort,
+            ).pack(side=tk.LEFT, padx=8)
+            # ウィンドウを閉じる操作は、以降の候補も含めた中止として扱う。
+            self.protocol("WM_DELETE_WINDOW", self._abort)
 
         # 初期化中はcategory一覧の構築・初期値セットが確認チェックを解除しないようにする
         self._refresh_category_options(initial_category=candidate.get("category"))
@@ -1081,6 +1099,12 @@ class KakeiboConfirmDialog(tk.Toplevel):
         can_submit = can_submit_kakeibo_candidate(
             self._current_record(), self.v_confirmed.get())
         self.btn_submit.config(state="normal" if can_submit else "disabled")
+
+    def _abort(self) -> None:
+        """以降の候補もまとめて中止する(複数候補のときだけ使う)。"""
+        self.aborted = True
+        self.result = None
+        self.destroy()
 
     def _submit(self) -> None:
         record = self._current_record()
@@ -1279,6 +1303,10 @@ class ChatApp:
         self._stream_buf = ""
         self._kakeibo_mode         = False
         self._kakeibo_pending_text: str | None = None
+        # 複数取引を1件ずつ確認・送信している最中かどうか。
+        # 前の取引のPOST完了を待つ間にUIが解放されるため、
+        # 別の入力から2つ目の確認シーケンスが始まらないようにする。
+        self._kakeibo_sequence_active = False
         self._health_mode          = False
         self._health_pending_text:  str | None = None
         self._count_tokens = count_tokens
@@ -2082,13 +2110,131 @@ class ChatApp:
                 "divider",
             )
 
-    def _confirm_and_send_kakeibo(self, candidate: dict, user_text: str) -> None:
-        dialog = KakeiboConfirmDialog(self.root, candidate, user_text)
-        self.root.wait_window(dialog)
-        if dialog.result is None:
-            self._chat_write("家計簿への登録をキャンセルしました。\n", "divider")
+    def _restore_ui_after_kakeibo_sequence(self) -> None:
+        """家計簿シーケンス終了後にUI状態を復旧する。
+
+        POST待ちの間は送信ボタンを戻さないため、シーケンスが終わった時点で
+        ここが再有効化を担当する。ただし他のLLM処理が走っている場合まで
+        有効化してしまわないよう、Controller が busy でないときだけ戻す。
+        UI部品が揃っていない状況(テストや終了処理中)でも失敗しないようにする。
+        """
+        try:
+            controller = getattr(self, "_ctrl", None)
+            if controller is not None and controller.is_busy():
+                return
+            button = getattr(self, "_btn_send", None)
+            if button is not None:
+                button.config(state="normal")
+            update_status = getattr(self, "_update_status", None)
+            if callable(update_status):
+                update_status()
+        except Exception as exc:
+            print(f"[Kakeibo Error] UI restore failed: {exc}")
+
+    def _confirm_and_send_kakeibo(self, candidates: list) -> None:
+        """複数取引候補を1件ずつ確認し、1件ずつPOSTする。
+
+        「1取引 = 1確認 = 1 POST」の安全境界は変えない。一括登録は行わず、
+        前の取引のPOST完了通知を受けてから次の確認画面を開くことで、送信が
+        直列になることを保証する(複数POSTを並列化しない)。POSTが失敗した
+        場合は、成功したかどうかが不明な状態で次を送らないよう、残りの候補を
+        処理せずに停止する。すでに登録済みの取引は取り消さない。
+        """
+        if not candidates:
             return
-        self._integrations.send_kakeibo(dialog.result)
+        if self._kakeibo_sequence_active:
+            self._chat_write(
+                "⚠ 家計簿の登録処理が進行中のため、今回の入力は登録しませんでした。\n",
+                "err",
+            )
+            return
+
+        queue = list(candidates)
+        total = len(queue)
+        self._kakeibo_sequence_active = True
+
+        def _finish(message: str | None = None, tag: str = "divider") -> None:
+            # 全終了経路(全件成功・全件スキップ・残りを中止・×で中止・POST失敗・
+            # 確認ダイアログ例外・send_kakeibo例外)がここを通る。
+            self._kakeibo_sequence_active = False
+            if message:
+                self._chat_write(message, tag)
+            self._restore_ui_after_kakeibo_sequence()
+
+        def _step(index: int) -> None:
+            # 予期しない例外で _kakeibo_sequence_active が True のまま残ると、
+            # 以後の送信が恒久的にブロックされる。確認〜送信開始までをここで
+            # 受け止め、必ずシーケンスを終了させる。
+            # 送信開始に成功した場合は完了通知側が続きを進めるため、ここでは
+            # 解除しない(非同期POST中の早期解除を避ける)。
+            try:
+                _step_inner(index)
+            except Exception as exc:
+                print(f"[Kakeibo Error] sequence step failed: {exc}")
+                _finish(
+                    "⚠ 家計簿の登録処理中にエラーが発生したため中止しました。\n",
+                    "err",
+                )
+
+        def _step_inner(index: int) -> None:
+            if index >= total:
+                _finish()
+                return
+            candidate = queue[index]
+            dialog = KakeiboConfirmDialog(
+                self.root,
+                candidate,
+                candidate.get("source_text", ""),
+                position=index + 1,
+                total=total,
+            )
+            self.root.wait_window(dialog)
+
+            if dialog.aborted:
+                remaining = total - index
+                _finish(
+                    f"家計簿への登録を中止しました"
+                    f"(残り{remaining}件は登録していません)。\n"
+                )
+                return
+
+            if dialog.result is None:
+                if total > 1:
+                    self._chat_write(
+                        f"({index + 1} / {total}) この取引は登録しませんでした。\n",
+                        "divider",
+                    )
+                else:
+                    self._chat_write("家計簿への登録をキャンセルしました。\n", "divider")
+                _step(index + 1)
+                return
+
+            def _on_sent(success: bool) -> None:
+                try:
+                    _handle_sent(success)
+                except Exception as exc:
+                    print(f"[Kakeibo Error] post callback failed: {exc}")
+                    _finish(
+                        "⚠ 家計簿の登録処理中にエラーが発生したため中止しました。\n",
+                        "err",
+                    )
+
+            def _handle_sent(success: bool) -> None:
+                if not success:
+                    remaining = total - index - 1
+                    if remaining > 0:
+                        self._chat_write(
+                            f"⚠ 送信に失敗したため、残り{remaining}件の登録を"
+                            "中止しました。\n",
+                            "err",
+                        )
+                    _finish()
+                    return
+                _step(index + 1)
+
+            self._integrations.send_kakeibo(dialog.result, on_complete=_on_sent)
+
+        _step(0)
 
     # ══════════════════════════════════════════════
     #  健康記録連携

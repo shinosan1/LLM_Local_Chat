@@ -6,6 +6,12 @@ KAKEIBO_EXPENSE_CATS = ["食費", "外食費", "日用品", "交通費", "衣服
                          "住居費", "保険", "教育費", "その他支出"]
 KAKEIBO_INCOME_CATS  = ["給与", "賞与", "副収入", "お小遣い", "売却益", "還付金", "その他収入"]
 
+# 1回のユーザー入力で受理する家計簿取引の上限。これを超える入力は先頭N件だけ
+# 処理する部分成功を行わず、入力全体を拒否する。家計簿の共通語彙(カテゴリ一覧)と
+# 同じ場所に置くことで、プロンプト生成側と分割検証側(kakeibo_split)の双方から
+# 循環importなしで参照できるようにしている。
+MAX_KAKEIBO_TRANSACTIONS_PER_INPUT = 10
+
 
 class PromptBuilder:
     MODE_HINT = {
@@ -84,22 +90,35 @@ class PromptBuilder:
         today = datetime.date.today().isoformat()
         exp_cats = "、".join(KAKEIBO_EXPENSE_CATS)
         inc_cats = "、".join(KAKEIBO_INCOME_CATS)
+        limit = MAX_KAKEIBO_TRANSACTIONS_PER_INPUT
         return (
             f"{user_text}\n\n"
             f"---\n"
-            f"取引が1件だけ含まれる場合に限り、上記のメッセージに自然に返答した後、"
+            f"上記のメッセージに含まれる取引を抽出し、"
             f"必ず以下の形式でJSONを1個だけ出力してください。\n"
             f"今日の日付: {today}\n\n"
             f'```json\n'
             f'{{\n'
-            f'  "date": "{today}",\n'
-            f'  "store": null,\n'
-            f'  "amount": null,\n'
-            f'  "category": null,\n'
-            f'  "type": null,\n'
-            f'  "memo": null\n'
+            f'  "transactions": [\n'
+            f'    {{\n'
+            f'      "source_text": "",\n'
+            f'      "store": null,\n'
+            f'      "category": null,\n'
+            f'      "type": null,\n'
+            f'      "memo": null\n'
+            f'    }}\n'
+            f'  ]\n'
             f'}}\n'
             f'```\n\n'
+            f"取引が1件だけの場合も transactions の要素を1個にして出力してください。\n"
+            f"source_text には、その取引に対応する部分を"
+            f"入力文からそのまま切り出した文字列を入れてください。\n"
+            f"要約・言い換え・補完をせず、入力文に実際に存在する表記だけを使ってください。\n"
+            f"取引が1件だけの場合は source_text に入力文全体をそのまま入れてください。\n"
+            f"複数の取引がある場合は、source_text どうしが重ならないようにし、"
+            f"入力文に出てくる順番で並べてください。\n"
+            f"金額と日付はアプリ側が入力文から抽出するため、"
+            f"amount と date は出力しないでください。\n"
             f"判定できたフィールドだけ値を設定し、それ以外は null のままにしてください。\n"
             f"type は必ず「支出」または「収入」のどちらかにしてください"
             f"(それ以外の文字列は使わないでください)。\n"
@@ -107,8 +126,9 @@ class PromptBuilder:
             f"(一覧にない値は使わないでください)。\n"
             f"支出カテゴリ: {exp_cats}\n"
             f"収入カテゴリ: {inc_cats}\n"
-            f"複数の取引が含まれる場合はJSONを出力せず、"
-            f"「1回につき1件ずつ入力してください」と自然文だけで案内してください。"
+            f"取引が{limit}件を超える場合はJSONを出力せず、"
+            f"「一度に登録できる取引は最大{limit}件です」と"
+            f"自然文だけで案内してください。"
         )
 
     def build_health_prompt(self, user_text: str) -> str:

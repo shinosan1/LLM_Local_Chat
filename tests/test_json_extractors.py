@@ -6,9 +6,13 @@ from json_extractors import (
     HEALTH_KEYS,
     extract_health_json,
     extract_kakeibo_json,
+    extract_kakeibo_transactions,
     strip_health_json,
 )
-from prompt_builder import PromptBuilder
+from prompt_builder import (
+    MAX_KAKEIBO_TRANSACTIONS_PER_INPUT,
+    PromptBuilder,
+)
 
 
 class JsonExtractorRegressionTests(unittest.TestCase):
@@ -79,16 +83,32 @@ class KakeiboPromptTemplateTests(unittest.TestCase):
     def _prompt(self) -> str:
         return PromptBuilder("system").build_kakeibo_prompt("テスト入力")
 
-    def test_json_template_is_valid_json(self):
+    def _template(self) -> dict:
         prompt = self._prompt()
-        match = re.search(r'```json\s*(\{.*?\})\s*```', prompt, re.DOTALL)
+        match = re.search(r'```json\s*(\{.*\})\s*```', prompt, re.DOTALL)
         self.assertIsNotNone(match)
-        data = json.loads(match.group(1))
-        self.assertIsNone(data["type"])
-        self.assertIsNone(data["amount"])
-        self.assertIsNone(data["store"])
-        self.assertIsNone(data["category"])
-        self.assertIsNone(data["memo"])
+        return json.loads(match.group(1))
+
+    def test_json_template_is_valid_json(self):
+        data = self._template()
+        self.assertIsInstance(data["transactions"], list)
+        self.assertEqual(len(data["transactions"]), 1)
+        entry = data["transactions"][0]
+        self.assertEqual(entry["source_text"], "")
+        self.assertIsNone(entry["type"])
+        self.assertIsNone(entry["store"])
+        self.assertIsNone(entry["category"])
+        self.assertIsNone(entry["memo"])
+
+    def test_template_does_not_ask_llm_for_amount_or_date(self):
+        """amount/dateはユーザー原文から機械抽出するため、雛形に含めない。"""
+        entry = self._template()["transactions"][0]
+        self.assertNotIn("amount", entry)
+        self.assertNotIn("date", entry)
+
+    def test_transaction_limit_is_stated_in_prompt(self):
+        self.assertIn(
+            str(MAX_KAKEIBO_TRANSACTIONS_PER_INPUT) + "件", self._prompt())
 
     def test_no_fixed_expense_type_in_prompt(self):
         prompt = self._prompt()
@@ -101,3 +121,37 @@ class KakeiboPromptTemplateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExtractKakeiboTransactionsTests(unittest.TestCase):
+    def test_transactions_array_is_extracted(self):
+        reply = (
+            "分けました。\n"
+            '```json\n'
+            '{"transactions": ['
+            '{"source_text": "スーパーで2000円"},'
+            '{"source_text": "コンビニで500円"}'
+            ']}\n'
+            '```'
+        )
+        result = extract_kakeibo_transactions(reply)
+        self.assertEqual(
+            result,
+            [{"source_text": "スーパーで2000円"},
+             {"source_text": "コンビニで500円"}],
+        )
+
+    def test_single_record_form_returns_none(self):
+        reply = '```json\n{"amount": 500, "type": "支出"}\n```'
+        self.assertIsNone(extract_kakeibo_transactions(reply))
+
+    def test_transactions_not_a_list_returns_none(self):
+        reply = '```json\n{"transactions": {"source_text": "x"}}\n```'
+        self.assertIsNone(extract_kakeibo_transactions(reply))
+
+    def test_no_json_returns_none(self):
+        self.assertIsNone(extract_kakeibo_transactions("JSONはありません"))
+
+    def test_nonstandard_constant_is_rejected(self):
+        reply = '```json\n{"transactions": [{"source_text": NaN}]}\n```'
+        self.assertIsNone(extract_kakeibo_transactions(reply))

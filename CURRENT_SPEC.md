@@ -95,9 +95,20 @@
 - 外部影響: なし(観測のみ。pynvml → nvidia-smi → CPU-only の順にフォールバック)。
 
 ### 家計簿連携
-- 概要: 家計簿モード中の発話から支出/収入JSONを抽出し、確認ダイアログ後にローカルAPIへPOST。
+- 概要: 家計簿モード中の発話から支出/収入の取引候補を抽出し、確認ダイアログ後にローカルAPIへPOST。
 - 操作: 🏠ボタンでモードON/OFF。
-- 実装: `PromptBuilder.build_kakeibo_prompt` → `json_extractors.py` `extract_kakeibo_json` → `integrations.py` `IntegrationBridge.confirm_and_send_kakeibo`。
+- 実装: `PromptBuilder.build_kakeibo_prompt` → `json_extractors.py` `extract_kakeibo_transactions` → `kakeibo_split.py` `build_kakeibo_candidates` → `LLM_Local_Chat.py` `ChatApp._confirm_and_send_kakeibo` → `integrations.py` `IntegrationBridge.send_kakeibo`。
+- **複数取引**: 1回の入力から最大10件(`MAX_KAKEIBO_TRANSACTIONS_PER_INPUT`)の取引候補を生成できる。**一括登録ではなく、1取引 = 1確認 = 1 POST を維持する。**
+  - 11件以上は入力全体を拒否する(確認画面0件・POST 0件)。先頭N件だけ処理する部分成功は行わない。
+  - LLMが返す `source_text` は信用せず、原文に実在すること・空でないこと・範囲が重複しないこと・原文順に並べられること・許可キーのみであることを検証する。1つでも満たさなければ入力全体を拒否する。
+  - **原文の金額をすべての断片が覆っていることを確認する。** どの断片にも含まれない金額表現が原文に残っている場合(LLMが取引を取りこぼした場合)は入力全体を拒否する。件数上限の判定だけでは検出できないため、`kakeibo_amount.find_amount_spans()` で原文側の金額位置と突き合わせる。
+  - **金額だけの断片を独立した取引として受理しない。** 「スーパーで2000円と500円」をLLMが「スーパーで2000円」「500円」へ切り分けた場合のように、同一文脈内の複数金額を人工的に分割したものは入力全体を拒否する。
+  - 最終 `amount` と `date` はLLM値を採用せず、各取引の原文断片から `kakeibo_amount` / `kakeibo_date` が機械抽出する。断片自身に日付表現が無い場合、**原文全体の明示日付がちょうど1種類のときだけ**その日付へフォールバックする。複数種類ある場合はどれを適用すべきか一意に決められないため入力全体を拒否する。日付が1つも無ければ従来どおり実行日を使う。
+  - 1つの断片に有効な金額候補が複数ある場合は1取引と断定せず、入力全体を拒否する。
+  - POSTは直列化する(前の完了通知を受けてから次の確認画面を開く)。途中のPOSTが失敗した場合は残りの候補を処理せず停止し、登録済みの取引は取り消さない。
+  - 1件だけの入力は従来どおり1候補として扱う。
+  - **確認・POSTシーケンスが進行中の間は `Controller.is_busy()` が真を返し、キーボード入力・音声入力とも新しい送信を開始しない。** 完了・スキップ・中止・エラーのいずれでもフラグは解除され、予期しない例外でも解除される。
+- 旧形式(単一レコードJSON)しか返らなかった場合は、入力全体を1取引として扱うフォールバック経路がある。
 - 外部影響: **あり**(ローカル家計簿APIへの登録)。詳細は§10。
 
 ### Biolog連携(健康記録)
@@ -142,7 +153,8 @@
 | controller.py | 送信・停止・要約、操作世代ID、トークンコストLRUの管理 | `Controller` `ControllerDeps` `TokenCostCache` | `ChatApp.__init__` | llm_service, prompt_builder, resource_manager, json_extractors |
 | llm_service.py | 通常生成と要約の排他的な別スレッド実行+[Perf]計測ログ | `LLMService`(`generate` `summarize` `abort` `is_running`) | Controller | llama_cpp |
 | prompt_builder.py | messages構築、履歴トークン予算管理、モード別プロンプト | `PromptBuilder`(`build` `build_kakeibo_prompt` `build_health_prompt`) | Controller | — |
-| json_extractors.py | LLM応答からのJSON抽出(正規表現) | `extract_kakeibo_json` `extract_health_json` | Controller._on_llm_done | — |
+| json_extractors.py | LLM応答からのJSON抽出(正規表現) | `extract_kakeibo_transactions` `extract_kakeibo_json` `extract_health_json` | Controller._on_llm_done | — |
+| kakeibo_split.py | 1入力を複数取引候補へ分割し、source_textの実在・重複・順序・件数上限・原文金額の網羅・断片の文脈・日付の一意性を検証 | `MAX_KAKEIBO_TRANSACTIONS_PER_INPUT` `normalize_transactions` `build_kakeibo_candidates` | Controller._on_llm_done | kakeibo_amount, kakeibo_confirmation, kakeibo_date, prompt_builder |
 | session_store.py | セッションJSONの保存/読込/削除/改名、検索メタデータキャッシュ | `SessionStore` | create_app_deps → ChatApp | — |
 | integrations.py | 連携payloadサニタイズ、localhost制限、確認ダイアログ、POST | `IntegrationBridge` `sanitize_kakeibo_record` `sanitize_biolog_record` `is_allowed_local_api_url` | ChatApp(委譲メソッド経由) | urllib |
 | audio_workers.py | SAPI5 TTSワーカー、VAD+Whisper音声認識 | `TTSWorker` `VoiceRecognizer` | ChatApp | win32com, pyaudio, WhisperPool.get_model |

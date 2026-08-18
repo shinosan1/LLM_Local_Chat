@@ -53,6 +53,29 @@ def extract_kakeibo_json(reply: str) -> dict | None:
     return None
 
 
+def extract_kakeibo_transactions(reply: str) -> list | None:
+    """LLM応答から複数取引候補 {"transactions": [...]} を取り出す。
+
+    ここでは「transactionsキーを持つdictで、値がlistである」ことだけを確認する。
+    各要素の形状・原文との一致・件数上限は kakeibo_split 側で検証するため、
+    この関数は候補の取り出しだけを担当する。見つからなければ None を返し、
+    呼び出し側は従来の単一レコード形式(extract_kakeibo_json)へフォールバックする。
+    """
+    patterns = [
+        r'```json\s*(\{.*?\})\s*```',
+        r'```\s*(\{.*?\})\s*```',
+    ]
+    for pat in patterns:
+        for m in re.finditer(pat, reply, re.DOTALL):
+            try:
+                data = _strict_json_loads(m.group(1))
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(data, dict) and isinstance(data.get("transactions"), list):
+                return data["transactions"]
+    return None
+
+
 def extract_health_json(reply: str) -> dict | None:
     print(f"[Health] reply received ({len(reply)} chars)")
     patterns = [
