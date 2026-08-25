@@ -6,7 +6,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from tkinter import messagebox
 
 from kakeibo_confirmation import validate_kakeibo_payload
@@ -45,6 +45,7 @@ BIOLOG_INTEGER_RANGES = {
 BIOLOG_TEXT_FIELDS = ("meal_detail", "activity_log", "memo")
 # LLMが異常に長い文字列を返した場合に、そのままBiolog DBへ流し込まないための上限。
 BIOLOG_TEXT_MAX_LENGTH = 2000
+_BIOLOG_JST = timezone(timedelta(hours=9))
 MEASUREMENT_FIELDS = {
     "体脂肪率": ("body_fat",),
     "収縮期血圧": ("systolic_bp",),
@@ -82,6 +83,41 @@ _LABEL_PARTICLES = frozenset("をはがにでともへのや")
 
 class BiologValidationError(ValueError):
     """Biologへ送信できない型・値を検出したことを表す。"""
+
+
+def _biolog_jst_today() -> str:
+    """Biolog APIの日付省略時と同じJST当日を返す。"""
+    return datetime.now(_BIOLOG_JST).date().isoformat()
+
+
+def _valid_biolog_date(value) -> str | None:
+    if not isinstance(value, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is None:
+        return None
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return None
+    return value
+
+
+def _finalize_biolog_record_date(record: dict) -> dict:
+    """送信直前のrecordへ、実際に登録する確定日付を保持する。"""
+    finalized = dict(record)
+    raw_date = finalized.get("date")
+    if raw_date in (None, ""):
+        finalized["date"] = _biolog_jst_today()
+    elif _valid_biolog_date(raw_date) is None:
+        raise BiologValidationError("date must be a real YYYY-MM-DD date")
+    return finalized
+
+
+def _biolog_completion_date(response_payload, post_payload: dict) -> str | None:
+    """API応答日付を優先し、なければ実際のPOST日付を返す。"""
+    if isinstance(response_payload, dict):
+        response_date = _valid_biolog_date(response_payload.get("date"))
+        if response_date is not None:
+            return response_date
+    return _valid_biolog_date(post_payload.get("date"))
 
 
 def _in_range(value, limits) -> bool:
@@ -469,17 +505,32 @@ class IntegrationBridge:
         self._send_to_biolog_api(payload)
 
     def _send_to_biolog_api(self, record: dict) -> None:  # v1.2.0 IO専用
+        try:
+            finalized_record = _finalize_biolog_record_date(record)
+        except BiologValidationError as exc:
+            print(f"[Biolog] validation failed before send: {exc}")
+            self._chat_write(
+                "⚠ 健康記録の日付を確定できないため、Biologへ送信しませんでした。\n",
+                "err",
+            )
+            return
+
         def _worker():
             try:
-                payload = {"user_id": "self", **record}
+                payload = {"user_id": "self", **finalized_record}
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 req = urllib.request.Request(
                     BIOLOG_API_URL, data=body,
                     headers={"Content-Type": "application/json"}, method="POST",
                 )
                 with _open_local_api(req, timeout=5) as resp:
-                    _read_json_response(resp)
-                msg = f"✅ Biolog記録完了: {payload.get('date', '?')}\n"
+                    response_payload = _read_json_response(resp)
+                completed_date = _biolog_completion_date(response_payload, payload)
+                if completed_date is None:
+                    print("[Biolog] completed without a confirmed record date")
+                    msg = "✅ Biolog記録完了（日付を確認できません）\n"
+                else:
+                    msg = f"✅ Biolog記録完了: {completed_date}\n"
                 self._post_ui(lambda m=msg: self._chat_write(m, "health_ok"))
             except urllib.error.HTTPError as e:
                 s    = e.read().decode("utf-8", errors="replace")[:200]
