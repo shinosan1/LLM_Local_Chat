@@ -9,13 +9,14 @@ resource_monitor.py  —  VRAM安全フィルタ
 
 既知の限界:
   - pynvml は allocator 後スナップショット（TOCTOU あり）
-  - 単一プロセス内のみ有効（他プロセスの VRAM 確保は観測不可）
+  - 他プロセス分も総使用量には反映されるが、内訳や将来の確保は予測できない
   - この設計は確率的削減が目的であり、OOM の完全防止は保証しない
 """
 
 import gc
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -29,13 +30,317 @@ INFERENCE_SOFT_LIMIT_MB = 1536
 WHISPER_GPU_MEDIUM_MIN_FREE_MB = 4096
 WHISPER_GPU_SMALL_MIN_FREE_MB = 2048
 WHISPER_MODES = ("auto", "gpu_small", "gpu_medium", "cpu_small")
+LLM_GPU_OFFLOAD_MODES = ("auto", "full", "75", "50", "25", "cpu")
 LLM_STARTUP_RESERVE_MB = 1024
 LLM_STARTUP_RESERVE_RATIO = 0.12
+MAX_GGUF_BLOCK_COUNT = 4096
+_GGUF_ARCHITECTURE_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_GGUF_BLOCK_COUNT_PATTERN = re.compile(r"[1-9][0-9]*")
+_PARTIAL_OFFLOAD_FRACTIONS = (
+    ("partial_75", 3, 4),
+    ("partial_50", 1, 2),
+    ("partial_25", 1, 4),
+)
+
+
+def normalize_llm_gpu_offload_mode(value) -> str:
+    """保存値が欠落・破損していても従来どおりautoへ戻す。"""
+    return (
+        value
+        if isinstance(value, str) and value in LLM_GPU_OFFLOAD_MODES
+        else "auto"
+    )
 
 
 def hard_reserve_mb(total_mb: int) -> int:
     """GPU全体容量に応じた、推論中に残す最低空き容量。"""
     return max(MIN_HARD_RESERVE_MB, int(total_mb * HARD_RESERVE_RATIO))
+
+
+def startup_reserve_mb(total_mb: int) -> int:
+    """LLMロード前に残す既存の保守的予約量。"""
+    return max(
+        LLM_STARTUP_RESERVE_MB,
+        int(max(0, total_mb) * LLM_STARTUP_RESERVE_RATIO),
+    )
+
+
+def _parse_gguf_block_count(value) -> int | None:
+    if not isinstance(value, str) or not _GGUF_BLOCK_COUNT_PATTERN.fullmatch(value):
+        return None
+    layers = int(value)
+    return layers if 1 <= layers <= MAX_GGUF_BLOCK_COUNT else None
+
+
+def read_gguf_total_layers(model_path: str) -> int | None:
+    """GGUFをweightsなしで開き、metadataから総ブロック数を取得する。"""
+    model = None
+    total_layers = None
+    try:
+        from llama_cpp import _internals, llama_cpp
+
+        params = llama_cpp.llama_model_default_params()
+        params.vocab_only = True
+        params.n_gpu_layers = 0
+        params.use_mmap = True
+        model = _internals.LlamaModel(
+            path_model=model_path,
+            params=params,
+            verbose=False,
+        )
+        metadata = model.metadata()
+        if not isinstance(metadata, dict):
+            return None
+
+        architecture = metadata.get("general.architecture")
+        if architecture is not None:
+            if (
+                not isinstance(architecture, str)
+                or not _GGUF_ARCHITECTURE_PATTERN.fullmatch(architecture)
+            ):
+                return None
+            total_layers = _parse_gguf_block_count(
+                metadata.get(f"{architecture}.block_count")
+            )
+        else:
+            candidates = [
+                parsed
+                for key, value in metadata.items()
+                if isinstance(key, str)
+                and key.endswith(".block_count")
+                and (parsed := _parse_gguf_block_count(value)) is not None
+            ]
+            if len(candidates) == 1:
+                total_layers = candidates[0]
+    except Exception as exc:
+        logger.warning(
+            "[GPU] GGUF metadata unavailable: %s", type(exc).__name__
+        )
+        total_layers = None
+    finally:
+        if model is not None:
+            try:
+                model.close()
+            except Exception as exc:
+                logger.warning(
+                    "[GPU] GGUF metadata close failed: %s", type(exc).__name__
+                )
+                total_layers = None
+    return total_layers
+
+
+def build_partial_layer_candidates(total_layers: int) -> list[dict]:
+    """総レイヤー数から75/50/25%候補をhalf-upで生成する。"""
+    if (
+        not isinstance(total_layers, int)
+        or isinstance(total_layers, bool)
+        or not 1 <= total_layers <= MAX_GGUF_BLOCK_COUNT
+    ):
+        return []
+    candidates = []
+    seen = set()
+    for reason, numerator, denominator in _PARTIAL_OFFLOAD_FRACTIONS:
+        # floor(x + 0.5)を整数演算で表し、banker's roundingを避ける。
+        layers = (
+            2 * total_layers * numerator + denominator
+        ) // (2 * denominator)
+        if 1 <= layers < total_layers and layers not in seen:
+            seen.add(layers)
+            candidates.append({"n_gpu_layers": layers, "reason": reason})
+    candidates.sort(key=lambda item: item["n_gpu_layers"], reverse=True)
+    return candidates
+
+
+def required_vram_mb_for_layers(
+    model_mb: int,
+    reserve_mb: int,
+    layers: int,
+    total_layers: int,
+) -> int | None:
+    """partial offloadの保守的な事前必要量を整数MBで返す。"""
+    values = (model_mb, reserve_mb, layers, total_layers)
+    if any(
+        not isinstance(value, int) or isinstance(value, bool)
+        for value in values
+    ):
+        return None
+    if model_mb <= 0 or reserve_mb < 0 or total_layers <= 0:
+        return None
+    if not 1 <= layers < total_layers:
+        return None
+    offload_mb = (model_mb * layers + total_layers - 1) // total_layers
+    return reserve_mb + offload_mb
+
+
+def select_llm_offload(
+    *,
+    free_mb: int,
+    model_mb: int,
+    reserve_mb: int,
+    total_layers: int | None,
+    gpu_offload_supported: bool,
+    gpu_memory_available: bool,
+    offload_mode: str = "auto",
+    downshift_from_layers: int | None = None,
+) -> dict:
+    """希望モードと安全条件から、上位から下位へのロード候補を返す。"""
+    offload_mode = normalize_llm_gpu_offload_mode(offload_mode)
+    full_required_mb = (
+        model_mb + reserve_mb
+        if isinstance(model_mb, int)
+        and not isinstance(model_mb, bool)
+        and model_mb > 0
+        and isinstance(reserve_mb, int)
+        and not isinstance(reserve_mb, bool)
+        and reserve_mb >= 0
+        else 0
+    )
+    valid_free = (
+        isinstance(free_mb, int)
+        and not isinstance(free_mb, bool)
+        and free_mb >= 0
+    )
+    valid_layers = (
+        isinstance(total_layers, int)
+        and not isinstance(total_layers, bool)
+        and 1 <= total_layers <= MAX_GGUF_BLOCK_COUNT
+    )
+    evaluated = []
+    requested_layers = None
+
+    def cpu_result(reason: str) -> dict:
+        cpu = {
+            "n_gpu_layers": 0,
+            "mode": "cpu",
+            "reason": reason,
+            "required_mb": 0,
+        }
+        return {
+            "n_gpu_layers": 0,
+            "fallback": True,
+            "reason": reason,
+            "selected_mode": "cpu",
+            "load_candidates": [cpu],
+            "evaluated_candidates": evaluated,
+            "required_mb": full_required_mb,
+            "offload_mode": offload_mode,
+            "requested_n_gpu_layers": requested_layers,
+        }
+
+    if not gpu_offload_supported:
+        return cpu_result("gpu_offload_unsupported")
+    if not gpu_memory_available or not valid_free:
+        return cpu_result("gpu_memory_unavailable")
+    if full_required_mb <= 0:
+        return cpu_result("model_size_unavailable")
+
+    partial_candidates = (
+        build_partial_layer_candidates(total_layers) if valid_layers else []
+    )
+    requested_layers = {
+        "full": -1,
+        "75": next((item["n_gpu_layers"] for item in partial_candidates
+                    if item["reason"] == "partial_75"), None),
+        "50": next((item["n_gpu_layers"] for item in partial_candidates
+                    if item["reason"] == "partial_50"), None),
+        "25": next((item["n_gpu_layers"] for item in partial_candidates
+                    if item["reason"] == "partial_25"), None),
+        "cpu": 0,
+    }.get(offload_mode)
+
+    allowed_layers = []
+    if offload_mode == "cpu":
+        return cpu_result("manual_cpu")
+    if downshift_from_layers is not None:
+        if downshift_from_layers == 0:
+            return cpu_result("auto_downshift_cpu")
+        if valid_layers:
+            allowed_layers = [
+                item["n_gpu_layers"]
+                for item in partial_candidates
+                if downshift_from_layers == -1
+                or item["n_gpu_layers"] < downshift_from_layers
+            ]
+        # 総レイヤー数不明時は安全な下位位置を決められないためCPUだけ。
+    elif offload_mode in ("auto", "full"):
+        allowed_layers = [-1] + [
+            item["n_gpu_layers"] for item in partial_candidates
+        ]
+    else:
+        start = requested_layers
+        if isinstance(start, int) and start > 0:
+            allowed_layers = [
+                item["n_gpu_layers"]
+                for item in partial_candidates
+                if item["n_gpu_layers"] <= start
+            ]
+
+    load_candidates = []
+    if -1 in allowed_layers and free_mb >= full_required_mb:
+        full = {
+            "n_gpu_layers": -1,
+            "mode": "full",
+            "reason": "gpu_full_offload",
+            "required_mb": full_required_mb,
+        }
+        evaluated.append({**full, "eligible": True})
+        load_candidates.append(full)
+    elif -1 in allowed_layers:
+        evaluated.append({
+            "n_gpu_layers": -1,
+            "mode": "full",
+            "reason": "gpu_full_offload",
+            "required_mb": full_required_mb,
+            "eligible": False,
+        })
+
+    if valid_layers:
+        for candidate in partial_candidates:
+            if candidate["n_gpu_layers"] not in allowed_layers:
+                continue
+            required_mb = required_vram_mb_for_layers(
+                model_mb,
+                reserve_mb,
+                candidate["n_gpu_layers"],
+                total_layers,
+            )
+            partial = {
+                "n_gpu_layers": candidate["n_gpu_layers"],
+                "mode": "partial",
+                "reason": candidate["reason"],
+                "required_mb": required_mb,
+            }
+            eligible = required_mb is not None and free_mb >= required_mb
+            evaluated.append({**partial, "eligible": eligible})
+            if eligible:
+                load_candidates.append(partial)
+
+    if not load_candidates:
+        reason = (
+            "partial_metadata_unavailable"
+            if not valid_layers and offload_mode in ("75", "50", "25")
+            else "insufficient_vram_for_partial"
+        )
+        return cpu_result(reason)
+
+    load_candidates.append({
+        "n_gpu_layers": 0,
+        "mode": "cpu",
+        "reason": "cpu_after_gpu_fallback",
+        "required_mb": 0,
+    })
+    selected = load_candidates[0]
+    return {
+        "n_gpu_layers": selected["n_gpu_layers"],
+        "fallback": selected["n_gpu_layers"] != -1,
+        "reason": selected["reason"],
+        "selected_mode": selected["mode"],
+        "load_candidates": load_candidates,
+        "evaluated_candidates": evaluated,
+        "required_mb": full_required_mb,
+        "offload_mode": offload_mode,
+        "requested_n_gpu_layers": requested_layers,
+    }
 
 
 def normalize_whisper_mode(value) -> str:
@@ -254,15 +559,43 @@ def _supports_gpu_offload() -> bool:
         return False
 
 
+def _normalize_snapshot(snapshot) -> dict:
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    available = snapshot.get("available") is True
+    values = {
+        key: snapshot.get(key)
+        for key in ("total_mb", "used_mb", "free_mb")
+    }
+    if any(
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 0
+        for value in values.values()
+    ):
+        available = False
+        values = {"total_mb": 0, "used_mb": 0, "free_mb": 0}
+    if available and values["total_mb"] <= 0:
+        available = False
+    total = values["total_mb"]
+    used = values["used_mb"]
+    return {
+        "available": available,
+        **values,
+        "used_ratio": (used / total) if total else 0.0,
+    }
+
+
 def adjust_llm(
     monitor: ResourceMonitor,
     model_path: str | None = None,
     gpu_offload_supported: bool | None = None,
+    offload_mode: str = "auto",
+    downshift_from_layers: int | None = None,
 ) -> dict:
     """
-    LLMロード前の実空き容量とモデルサイズからGPUオフロード可否を決める。
+    LLMロード前の実空き容量・モデルサイズ・総層数から候補を決める。
     """
-    snap = monitor.snapshot()
     supported = (
         _supports_gpu_offload()
         if gpu_offload_supported is None else bool(gpu_offload_supported)
@@ -273,34 +606,49 @@ def adjust_llm(
             model_mb = int(os.path.getsize(model_path) / (1024 ** 2))
         except OSError:
             pass
-    startup_reserve = max(
-        LLM_STARTUP_RESERVE_MB,
-        int(snap["total_mb"] * LLM_STARTUP_RESERVE_RATIO),
+    total_layers = (
+        read_gguf_total_layers(model_path)
+        if model_path and os.path.exists(model_path) else None
     )
-    required_mb = model_mb + startup_reserve
-
-    if not supported:
-        result = {"n_gpu_layers": 0, "fallback": True, "reason": "gpu_offload_unsupported"}
-    elif not snap["available"]:
-        result = {"n_gpu_layers": 0, "fallback": True, "reason": "gpu_memory_unavailable"}
-    elif snap["free_mb"] < required_mb:
-        result = {
-            "n_gpu_layers": 0,
-            "fallback": True,
-            "reason": f"free<{required_mb}mb",
-        }
-    else:
-        result = {"n_gpu_layers": -1, "fallback": False, "reason": "gpu_full_offload"}
-
-    result.update({"snapshot": snap, "required_mb": required_mb, "model_mb": model_mb})
+    try:
+        snap = _normalize_snapshot(monitor.snapshot())
+    except Exception:
+        snap = _normalize_snapshot(None)
+    reserve_mb = startup_reserve_mb(snap["total_mb"])
+    result = select_llm_offload(
+        free_mb=snap["free_mb"],
+        model_mb=model_mb,
+        reserve_mb=reserve_mb,
+        total_layers=total_layers,
+        gpu_offload_supported=supported,
+        gpu_memory_available=snap["available"],
+        offload_mode=offload_mode,
+        downshift_from_layers=downshift_from_layers,
+    )
+    result.update({
+        "snapshot": snap,
+        "model_mb": model_mb,
+        "startup_reserve_mb": reserve_mb,
+        "total_layers": total_layers,
+    })
     print(
         f"[GPU] backend_offload_supported={supported} "
-        f"requested_layers={result['n_gpu_layers']} reason={result['reason']}"
+        f"total_layers={total_layers if total_layers is not None else 'unknown'} "
+        f"mode={result['offload_mode']} requested_layers={result['n_gpu_layers']} "
+        f"reason={result['reason']}"
     )
     print(
         f"[VRAM] before_llm total={snap['total_mb']}MB used={snap['used_mb']}MB "
-        f"free={snap['free_mb']}MB required={required_mb}MB"
+        f"free={snap['free_mb']}MB model={model_mb}MB "
+        f"startup_reserve={reserve_mb}MB full_required={result['required_mb']}MB"
     )
+    for candidate in result["evaluated_candidates"]:
+        print(
+            f"[VRAM] candidate={candidate['reason']} "
+            f"layers={candidate['n_gpu_layers']} "
+            f"required={candidate['required_mb']}MB "
+            f"eligible={candidate['eligible']}"
+        )
     return result
 
 
@@ -327,6 +675,8 @@ def adjust_inference(
         return {
             "ok": False, "max_tokens": 0, "fallback": True,
             "reason": f"free<{reserve}mb",
+            "reason_kind": "vram_hard_limit",
+            "requires_relocation": True,
         }
     elif snap["free_mb"] < 1024:
         max_t = max(256, default_max // 4)
@@ -348,7 +698,14 @@ def adjust_inference(
         f"free={snap['free_mb']}MB reserve={reserve}MB "
         f"max_tokens={max_t}"
     )
-    return {"ok": True, "max_tokens": max_t, "fallback": fallback, "reason": "ok"}
+    return {
+        "ok": True,
+        "max_tokens": max_t,
+        "fallback": fallback,
+        "reason": "ok",
+        "reason_kind": "ok",
+        "requires_relocation": False,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -410,7 +767,7 @@ class WhisperController:
 class WhisperPool:
     """
     モデル参照を保持するだけ。GPU/CPU の判断は WhisperController に委譲。
-    transcribe() インターフェースは持たない — get_model() でモデルを取得して直接呼ぶ。
+    LLM hot reload中は新規転写を止め、進行中転写との排他を提供する。
     """
 
     def __init__(self) -> None:
@@ -419,6 +776,8 @@ class WhisperPool:
         self._ctrl      = WhisperController()
         self.loaded_profile = "not_loaded"
         self.active_model_name = "unknown"
+        self._transcribe_lock = threading.Lock()
+        self._reload_pause = threading.Event()
 
     def load(self, monitor: ResourceMonitor, mode: str = "auto") -> None:
         """
@@ -428,6 +787,10 @@ class WhisperPool:
         - 手動GPU指定も安全閾値を満たさなければCPU smallへフォールバック
         - GPU ロード失敗時は例外を捕捉して CPU 版のみで運用
         """
+        with self._transcribe_lock:
+            self._load_unlocked(monitor, mode)
+
+    def _load_unlocked(self, monitor: ResourceMonitor, mode: str) -> None:
         import whisper as _whisper
 
         self._cpu_model = _whisper.load_model("small", device="cpu")
@@ -500,6 +863,51 @@ class WhisperPool:
             f"delta_gpu={self._ctrl.delta_gpu_pct:.1f}%"
         )
         return (self._gpu_model if use_gpu else self._cpu_model), use_gpu
+
+    def request_reload_pause(self) -> None:
+        """新規転写を止める。進行中転写の終了待ちはworker側で行う。"""
+        self._reload_pause.set()
+
+    def begin_llm_reload(
+        self,
+        timeout: float = 30.0,
+        closing_event: threading.Event | None = None,
+    ) -> bool:
+        """進行中転写の終了を有限時間待ち、reload排他を取得する。"""
+        self._reload_pause.set()
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            if closing_event is not None and closing_event.is_set():
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if self._transcribe_lock.acquire(timeout=min(0.1, remaining)):
+                return True
+
+    def end_llm_reload(self) -> None:
+        """workerが保持した排他を解放し、新規転写を再開する。"""
+        try:
+            self._transcribe_lock.release()
+        except RuntimeError:
+            pass
+        self._reload_pause.clear()
+
+    def cancel_reload_pause(self) -> None:
+        self._reload_pause.clear()
+
+    def transcribe_guarded(self, monitor: ResourceMonitor, audio, **kwargs):
+        """reload中は開始せず、成功時だけ(result, is_gpu)を返す。"""
+        if self._reload_pause.is_set():
+            return None
+        with self._transcribe_lock:
+            if self._reload_pause.is_set():
+                return None
+            model, on_gpu = self.get_model(monitor)
+            if model is None:
+                return None
+            kwargs["fp16"] = on_gpu
+            return model.transcribe(audio, **kwargs), on_gpu
 
     def consume_delta_gpu_pct(self) -> float:
         return self._ctrl.consume_delta_gpu_pct()

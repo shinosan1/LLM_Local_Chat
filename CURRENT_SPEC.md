@@ -9,7 +9,7 @@
 
 ## 1. アプリ概要
 
-- **目的**: ローカルPC上でLLM(llama.cpp / GGUF)と日本語チャットするWindowsデスクトップアプリ。音声入力(Whisper)、音声読み上げ(SAPI5 TTS)、アバター表示、家計簿・健康記録のローカルAPI連携を持つ。
+- **目的**: ローカルPC上でLLM(llama.cpp / GGUF)と日本語チャットするWindowsデスクトップアプリ。音声入力(Whisper)、音声読み上げ(SAPI5 TTS)、アバター表示、家計簿・健康記録のローカルAPI連携クライアントを持つ。
 - **主な利用方法**: GUI(Tkinter)を起動し、テキストまたは音声で対話する。会話はセッションJSONとして保存・再読込できる。
 - **実行に必要な構成**: リポジトリのコード一式に加え、`.venv`(Python実行環境)、`models/` へ配置するGGUFモデル、`chat_settings.json`(実行時設定)を各自で用意する。これらはリポジトリに含まれない。
 - **対応OS**: Windows専用(SAPI5 TTS が `win32com.client.Dispatch("SAPI.SpVoice")` に依存。`audio_workers.py` の `TTSWorker._execute_sapi_speak`)。README/CHANGELOGでは動作保証を Windows 11 のみと記載。
@@ -20,7 +20,7 @@
 - **Pythonエントリーポイント**: `LLM_Local_Chat.py` の `main()`。`if __name__ == "__main__"` ガードあり。
 - **Windowsで通常使用する起動ファイル**:
   - `LLMローカル対話型AI.bat` — スクリプト位置の `.venv` を activate して `python LLM_Local_Chat.py` を実行(リポジトリ同梱)。
-  - 連携機能まで使う場合は、家計簿/Biolog の Dockerサービスを起動し、連携APIのURLを環境変数(`KAKEIBO_API_URL`・`KAKEIBO_BRIDGE_PORT`・`BIOLOG_URL`)で指定してから起動する。この一括起動スクリプトはローカル環境に依存するためリポジトリに含まれない。
+  - 連携機能まで使う場合は、別途用意した家計簿/BiologのローカルAPIを起動し、連携APIのURLを環境変数(`KAKEIBO_API_URL`・`KAKEIBO_BRIDGE_PORT`・`BIOLOG_URL`)で指定してから起動する。家計簿アプリ、DB、`kakeibo-bridge`サーバー、そのDocker/Compose定義および一括起動スクリプトはリポジトリに含まれない。
   - `start.sh` は Dockerコンテナ+X11転送前提のLinux用であり、Windows通常経路ではない(推測)。
 - **起動から画面表示までの処理順**(`main` → `ChatApp.__init__`):
   1. `tk.Tk()` でルートウィンドウ生成
@@ -29,7 +29,7 @@
   4. `_reload_llm()` — **バックグラウンドスレッドで** `init_llm()`(モデルロード)。UIはブロックされない
   5. LLMロード完了後、`_load_whisper_async()`で条件付きWhisperロード(下記)。LLMとWhisperは同時ロードしない
   6. `root.mainloop()`
-- **モデルを読み込むタイミング**: 起動直後(手順4)と、設定画面で `model_path` または `n_ctx` を変更したとき(`ChatApp._open_settings` → `_reload_llm`)。
+- **モデルを読み込むタイミング**: 起動直後(手順4)、設定画面で `model_path` / `n_ctx` / `llm_gpu_offload_mode` を変更したとき、および自動モードで「GPU配置を再評価」または推論直前のVRAM hard limitによるdownshiftが必要なとき(`ChatApp._open_settings` / `Controller` → `_reload_llm`)。
 - **Whisperを読み込む条件**: 設定の `mic_enabled` が true の場合のみ。TTSだけが有効な場合はWhisperをロードせず、起動発話は独立して一度だけ実行する。
 - **import時の副作用**: モジュールimportだけではTkウィンドウ・モデルロード・監視スレッドは発生しない。ただし `from llama_cpp import Llama` 等の重量DLLロード、`sys.stdout.reconfigure`、`audio_workers.py` の pyaudio/pywin32 の try-importは実行される。
 
@@ -85,31 +85,36 @@
 - 実装: `LLM_Local_Chat.py` `AvatarWindow`(`_schedule_blink`/`_do_blink`/`start_speaking`/`_mouth_loop`)。
 - 使用条件: `avatars/` に画像4種(default/speaking/blink/blink_speaking)。欠損時は透明画像で継続(落ちない)。
 
-### モデル切り替え
-- 概要: 設定画面でGGUFパス・n_ctxを変更すると再ロード。
-- 実装: `ChatApp._open_settings` → 変更検知 → `_reload_llm`。ロード成功時は `LLMService.llm` を差し替え、トークンコストキャッシュをクリア(`_on_llm_ready`)。
+### モデル切り替え / LLM GPUオフロード hot reload
+- 概要: 設定画面でGGUFパス・n_ctx・LLM GPUオフロード希望モードを変更すると、アプリを再起動せずバックグラウンド再ロードする。希望モードは自動 / Full GPU / 約75% / 約50% / 約25% / CPU。
+- 実装: `ChatApp._open_settings` → 変更検知 → `_reload_llm`。UI操作を一時停止し、`LLMService`から旧参照をdetachしてworkerでclose/CUDA cleanupを完了してから新LLMをロードする。旧・新モデルを同時保持しない。
+- 排他: reload開始時に新規Whisper転写を止め、進行中転写の終了を有限時間待つ。受理された最新reload世代だけを`LLMService`へattachし、stale/closing後のロード結果はworkerで解放する。
+- 失敗時: 手動変更のpreflight失敗は旧LLMを維持する。detach後の非VRAMロード失敗は旧設定を最大1回だけ復旧する。自動downshiftは危険な上位配置へ戻さず、CPUまで安全側へだけ進む。
 
 ### VRAM監視・自動フォールバック
-- 概要: VRAM/GPU使用率を0.5秒周期で観測し、(a)モデルロード前の `n_gpu_layers` 決定、(b)推論直前の `max_tokens` 段階削減・実行ブロック、(c)WhisperのGPU/CPUヒステリシス切替を行う。
+- 概要: VRAM/GPU使用率を0.5秒周期で観測し、(a)モデルロード前にFull→約75%→50%→25%→CPUの順で `n_gpu_layers` を決定、(b)推論直前の `max_tokens` 段階削減、(c)自動モードのhard limit時に現在より低いoffloadへhot reloadして同一入力を最大1回継続、(d)WhisperのGPU/CPUヒステリシス切替を行う。Full条件と既存予約量は緩和しない。
 - 実装: `resource_monitor.py` `ResourceMonitor` / `adjust_llm` / `adjust_inference` / `WhisperController` / `WhisperPool`、呼び出しは `init_llm`・`resource_manager.py` `ResourceManager.decide`・`VoiceRecognizer._loop`。
 - 外部影響: なし(観測のみ。pynvml → nvidia-smi → CPU-only の順にフォールバック)。
 
-### 家計簿連携
-- 概要: 家計簿モード中の発話から支出/収入の取引候補を抽出し、確認ダイアログ後にローカルAPIへPOST。
+### 家計簿API連携クライアント
+- 概要: 家計簿モード中の発話から支出/収入の取引候補を抽出し、確認ダイアログ後に別プロセスの`kakeibo-bridge` APIへPOST。家計簿アプリ、DB、Web UI、API/bridgeサーバーは本リポジトリに含まれない。
 - 操作: 🏠ボタンでモードON/OFF。
 - 実装: `PromptBuilder.build_kakeibo_prompt` → `json_extractors.py` `extract_kakeibo_transactions` → `kakeibo_split.py` `build_kakeibo_candidates` → `LLM_Local_Chat.py` `ChatApp._confirm_and_send_kakeibo` → `integrations.py` `IntegrationBridge.send_kakeibo`。
 - **複数取引**: 1回の入力から最大10件(`MAX_KAKEIBO_TRANSACTIONS_PER_INPUT`)の取引候補を生成できる。**一括登録ではなく、1取引 = 1確認 = 1 POST を維持する。**
   - 11件以上は入力全体を拒否する(確認画面0件・POST 0件)。先頭N件だけ処理する部分成功は行わない。
-  - LLMが返す `source_text` は信用せず、原文に実在すること・空でないこと・範囲が重複しないこと・原文順に並べられること・許可キーのみであることを検証する。1つでも満たさなければ入力全体を拒否する。
+  - LLMが返す `source_text` は信用せず、原文に実在すること・空でないこと・範囲が重複しないこと・原文順に並べられること・許可キーのみであることを検証する。完全一致を優先し、半角スペース(U+0020)・全角スペース(U+3000)だけが異なる場合は、一意で非重複な原文spanへ対応できるときだけ `user_text[start:end]` の実スライスへ復元する。句読点・数字・改行等の差や曖昧一致は許可しない。1つでも満たさなければ入力全体を拒否する。
   - **原文の金額をすべての断片が覆っていることを確認する。** どの断片にも含まれない金額表現が原文に残っている場合(LLMが取引を取りこぼした場合)は入力全体を拒否する。件数上限の判定だけでは検出できないため、`kakeibo_amount.find_amount_spans()` で原文側の金額位置と突き合わせる。
   - **金額だけの断片を独立した取引として受理しない。** 「スーパーで2000円と500円」をLLMが「スーパーで2000円」「500円」へ切り分けた場合のように、同一文脈内の複数金額を人工的に分割したものは入力全体を拒否する。
   - 最終 `amount` と `date` はLLM値を採用せず、各取引の原文断片から `kakeibo_amount` / `kakeibo_date` が機械抽出する。断片自身に日付表現が無い場合、**原文全体の明示日付がちょうど1種類のときだけ**その日付へフォールバックする。複数種類ある場合はどれを適用すべきか一意に決められないため入力全体を拒否する。日付が1つも無ければ従来どおり実行日を使う。
+  - 日付の対応形式は `YYYY/MM/DD`、`YYYY-MM-DD`、`M/D`、`YYYY年M月D日`、`M月D日`。数字は全角も正規化する。無効な年付き日本語日付の内部を、年なし形式として実行年で再解釈しない。相対日付は解析しない。
+  - `8/20 1603円` のような日付直後の空白と正常金額は許可する。`1 603円` のように金額の数字列自体が空白で分断された表記は不正形式として拒否する。
+  - `2170円8月18日` のように金額直後へ `M月D日` / `YYYY年M月D日` が続く場合は、暦日として妥当な日本語日付表現に限って金額の右境界として許可する。通常の数字連結や実在しない月日は許可しない。
   - 1つの断片に有効な金額候補が複数ある場合は1取引と断定せず、入力全体を拒否する。
-  - POSTは直列化する(前の完了通知を受けてから次の確認画面を開く)。途中のPOSTが失敗した場合は残りの候補を処理せず停止し、登録済みの取引は取り消さない。
+  - POSTは直列化する(前の完了通知を受けてから次の確認画面を開く)。途中のPOSTが失敗した場合は残りの候補を処理せず停止し、このクライアントからPOST済みの取引は取り消さない。
   - 1件だけの入力は従来どおり1候補として扱う。
   - **確認・POSTシーケンスが進行中の間は `Controller.is_busy()` が真を返し、キーボード入力・音声入力とも新しい送信を開始しない。** 完了・スキップ・中止・エラーのいずれでもフラグは解除され、予期しない例外でも解除される。
 - 旧形式(単一レコードJSON)しか返らなかった場合は、入力全体を1取引として扱うフォールバック経路がある。
-- 外部影響: **あり**(ローカル家計簿APIへの登録)。詳細は§10。
+- 外部影響: **あり**(別途用意したローカルの`kakeibo-bridge` APIへのPOST)。台帳側での保存結果と内部構成は本リポジトリの実装範囲外。詳細は§10。
 
 ### Biolog連携(健康記録)
 - 概要: 健康記録モード中の発話から体重・食事等を抽出し、確認ダイアログ後にローカルAPIへPOST。
@@ -141,7 +146,7 @@
 | 「送信」ボタン | `_send` → `Controller.handle_text`(生成中は無効化) |
 | ステータスバー | `_update_status`(生成中/待機中、ゲスト表示、モデル名、max_tokens/temp、ターン数、マイク状態) |
 | 免責文言(入力欄上) | `_build_ui` 内の固定Label |
-| 設定画面「生成設定」 | `SettingsDialog`(モデルパス+参照、n_ctx、最大返答トークン、会話の自由度0.0〜2.0、VAD感度、起動時マイク/TTSチェック) |
+| 設定画面「生成設定」 | `SettingsDialog`(モデルパス+参照、LLM GPUオフロード希望モード6種、actual GPUオフロード率・配置層数の読み取り専用表示、GPU配置の自動再評価、n_ctx、最大返答トークン、会話の自由度0.0〜2.0、VAD感度、起動時マイク/TTSチェック) |
 | アバターウィンドウ | `AvatarWindow`(枠なし・最前面・ドラッグ移動・右クリックで表示切替) |
 
 ## 5. モジュール構成
@@ -171,6 +176,7 @@
 |---|---|---|---|---|---|---|
 | model_path | str | models\gemma-3-4b-it-q4_k_m.gguf | GGUFモデルパス | ○ | 不要(即再ロード) | `init_llm`, `ChatApp._reload_llm` |
 | n_ctx | int | 8192 | コンテキスト長 | ○(512以上) | 不要(即再ロード) | `init_llm`, `PromptBuilder.build` |
+| llm_gpu_offload_mode | str | auto | auto / full / 75 / 50 / 25 / cpu（希望モードのみ。actual stateは非永続） | ○ | 不要(hot reload) | `ChatApp._open_settings`, `_reload_llm`, `init_llm` |
 | max_tokens | int | 1024 | 最大生成トークン | ○(1以上) | 不要(即時) | `ResourceManager.decide` 経由 |
 | temperature | float | 0.7 | 生成温度 | ○(0.0〜2.0) | 不要(即時) | `LLMService.generate` |
 | tts_enabled | bool | false | 起動時TTS状態 | ○ | 不要(切替は即時。ただしWhisperロード条件には起動時値が使われる) | `TTSWorker.enabled`, `_load_whisper_async` |
@@ -195,10 +201,13 @@
 - **対応モデル形式**: GGUF(llama-cpp-python 0.3.34 CUDA 12.4版)。
 - **読み込み処理**: `init_llm(model_path, n_ctx, res_monitor, perf_settings)`。
   1. パス存在チェック(なければ `FileNotFoundError`)
-  2. `adjust_llm(res_monitor, model_path)`でCUDA対応と実空き容量を確認。空きがGGUFサイズ+予約領域以上なら`n_gpu_layers=-1`、不足・CUDA非対応・GPU情報取得不能なら`0`
-  3. 3段階リトライ: perf設定込み → flash_attnのみOFF → 基本設定のみ(`n_threads=8, n_batch=512`)。GPUロード失敗時はCPUで一度だけ同系列を再試行
+  2. `vocab_only`のGGUF metadataからモデル名に依存せず総レイヤー数を取得。取得不能でもFull条件成立時は従来どおり`n_gpu_layers=-1`、Full条件不成立時は安全側でCPUを選ぶ
+  3. `adjust_llm(res_monitor, model_path)`でCUDA対応と実空き容量を確認。Fullは従来の`GGUFサイズ+予約領域`を満たす場合だけ選び、不足時は線形概算で条件を満たす約75%→50%→25%→CPUの順に候補化する
+  4. 各候補は性能設定込み → flash_attnのみOFF → 基本設定のみ(`n_threads=8, n_batch=512`)の互換リトライを行う。明示的なGPUメモリ不足だけ一段低い層数へ移り、非VRAMエラーは層数変更で隠さない
+  5. GPUロード成功後も実空き容量が最低予約量を満たすか確認し、不足・取得不能なら安全に解放して下位候補へ移る。解放に失敗した場合は追加ロードせず停止する
+- **GPUオフロード設定/表示**: `llm_gpu_offload_mode`には希望モードだけを保存する。ロード後安全確認を通ったactual runtime stateは別に`ChatApp`が保持し、設定画面に割合・配置層数・Full/Partial/CPU・選択理由を読み取り専用表示する。Fullの`-1`は総層数へ変換し、受理された最新reload世代だけを反映する。actual stateは`chat_settings.json`へ保存しない。
 - **コンテキスト長/最大トークン/temperature**: 設定値(§6)。temperatureはUIで0.0〜2.0に制限。
-- **推論直前の動的制限**: `ResourceManager.decide` → `adjust_inference`。実空き容量が予約領域(512MBまたは総容量の6%)未満ならブロック、512〜1024MBでmax_tokensを1/4、1024〜1536MBで1/2(下限256)。CPU推論はGPU残量で遮断しない。WhisperのGPU使用率スパイク(Δ>10%)は補助的にさらに半減。
+- **推論直前の動的制限**: `ResourceManager.decide` → `adjust_inference`。実空き容量が予約領域(512MBまたは総容量の6%)未満で希望モードが`auto`かつGPU配置中なら、UI/履歴/TTS/連携副作用を開始する前に現在より低いoffloadへhot reloadし、同じrequest contextを最大1回だけ生成へ戻す。再試行後も不足、手動モード、CPU配置、再配置失敗では理由を表示して入力欄へ原文を戻す。512〜1024MBでmax_tokensを1/4、1024〜1536MBで1/2(下限256)。CPU推論はGPU残量で遮断しない。
 - **読み込み失敗時**: ステータスバー「❌ モデル読込失敗」+エラーダイアログ(`_on_llm_ready`)。アプリは落ちない(送信時は「準備中」警告)。
 - **生成停止**: ⏹ → `Controller.stop`。`_llm_abort` フラグ+`LLMService.abort()`(ストリーミングループ内で中断)+TTS停止+アバター停止。最大3秒待機し、終了済みならUIロックを解除する。3秒以内に停止できない場合は安全のため`stopping`状態と操作ロックを維持して再起動を案内し、低頻度の監視を継続する。ワーカーが遅れて終了した場合は、同じ操作世代であることを確認してロックを解除する。中断時は履歴保存・TTSをスキップ。
 - **プロンプト構築**: `PromptBuilder.build`。system prompt(「シロ」ペルソナ固定文)+モードヒント+要約(あれば)+トークン予算内の直近履歴+ユーザー入力。履歴予算は `(n_ctx - max_tokens - system - user) × 0.60`、ペアごとのトークンコストをキャッシュ。
@@ -233,7 +242,8 @@
 
 ## 10. 外部連携
 
-- **対象**: 家計簿API と Biolog(健康記録)API。いずれもローカルで稼働している前提のHTTP POST。
+- **対象**: 別プロセスで稼働する`kakeibo-bridge` APIとBiolog(健康記録)APIへのHTTP POST。いずれも任意の連携先で、本リポジトリはクライアント処理だけを持つ。
+- **非同梱**: 家計簿アプリ、家計簿DB、家計簿Web UI、家計簿API/`kakeibo-bridge`サーバー、および家計簿側のDocker/Compose定義。
 - **URL**(`integrations.py` 冒頭で決定):
   - 家計簿: 環境変数 `KAKEIBO_API_URL`(既定 `http://127.0.0.1:8767`。`KAKEIBO_BRIDGE_PORT` で上書き可)+ `/api/kakeibo/record`
   - Biolog: 環境変数 `BIOLOG_URL`(既定 `http://localhost:8766`)+ `/api/health/record`
@@ -245,7 +255,7 @@
   - 家計簿: `amount` は bool を拒否し、正の数値のみ許可
   - Biolog: APIスキーマと同じ日付・型・有限値・数値範囲を確認する。整数項目は整数値floatだけ整数へ正規化し、bool・文字列数値・NaN/Infinity・範囲外・dict/listを含むレコードは全体を拒否する。記録値が1つもないpayloadは送信しない。明示ラベル由来のフィールド情報は最終サニタイズまで保持するがAPI payloadには含めない。`user_id` はLLM出力を使わず送信時に固定値 `"self"` を付与
 - **健康JSON候補**: fenced/bare候補を出現位置と内容で重複排除し、厳格JSONとして有効な最後の健康候補を採用する。NaN/Infinityを含む非標準JSONは抽出・表示除去の対象にしない。この規則は「例示の後に本番JSON」が続く応答への緩和策であり、JSONの意味を判定するものではないため、逆順の応答を完全には識別できない。
-- **実際に外部データを変更する操作**: 確認ダイアログで「はい」を選んだ場合のPOSTのみ(家計簿登録・Biolog記録登録)。それ以外に外部へデータを送る処理はない。POSTは都度生成のdaemonスレッドで実行、タイムアウト5秒、結果はチャット欄に表示。
+- **実際に連携先へ送信する操作**: 確認ダイアログで「はい」を選んだ場合のPOSTのみ。それ以外に外部へデータを送る処理はない。POSTは都度生成のdaemonスレッドで実行、タイムアウト5秒、結果はチャット欄に表示。連携先がPOST後に行う保存処理は本リポジトリの責務外。
 
 ## 11. 終了処理
 

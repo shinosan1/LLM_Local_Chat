@@ -4,6 +4,7 @@ LLM生成のamountは最終値として採用しない(Section C確定仕様)。
 このモジュールはユーザー原文だけを解析し、通貨単位を伴う数値表現から
 正の整数円を機械的に抽出する。UI・LLM・DBには一切依存しない。
 """
+import datetime
 import re
 
 _FULLWIDTH_TRANSLATION = str.maketrans("０１２３４５６７８９，．", "0123456789,.")
@@ -20,12 +21,26 @@ _SIGN_CHARS = r'\-−+＋－﹣–—'
 
 # 正常な金額表現: 数字列(カンマ可)+空白(0文字以上)+単位。
 # 直前が数字・カンマ・ピリオド・万・千・符号・英字(指数表記等の一部)の場合は
-# 複合表現/小数/符号付き/指数表記の一部分なので除外し、直後が数字の場合も除外する。
+# 複合表現/小数/符号付き/指数表記の一部分なので除外する。右側の数字境界は、
+# 金額直後の妥当な日本語日付だけを許可する後処理で判定する。
 _AMOUNT_UNIT_PATTERN = re.compile(
     rf'(?<![0-9,.万千a-zA-Z{_SIGN_CHARS}])'
     r'(?P<number>[0-9,]+)'
     r'[ 　]*'
     r'(?P<unit>万円|千円|円)'
+)
+
+# 金額直後の数字列を許可できる日本語日付。金額パーサーは最終dateを
+# 決定せず、数字の不正連結か日付トークンの開始かという右境界だけを判定する。
+_JAPANESE_FULL_DATE_AFTER_AMOUNT_PATTERN = re.compile(
+    r'(?P<year>[0-9]{4})年'
+    r'(?P<month>1[0-2]|0?[1-9])月'
+    r'(?P<day>3[01]|[12][0-9]|0?[1-9])日'
+    r'(?![0-9])'
+)
+_JAPANESE_MONTH_DAY_AFTER_AMOUNT_PATTERN = re.compile(
+    r'(?P<month>1[0-2]|0?[1-9])月'
+    r'(?P<day>3[01]|[12][0-9]|0?[1-9])日'
     r'(?![0-9])'
 )
 
@@ -39,7 +54,12 @@ _COMPOUND_UNIT_AMOUNT_PATTERN = re.compile(
     r'[0-9]+\s*(?:万|千)\s*[0-9]+\s*(?:万円|千円|円)'
 )
 # 数字列の途中に空白が入った表記(例: "1 500円")。後半だけを正常抽出させない。
+# ただし日付様の「数字/」「数字-」に続く日部分から始まる見かけ上の連結
+# (例: "8/20 1603円" の "20 1603円")は除外する。実際の金額内空白は、
+# 日付部分を除外した後も内側から一致するため従来どおり拒否する。
 _SPACED_DIGITS_AMOUNT_PATTERN = re.compile(
+    r'(?<![0-9,])'
+    r'(?<![0-9][/-])'
     r'[0-9,]+[ 　]+[0-9,]+[ 　]*(?:万円|千円|円)'
 )
 # 指数表記(例: "1e3円"/"1E3円"/"1e+3円"/"1e-3円")。
@@ -50,6 +70,57 @@ _EXPONENT_AMOUNT_PATTERN = re.compile(
 )
 
 _UNIT_MULTIPLIERS = {"万円": 10000, "千円": 1000, "円": 1}
+
+
+def _is_valid_japanese_date_after_amount(text: str, start: int) -> bool:
+    """`start` から始まる日本語日付が金額の右境界として妥当か返す。
+
+    年付きは記載年で厳密に暦日検証し、無効なら年なし形式へ格下げしない。
+    年なしは最終日付を決める処理ではないため実行年に依存させず、閏年2000を
+    使って月日トークンとして構造的に成立するかだけを検証する。実行年での
+    採否と日付なし時のフォールバックは従来どおり kakeibo_date.py が担う。
+    """
+    full_match = _JAPANESE_FULL_DATE_AFTER_AMOUNT_PATTERN.match(text, start)
+    if full_match:
+        try:
+            datetime.date(
+                int(full_match.group("year")),
+                int(full_match.group("month")),
+                int(full_match.group("day")),
+            )
+        except ValueError:
+            return False
+        return True
+
+    month_day_match = _JAPANESE_MONTH_DAY_AFTER_AMOUNT_PATTERN.match(text, start)
+    if not month_day_match:
+        return False
+    try:
+        datetime.date(
+            2000,
+            int(month_day_match.group("month")),
+            int(month_day_match.group("day")),
+        )
+    except ValueError:
+        return False
+    return True
+
+
+def _is_valid_amount_right_boundary(text: str, end: int) -> bool:
+    """金額matchの右側が従来境界または妥当な日本語日付なら True。"""
+    if end >= len(text):
+        return True
+    next_char = text[end]
+    if "0" <= next_char <= "9":
+        return _is_valid_japanese_date_after_amount(text, end)
+    # 「100円-20」のような符号付き数値連結も金額候補として採用しない。
+    if (
+        next_char in "-−+＋－﹣–—"
+        and end + 1 < len(text)
+        and "0" <= text[end + 1] <= "9"
+    ):
+        return False
+    return True
 
 
 def _parse_amount_match(number_str: str, unit: str) -> int | None:
@@ -92,6 +163,8 @@ def extract_amount_result(text: str) -> dict:
     valid_amounts = []
     saw_invalid_match = False
     for match in _AMOUNT_UNIT_PATTERN.finditer(normalized):
+        if not _is_valid_amount_right_boundary(normalized, match.end()):
+            continue
         value = _parse_amount_match(match.group("number"), match.group("unit"))
         if value is None or value <= 0:
             saw_invalid_match = True
@@ -152,6 +225,8 @@ def find_amount_spans(text: str) -> list[tuple[int, int, int]]:
 
     spans: list[tuple[int, int, int]] = []
     for match in _AMOUNT_UNIT_PATTERN.finditer(normalized):
+        if not _is_valid_amount_right_boundary(normalized, match.end()):
+            continue
         value = _parse_amount_match(match.group("number"), match.group("unit"))
         if value is None or value <= 0:
             return []

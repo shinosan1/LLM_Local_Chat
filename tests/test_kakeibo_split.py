@@ -5,6 +5,7 @@
 """
 import datetime
 import unittest
+from unittest.mock import patch
 
 from kakeibo_split import (
     MAX_KAKEIBO_TRANSACTIONS_PER_INPUT,
@@ -22,6 +23,54 @@ THREE_TX = [
     {"source_text": "薬局で1200円", "type": "支出", "category": "医療費"},
 ]
 ORDERED = ["スーパーで2000円", "コンビニで500円", "薬局で1200円"]
+
+REAL_FIVE_TEXT = (
+    "業務スーパー8月20日、1,603円食料品セリア、8月20日、1,430円 日用品, "
+    "ダイソー、8月20日、1,100円日用品, コーナン、8月21日、525円日用品, "
+    "松源8月19日、3,963円 食料品"
+)
+REAL_FIVE_LLM_TX = [
+    {"source_text": "業務スーパー8月20日、1,603円食料品",
+     "store": "業務スーパー", "category": "食費", "type": "支出",
+     "memo": None},
+    {"source_text": "セリア、8月20日、1,430円日用品",
+     "store": "セリア", "category": "日用品", "type": "支出",
+     "memo": None},
+    {"source_text": "ダイソー、8月20日、1,100円日用品",
+     "store": "ダイソー", "category": "日用品", "type": "支出",
+     "memo": None},
+    {"source_text": "コーナン、8月21日、525円日用品",
+     "store": "コーナン", "category": "日用品", "type": "支出",
+     "memo": None},
+    {"source_text": "松源8月19日、3,963円食料品",
+     "store": "松源", "category": "食費", "type": "支出",
+     "memo": None},
+]
+REAL_FIVE_SOURCE_TEXTS = [
+    "業務スーパー8月20日、1,603円食料品",
+    "セリア、8月20日、1,430円 日用品",
+    "ダイソー、8月20日、1,100円日用品",
+    "コーナン、8月21日、525円日用品",
+    "松源8月19日、3,963円 食料品",
+]
+
+RIGHT_BOUNDARY_FIVE_TEXT = (
+    "無印2170円8月18日日用品、ダイソー660円8月10日日用品、"
+    "業務スーパー8月10日食料品1361円、キャンドゥー7月26日330円日用品"
+    "キャンドゥー8月18日880円日用品"
+)
+RIGHT_BOUNDARY_FIVE_TX = [
+    {"source_text": "無印2170円8月18日日用品", "store": "無印",
+     "category": "日用品", "type": "支出"},
+    {"source_text": "ダイソー660円8月10日日用品", "store": "ダイソー",
+     "category": "日用品", "type": "支出"},
+    {"source_text": "業務スーパー8月10日食料品1361円", "store": "業務スーパー",
+     "category": "食費", "type": "支出"},
+    {"source_text": "キャンドゥー7月26日330円日用品", "store": "キャンドゥー",
+     "category": "日用品", "type": "支出"},
+    {"source_text": "キャンドゥー8月18日880円日用品", "store": "キャンドゥー",
+     "category": "日用品", "type": "支出"},
+]
 
 
 def _texts(count):
@@ -89,6 +138,83 @@ class NormalizeTransactionsTests(unittest.TestCase):
         self.assertEqual(
             normalize_transactions([], THREE_TEXT)["status"], "invalid_split")
 
+    def test_observed_five_transactions_recover_original_spaces(self):
+        result = normalize_transactions(REAL_FIVE_LLM_TX, REAL_FIVE_TEXT)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(
+            [fragment for fragment, _record in result["items"]],
+            REAL_FIVE_SOURCE_TEXTS,
+        )
+        self.assertEqual(
+            result["spans"], [(0, 21), (21, 41), (43, 63), (65, 83), (85, 103)])
+
+    def test_exact_match_path_does_not_call_space_recovery(self):
+        with patch(
+            "kakeibo_split._recover_horizontal_space_fragments",
+            side_effect=AssertionError("space fallback must not run"),
+        ):
+            result = normalize_transactions(THREE_TX, THREE_TEXT)
+        self.assertEqual(result["status"], "ok")
+
+    def test_horizontal_space_variants_recover_exact_original_slice(self):
+        cases = [
+            ("店A 100円", "店A100円"),
+            ("店A　100円", "店A100円"),
+            ("店A100円", "店A 100円"),
+            ("店A100円", "店A　100円"),
+            ("店A 100円", "店A　100円"),
+            ("店A　100円", "店A 100円"),
+        ]
+        for user_text, llm_text in cases:
+            with self.subTest(user_text=user_text, llm_text=llm_text):
+                result = normalize_transactions(
+                    [{"source_text": llm_text}], user_text)
+                self.assertEqual(result["status"], "ok")
+                self.assertEqual(result["items"][0][0], user_text)
+                self.assertEqual(result["spans"], [(0, len(user_text))])
+
+    def test_non_space_changes_are_not_recovered(self):
+        user_text = "セリア、8月20日、1,430円 日用品"
+        llm_texts = [
+            "セリア 8月20日、1,430円 日用品",
+            "セリア、8月20日、1430円 日用品",
+            "セリア、8月20日、1,130円 日用品",
+            "セリア、8月21日、1,430円 日用品",
+            "ダイソー、8月20日、1,430円 日用品",
+            "セリア、8月20日、1,430円 日用品を購入",
+        ]
+        for llm_text in llm_texts:
+            with self.subTest(llm_text=llm_text):
+                result = normalize_transactions(
+                    [{"source_text": llm_text}], user_text)
+                self.assertEqual(result["status"], "invalid_split")
+
+    def test_newline_changes_are_not_recovered(self):
+        cases = [
+            ("店A\n100円", "店A100円"),
+            ("店A100円", "店A\n100円"),
+        ]
+        for user_text, llm_text in cases:
+            with self.subTest(user_text=user_text, llm_text=llm_text):
+                result = normalize_transactions(
+                    [{"source_text": llm_text}], user_text)
+                self.assertEqual(result["status"], "invalid_split")
+
+    def test_ambiguous_space_normalized_match_is_rejected(self):
+        user_text = "店A 100円、店A　100円"
+        result = normalize_transactions(
+            [{"source_text": "店A100円"}], user_text)
+        self.assertEqual(result["status"], "invalid_split")
+
+    def test_space_recovery_rejects_overlapping_spans(self):
+        user_text = "店A 100円"
+        transactions = [
+            {"source_text": "店A100円"},
+            {"source_text": "店A100円"},
+        ]
+        result = normalize_transactions(transactions, user_text)
+        self.assertEqual(result["status"], "invalid_split")
+
 
 class TransactionLimitTests(unittest.TestCase):
     def test_limit_is_ten(self):
@@ -124,6 +250,86 @@ class BuildKakeiboCandidatesTests(unittest.TestCase):
         self.assertEqual(len(result["candidates"]), 1)
         self.assertEqual(result["candidates"][0]["amount"], 500)
         self.assertEqual(result["candidates"][0]["date"], TODAY)
+
+    def test_real_date_adjacent_amount_input_builds_candidate(self):
+        real_date = datetime.date
+        fixed_today = real_date(2026, 8, 24)
+        text = "業務スーパー8/20 1603円 食料品"
+        transactions = [{
+            "source_text": text,
+            "type": "支出",
+            "category": "食費",
+            "store": "業務スーパー",
+        }]
+        with patch("kakeibo_date.datetime.date") as mocked_date:
+            mocked_date.today.return_value = fixed_today
+            mocked_date.side_effect = lambda *args, **kwargs: real_date(
+                *args, **kwargs)
+            result = build_kakeibo_candidates(transactions, text)
+
+        self.assertEqual(result["status"], "ok")
+        candidate = result["candidates"][0]
+        self.assertEqual(candidate["date"], "2026-08-20")
+        self.assertEqual(candidate["amount"], 1603)
+
+    def test_observed_five_transactions_build_from_recovered_source_text(self):
+        result = build_kakeibo_candidates(
+            REAL_FIVE_LLM_TX, REAL_FIVE_TEXT, today=datetime.date(2026, 8, 25))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(result["candidates"]), 5)
+        self.assertEqual(
+            [candidate["source_text"] for candidate in result["candidates"]],
+            REAL_FIVE_SOURCE_TEXTS,
+        )
+        self.assertEqual(
+            [candidate["date"] for candidate in result["candidates"]],
+            ["2026-08-20", "2026-08-20", "2026-08-20",
+             "2026-08-21", "2026-08-19"],
+        )
+        self.assertEqual(
+            [candidate["amount"] for candidate in result["candidates"]],
+            [1603, 1430, 1100, 525, 3963],
+        )
+
+    def test_real_amount_before_date_input_builds_five_candidates(self):
+        normalized = normalize_transactions(
+            RIGHT_BOUNDARY_FIVE_TX, RIGHT_BOUNDARY_FIVE_TEXT)
+        self.assertEqual(normalized["status"], "ok")
+        self.assertEqual(
+            normalized["spans"],
+            [(0, 15), (16, 32), (33, 52), (53, 71), (71, 89)],
+        )
+
+        result = build_kakeibo_candidates(
+            RIGHT_BOUNDARY_FIVE_TX,
+            RIGHT_BOUNDARY_FIVE_TEXT,
+            today=datetime.date(2026, 8, 25),
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(result["candidates"]), 5)
+        self.assertEqual(
+            [candidate["date"] for candidate in result["candidates"]],
+            ["2026-08-18", "2026-08-10", "2026-08-10",
+             "2026-07-26", "2026-08-18"],
+        )
+        self.assertEqual(
+            [candidate["amount"] for candidate in result["candidates"]],
+            [2170, 660, 1361, 330, 880],
+        )
+
+    def test_date_prefixed_invalid_and_multiple_amounts_reject_input(self):
+        cases = {
+            "8/20 1 603円": "invalid_amount_format",
+            "2026-08-20 1, 603円": "invalid_amount_format",
+            "8/20 1603円と1 500円": "invalid_amount_format",
+            "8/20 1603円と500円": "multiple_amounts",
+        }
+        for text, expected_status in cases.items():
+            with self.subTest(text=text):
+                result = build_kakeibo_candidates(
+                    [{"source_text": text}], text)
+                self.assertEqual(result["status"], expected_status)
+                self.assertEqual(result["candidates"], [])
 
     def test_llm_amount_is_never_used(self):
         transactions = [
@@ -305,6 +511,48 @@ class AmbiguousDateTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(
             [c["date"] for c in result["candidates"]], [TODAY] * 3)
+
+    def test_single_japanese_date_applies_to_all(self):
+        text = "8月16日スーパーで2000円、コンビニで500円"
+        transactions = [
+            {"source_text": "8月16日スーパーで2000円"},
+            {"source_text": "コンビニで500円"},
+        ]
+        result = build_kakeibo_candidates(transactions, text)
+        self.assertEqual(result["status"], "ok")
+        year = datetime.date.today().year
+        self.assertEqual(
+            [c["date"] for c in result["candidates"]],
+            [f"{year}-08-16", f"{year}-08-16"],
+        )
+
+    def test_each_fragment_has_its_own_japanese_date(self):
+        text = "8月16日スーパーで2000円、8月17日コンビニで500円"
+        transactions = [
+            {"source_text": "8月16日スーパーで2000円"},
+            {"source_text": "8月17日コンビニで500円"},
+        ]
+        result = build_kakeibo_candidates(transactions, text)
+        self.assertEqual(result["status"], "ok")
+        year = datetime.date.today().year
+        self.assertEqual(
+            [c["date"] for c in result["candidates"]],
+            [f"{year}-08-16", f"{year}-08-17"],
+        )
+
+    def test_multiple_japanese_dates_with_undated_fragment_are_ambiguous(self):
+        text = (
+            "8月16日スーパーで2000円、8月17日コンビニで500円、"
+            "薬局で1200円"
+        )
+        transactions = [
+            {"source_text": "8月16日スーパーで2000円"},
+            {"source_text": "8月17日コンビニで500円"},
+            {"source_text": "薬局で1200円"},
+        ]
+        result = build_kakeibo_candidates(transactions, text)
+        self.assertEqual(result["status"], "ambiguous_date")
+        self.assertEqual(result["candidates"], [])
 
 
 class SingleTransactionDisplayTests(unittest.TestCase):

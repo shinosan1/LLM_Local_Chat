@@ -1,4 +1,5 @@
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -66,17 +67,20 @@ class ModelReferenceTests(unittest.TestCase):
         service.attach_llm(replacement)
         self.assertIs(service.llm, replacement)
 
-    def test_detach_closes_old_model_reference(self):
+    def test_detach_only_removes_references_and_worker_owns_close(self):
         model = _Model()
         app = ChatApp.__new__(ChatApp)
         app.llm = model
         app._ctrl = type("Ctrl", (), {
             "_llm_service": LLMService(model),
         })()
-        with patch("LLM_Local_Chat.gc.collect"):
-            app._detach_current_llm()
+        detached = app._detach_current_llm()
         self.assertIsNone(app.llm)
         self.assertIsNone(app._ctrl._llm_service.llm)
+        self.assertEqual(detached, [model])
+        self.assertEqual(model.closed, 0)
+        with patch("LLM_Local_Chat.gc.collect"):
+            app._close_llm_instance(detached[0], strict=True)
         self.assertEqual(model.closed, 1)
 
     def test_stale_load_result_is_closed_instead_of_attached(self):
@@ -86,6 +90,9 @@ class ModelReferenceTests(unittest.TestCase):
         app._closing = False
         with patch("LLM_Local_Chat.gc.collect"):
             app._on_llm_ready(1, model, None)
+            deadline = time.monotonic() + 1
+            while model.closed == 0 and time.monotonic() < deadline:
+                time.sleep(0.01)
         self.assertEqual(model.closed, 1)
 
     def test_failed_new_model_restores_previous_configuration(self):
@@ -168,6 +175,12 @@ class ShutdownTests(unittest.TestCase):
         app._closing = False
         app._llm_load_generation = 4
         app._llm_load_active = threading.Event()
+        prepare_event = threading.Event()
+        accept_event = threading.Event()
+        app._active_reload_job = {
+            "prepare_event": prepare_event,
+            "accept_event": accept_event,
+        }
         app._cfg = {}
         app._voice = type("Voice", (), {
             "enabled": True,
@@ -200,6 +213,8 @@ class ShutdownTests(unittest.TestCase):
         self.assertTrue(app._voice.stopped)
         self.assertTrue(app.tts.terminated)
         self.assertTrue(app._deps.res_monitor.stopped)
+        self.assertTrue(prepare_event.is_set())
+        self.assertTrue(accept_event.is_set())
         root.callbacks.pop(0)()
         self.assertTrue(root.destroyed)
 

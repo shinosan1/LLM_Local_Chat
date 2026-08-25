@@ -30,6 +30,23 @@ _DATE_MONTH_DAY_PATTERN = re.compile(
     r'(?<![0-9/])(?P<month>1[0-2]|0?[1-9])/(?P<day>3[01]|[12][0-9]|0?[1-9])(?![0-9/])'
 )
 
+# 年付き日本語日付形式(例: "2026年8月22日")。年付き表現が暦日として
+# 無効な場合、その内部の "8月22日" を年なし形式として再解釈しない。
+_DATE_JAPANESE_FULL_PATTERN = re.compile(
+    r'(?<![0-9])'
+    r'(?P<year>[0-9]{4})年'
+    r'(?P<month>1[0-2]|0?[1-9])月'
+    r'(?P<day>3[01]|[12][0-9]|0?[1-9])日'
+)
+
+# 年なし日本語日付形式(例: "8月22日")。直前の「年」を除外することで、
+# 年付き表現の内部へ短い形式として再一致しないようにする。
+_DATE_JAPANESE_MONTH_DAY_PATTERN = re.compile(
+    r'(?<![0-9年])'
+    r'(?P<month>1[0-2]|0?[1-9])月'
+    r'(?P<day>3[01]|[12][0-9]|0?[1-9])日'
+)
+
 
 def find_explicit_date(text: str, today: datetime.date | None = None) -> str | None:
     """原文に明示的な日付表現がある場合だけISO形式(YYYY-MM-DD)で返す。
@@ -37,7 +54,7 @@ def find_explicit_date(text: str, today: datetime.date | None = None) -> str | N
     見つからない場合、または実在しない暦日(例: 2/30)しか無い場合は None を返す。
     実行日へのフォールバックは行わない。複数取引を扱う際に「この断片自身が日付を
     持っているか」を判定する必要があるため、extract_date_from_text から分離した。
-    対応形式は extract_date_from_text と同一で、新しい形式は追加していない。
+    対応形式は extract_date_from_text と同一。
     """
     if today is None:
         today = datetime.date.today()
@@ -54,6 +71,18 @@ def find_explicit_date(text: str, today: datetime.date | None = None) -> str | N
         except ValueError:
             pass
 
+    japanese_full_match = _DATE_JAPANESE_FULL_PATTERN.search(normalized)
+    if japanese_full_match:
+        try:
+            return datetime.date(
+                int(japanese_full_match.group("year")),
+                int(japanese_full_match.group("month")),
+                int(japanese_full_match.group("day")),
+            ).isoformat()
+        except ValueError:
+            # 内部の月日は年なし形式の正規表現で除外し、別の独立した日付探索は続ける。
+            pass
+
     match = _DATE_MONTH_DAY_PATTERN.search(normalized)
     if match:
         month = int(match.group("month"))
@@ -62,15 +91,26 @@ def find_explicit_date(text: str, today: datetime.date | None = None) -> str | N
             return datetime.date(today.year, month, day).isoformat()
         except ValueError:
             pass
+
+    japanese_match = _DATE_JAPANESE_MONTH_DAY_PATTERN.search(normalized)
+    if japanese_match:
+        try:
+            return datetime.date(
+                today.year,
+                int(japanese_match.group("month")),
+                int(japanese_match.group("day")),
+            ).isoformat()
+        except ValueError:
+            pass
     return None
 
 
 def extract_date_from_text(text: str, today: datetime.date | None = None) -> str:
     """原文の日付表現をISO形式(YYYY-MM-DD)で返す。
 
-    年付き形式("2026/08/16"・"2026-08-16")を優先して採用し、無ければ月/日形式
-    ("7/17")を実行年で補って採用する。どちらも見つからない場合、または実在しない
-    暦日(例: 2/30)の場合は実行日を返す。
+    年付き形式("2026/08/16"・"2026-08-16"・"2026年8月16日")を優先して採用し、
+    無ければ月/日形式("7/17"・"7月17日")を実行年で補って採用する。どちらも
+    見つからない場合、または実在しない暦日(例: 2/30)の場合は実行日を返す。
     `today`はテスト用に実行日を固定するための任意引数(省略時は実際の今日)。
     """
     if today is None:
@@ -86,7 +126,7 @@ def find_explicit_dates(text: str, today: datetime.date | None = None) -> list[s
     判断するために使う。日付が一意に定まらない入力を安全側で拒否できるよう、
     find_explicit_date のように1件だけ返すのではなく全件を返す。
 
-    対応形式は find_explicit_date と同一で、新しい形式は追加していない。
+    対応形式は find_explicit_date と同一。
     実在しない暦日は候補に含めない。年付き形式が一致した範囲は月/日形式の
     lookbehind により二重に数えられない。
     """
@@ -106,7 +146,34 @@ def find_explicit_dates(text: str, today: datetime.date | None = None) -> list[s
             continue
         found.append((match.start(), iso))
 
+    japanese_full_spans: list[tuple[int, int]] = []
+    for match in _DATE_JAPANESE_FULL_PATTERN.finditer(normalized):
+        # 無効な年付き表現も範囲を記録し、内部の月日を再解釈させない。
+        japanese_full_spans.append(match.span())
+        try:
+            iso = datetime.date(
+                int(match.group("year")),
+                int(match.group("month")),
+                int(match.group("day")),
+            ).isoformat()
+        except ValueError:
+            continue
+        found.append((match.start(), iso))
+
     for match in _DATE_MONTH_DAY_PATTERN.finditer(normalized):
+        try:
+            iso = datetime.date(
+                today.year,
+                int(match.group("month")),
+                int(match.group("day")),
+            ).isoformat()
+        except ValueError:
+            continue
+        found.append((match.start(), iso))
+
+    for match in _DATE_JAPANESE_MONTH_DAY_PATTERN.finditer(normalized):
+        if any(start <= match.start() < end for start, end in japanese_full_spans):
+            continue
         try:
             iso = datetime.date(
                 today.year,

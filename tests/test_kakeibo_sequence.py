@@ -11,10 +11,13 @@
 
 Tkinterの実ウィンドウは作らず、確認ダイアログ・`wait_window`・送信を差し替える。
 """
+import datetime
 import unittest
+from unittest.mock import patch
 
 import LLM_Local_Chat as app_module
 from LLM_Local_Chat import ChatApp
+from kakeibo_confirmation import validate_kakeibo_payload
 from kakeibo_split import build_kakeibo_candidates
 
 
@@ -23,6 +26,42 @@ THREE_TX = [
     {"source_text": "スーパーで2000円"},
     {"source_text": "コンビニで500円"},
     {"source_text": "薬局で1200円"},
+]
+
+REAL_FIVE_TEXT = (
+    "業務スーパー8月20日、1,603円食料品セリア、8月20日、1,430円 日用品, "
+    "ダイソー、8月20日、1,100円日用品, コーナン、8月21日、525円日用品, "
+    "松源8月19日、3,963円 食料品"
+)
+REAL_FIVE_LLM_TX = [
+    {"source_text": "業務スーパー8月20日、1,603円食料品",
+     "store": "業務スーパー", "category": "食費", "type": "支出"},
+    {"source_text": "セリア、8月20日、1,430円日用品",
+     "store": "セリア", "category": "日用品", "type": "支出"},
+    {"source_text": "ダイソー、8月20日、1,100円日用品",
+     "store": "ダイソー", "category": "日用品", "type": "支出"},
+    {"source_text": "コーナン、8月21日、525円日用品",
+     "store": "コーナン", "category": "日用品", "type": "支出"},
+    {"source_text": "松源8月19日、3,963円食料品",
+     "store": "松源", "category": "食費", "type": "支出"},
+]
+
+RIGHT_BOUNDARY_FIVE_TEXT = (
+    "無印2170円8月18日日用品、ダイソー660円8月10日日用品、"
+    "業務スーパー8月10日食料品1361円、キャンドゥー7月26日330円日用品"
+    "キャンドゥー8月18日880円日用品"
+)
+RIGHT_BOUNDARY_FIVE_TX = [
+    {"source_text": "無印2170円8月18日日用品", "store": "無印",
+     "category": "日用品", "type": "支出"},
+    {"source_text": "ダイソー660円8月10日日用品", "store": "ダイソー",
+     "category": "日用品", "type": "支出"},
+    {"source_text": "業務スーパー8月10日食料品1361円", "store": "業務スーパー",
+     "category": "食費", "type": "支出"},
+    {"source_text": "キャンドゥー7月26日330円日用品", "store": "キャンドゥー",
+     "category": "日用品", "type": "支出"},
+    {"source_text": "キャンドゥー8月18日880円日用品", "store": "キャンドゥー",
+     "category": "日用品", "type": "支出"},
 ]
 
 
@@ -216,6 +255,63 @@ class SequentialConfirmAndPostTests(unittest.TestCase):
         self.assertFalse(app._kakeibo_sequence_active)
         self.assertEqual(_FakeDialog.opened, [])
 
+    def test_japanese_date_reaches_validated_post_payload(self):
+        real_date = datetime.date
+        fixed_today = real_date(2026, 8, 24)
+        text = "8月22日セリア1130円"
+        with patch("kakeibo_date.datetime.date") as mocked_date:
+            mocked_date.today.return_value = fixed_today
+            mocked_date.side_effect = lambda *args, **kwargs: real_date(
+                *args, **kwargs)
+            result = build_kakeibo_candidates(
+                [{"source_text": text, "store": "セリア"}], text)
+
+        self.assertEqual(result["status"], "ok")
+        candidate = result["candidates"][0]
+        candidate["type"] = "支出"
+        candidate["category"] = "日用品"
+        self.assertEqual(candidate["date"], "2026-08-22")
+
+        _FakeDialog.script = ["submit"]
+        app = _FakeApp([True])
+        app.run([candidate])
+        self.assertEqual(len(app._integrations.posted), 1)
+        payload = validate_kakeibo_payload(app._integrations.posted[0])
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["date"], "2026-08-22")
+
+    def test_date_adjacent_amount_reaches_confirmation_and_post_payload(self):
+        real_date = datetime.date
+        fixed_today = real_date(2026, 8, 24)
+        text = "業務スーパー8/20 1603円 食料品"
+        with patch("kakeibo_date.datetime.date") as mocked_date:
+            mocked_date.today.return_value = fixed_today
+            mocked_date.side_effect = lambda *args, **kwargs: real_date(
+                *args, **kwargs)
+            result = build_kakeibo_candidates(
+                [{
+                    "source_text": text,
+                    "type": "支出",
+                    "category": "食費",
+                    "store": "業務スーパー",
+                }],
+                text,
+            )
+
+        self.assertEqual(result["status"], "ok")
+        candidate = result["candidates"][0]
+        self.assertEqual(candidate["date"], "2026-08-20")
+        self.assertEqual(candidate["amount"], 1603)
+
+        _FakeDialog.script = ["submit"]
+        app = _FakeApp([True])
+        app.run([candidate])
+        self.assertEqual(len(app._integrations.posted), 1)
+        payload = validate_kakeibo_payload(app._integrations.posted[0])
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["date"], "2026-08-20")
+        self.assertEqual(payload["amount"], 1603)
+
 
 class _DeferredIntegrations:
     """完了通知を自動で呼ばない送信フェイク。
@@ -288,6 +384,63 @@ class DeferredCompletionTests(unittest.TestCase):
         self.bridge.complete(2, True)
         self.assertEqual(_FakeDialog.opened, [1, 2, 3])
         self.assertEqual(len(self.bridge.posted), 3)
+        self.assertFalse(self.app._kakeibo_sequence_active)
+
+    def test_observed_five_transactions_wait_for_each_post_callback(self):
+        result = build_kakeibo_candidates(
+            REAL_FIVE_LLM_TX,
+            REAL_FIVE_TEXT,
+            today=datetime.date(2026, 8, 25),
+        )
+        self.assertEqual(result["status"], "ok")
+        candidates = result["candidates"]
+        self.assertEqual(len(candidates), 5)
+        _FakeDialog.script = ["submit"] * 5
+
+        self.app.run(candidates)
+        expected_amounts = [1603, 1430, 1100, 525, 3963]
+        for index in range(5):
+            self.assertEqual(_FakeDialog.opened, list(range(1, index + 2)))
+            self.assertEqual(
+                [record["amount"] for record in self.bridge.posted],
+                expected_amounts[:index + 1],
+            )
+            self.assertEqual(len(self.bridge.pending), index + 1)
+            self.assertTrue(self.app._kakeibo_sequence_active)
+            self.bridge.complete(index, True)
+
+        self.assertEqual(_FakeDialog.opened, [1, 2, 3, 4, 5])
+        self.assertEqual(len(self.bridge.posted), 5)
+        self.assertFalse(self.app._kakeibo_sequence_active)
+
+    def test_amount_before_date_five_transactions_wait_for_each_callback(self):
+        result = build_kakeibo_candidates(
+            RIGHT_BOUNDARY_FIVE_TX,
+            RIGHT_BOUNDARY_FIVE_TEXT,
+            today=datetime.date(2026, 8, 25),
+        )
+        self.assertEqual(result["status"], "ok")
+        candidates = result["candidates"]
+        self.assertEqual(len(candidates), 5)
+        _FakeDialog.script = ["submit"] * 5
+
+        self.app.run(candidates)
+        expected_amounts = [2170, 660, 1361, 330, 880]
+        for index in range(5):
+            self.assertEqual(_FakeDialog.opened, list(range(1, index + 2)))
+            self.assertEqual(
+                [record["amount"] for record in self.bridge.posted],
+                expected_amounts[:index + 1],
+            )
+            self.assertEqual(len(self.bridge.pending), index + 1)
+            payload = validate_kakeibo_payload(self.bridge.posted[index])
+            self.assertIsNotNone(payload)
+            self.assertEqual(payload["amount"], expected_amounts[index])
+            self.assertTrue(self.app._kakeibo_sequence_active)
+            self.bridge.complete(index, True)
+
+        self.assertEqual(_FakeDialog.opened, [1, 2, 3, 4, 5])
+        self.assertEqual(len(self.bridge.posted), 5)
         self.assertFalse(self.app._kakeibo_sequence_active)
 
     def test_second_dialog_not_opened_before_first_completion(self):

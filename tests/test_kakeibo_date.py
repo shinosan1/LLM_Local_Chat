@@ -1,7 +1,11 @@
 import datetime
 import unittest
 
-from kakeibo_date import extract_date_from_text
+from kakeibo_date import (
+    extract_date_from_text,
+    find_explicit_date,
+    find_explicit_dates,
+)
 
 _FIXED_TODAY = datetime.date(2026, 7, 20)
 
@@ -96,6 +100,99 @@ class ExtractFullDateFromTextTests(unittest.TestCase):
         # 既存の月/日形式の挙動を壊していないことの確認。
         result = extract_date_from_text("7/17 に3020円", today=_FIXED_TODAY)
         self.assertEqual(result, "2026-07-17")
+
+
+class ExtractJapaneseDateFromTextTests(unittest.TestCase):
+    """日本語の年月日・月日形式を原文から機械抽出する。"""
+
+    _TODAY = datetime.date(2026, 8, 24)
+
+    def test_japanese_month_day_in_compact_purchase_input(self):
+        result = extract_date_from_text(
+            "8月22日セリア1130円", today=self._TODAY)
+        self.assertEqual(result, "2026-08-22")
+
+    def test_fullwidth_japanese_month_day(self):
+        result = extract_date_from_text(
+            "８月２２日セリア１１３０円", today=self._TODAY)
+        self.assertEqual(result, "2026-08-22")
+
+    def test_japanese_month_day_can_touch_amount_digits(self):
+        result = extract_date_from_text(
+            "セリア8月22日1130円", today=self._TODAY)
+        self.assertEqual(result, "2026-08-22")
+
+    def test_japanese_full_date(self):
+        result = extract_date_from_text(
+            "2026年8月22日セリア1130円", today=self._TODAY)
+        self.assertEqual(result, "2026-08-22")
+
+    def test_fullwidth_japanese_full_date(self):
+        result = extract_date_from_text(
+            "２０２６年８月２２日セリア１１３０円", today=self._TODAY)
+        self.assertEqual(result, "2026-08-22")
+
+    def test_japanese_full_date_can_touch_amount_digits(self):
+        result = extract_date_from_text(
+            "2026年8月20日1130円", today=self._TODAY)
+        self.assertEqual(result, "2026-08-20")
+
+    def test_invalid_japanese_month_day_falls_back_to_today(self):
+        text = "2月30日セリア1130円"
+        self.assertIsNone(find_explicit_date(text, today=self._TODAY))
+        self.assertEqual(find_explicit_dates(text, today=self._TODAY), [])
+        self.assertEqual(
+            extract_date_from_text(text, today=self._TODAY), "2026-08-24")
+
+    def test_invalid_full_date_is_not_reinterpreted_in_leap_year(self):
+        leap_year_today = datetime.date(2024, 8, 24)
+        text = "2025年2月29日セリア1130円"
+        self.assertIsNone(find_explicit_date(text, today=leap_year_today))
+        self.assertEqual(find_explicit_dates(text, today=leap_year_today), [])
+        self.assertEqual(
+            extract_date_from_text(text, today=leap_year_today), "2024-08-24")
+
+    def test_invalid_full_date_does_not_hide_separate_valid_date(self):
+        leap_year_today = datetime.date(2024, 8, 24)
+        text = "2025年2月29日、8月22日セリア1130円"
+        self.assertEqual(
+            find_explicit_date(text, today=leap_year_today), "2024-08-22")
+        self.assertEqual(
+            find_explicit_dates(text, today=leap_year_today), ["2024-08-22"])
+
+    def test_valid_full_date_is_not_reinterpreted_as_month_day(self):
+        dates = find_explicit_dates(
+            "2025年8月22日セリア1130円",
+            today=datetime.date(2024, 8, 24),
+        )
+        self.assertEqual(dates, ["2025-08-22"])
+
+    def test_existing_formats_still_work(self):
+        expected = {
+            "8/22セリア1130円": "2026-08-22",
+            "2026/08/22セリア1130円": "2026-08-22",
+            "2026-08-22セリア1130円": "2026-08-22",
+        }
+        for text, iso_date in expected.items():
+            with self.subTest(text=text):
+                self.assertEqual(
+                    extract_date_from_text(text, today=self._TODAY), iso_date)
+
+    def test_invalid_existing_full_dates_are_not_shortened(self):
+        leap_year_today = datetime.date(2024, 8, 24)
+        for text in (
+            "2025/02/29セリア1130円",
+            "2025-02-29セリア1130円",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(
+                    find_explicit_date(text, today=leap_year_today))
+                self.assertEqual(
+                    find_explicit_dates(text, today=leap_year_today), [])
+                self.assertEqual(
+                    extract_date_from_text(text, today=leap_year_today),
+                    "2024-08-24",
+                )
 
 
 if __name__ == "__main__":

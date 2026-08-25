@@ -192,6 +192,7 @@ class Controller:
         self._active_mode = "default"
         self._operation_generation = 0
         self._operation_state = "idle"
+        self._request_id = 0
 
     def clear_token_cache(self) -> None:
         self._token_cost_cache.clear()
@@ -218,6 +219,7 @@ class Controller:
         return (
             self._operation_state != "idle"
             or self._llm_service.is_running()
+            or bool(getattr(self._app, "_llm_loading", False))
             or bool(getattr(self._app, "_kakeibo_sequence_active", False))
         )
 
@@ -227,6 +229,7 @@ class Controller:
             "extracting_health": "🩺 健康データ再抽出中…",
             "summarizing": "📝 要約中…",
             "stopping": "⏳ 停止処理中…",
+            "reloading_llm": "⏳ LLM再読み込み中…",
         }.get(self._operation_state)
         if label is not None:
             return label
@@ -253,7 +256,11 @@ class Controller:
         # 家計簿の確認・POSTシーケンスが進行中なら送信ボタンを戻さない。
         # 戻すと is_busy() は真のままなのにUIだけ操作可能に見えてしまう。
         # 再有効化はシーケンス側の終了処理(_finish)が担当する。
-        if not getattr(self._app, "_kakeibo_sequence_active", False):
+        if (
+            not getattr(self._app, "_kakeibo_sequence_active", False)
+            and not getattr(self._app, "_llm_loading", False)
+            and getattr(self._app, "llm", None) is not None
+        ):
             self._app._btn_send.config(state="normal")
         self._app._stream_buf = ""
         self._active_mode = "default"
@@ -287,40 +294,151 @@ class Controller:
         self._app._entry.delete("1.0", "end")
         self._app._llm_abort = False
         generation = self._begin_operation("generating")
-
-        self._app._chat_write("\n", "")
-        self._app._chat_write("👤 あなた\n", "user_lbl")
-        self._app._chat_write(f"{text}\n", "user_msg")
-        self._app._chat_write("─" * 50 + "\n", "divider")
-        self._app._chat_write("🤖 AI\n", "ai_lbl")
-        self._app._stream_buf  = ""
-        self._tts_stream.reset()
-        self._app.tts.begin_stream()
-
-        # mode決定（1回だけ）
+        self._request_id += 1
         if self._app._kakeibo_mode:
             mode = "kakeibo"
         elif self._app._health_mode:
             mode = "health"
         else:
             mode = "default"
+        request = {
+            "request_id": self._request_id,
+            "generation": generation,
+            "text": text,
+            "session": self._app._current_session,
+            "session_path": getattr(self._app, "_current_path", None),
+            "model_generation": getattr(self._app, "_llm_load_generation", 0),
+            "mode": mode,
+            "retry_used": False,
+            "ui_committed": False,
+            "request_started_at": request_started_at,
+        }
+        self._attempt_request(request)
+
+    def _request_is_current(
+        self, request: dict, *, check_model_generation: bool = True
+    ) -> bool:
+        return (
+            request["generation"] == self._operation_generation
+            and request["session"] is self._app._current_session
+            and request["session_path"] == getattr(self._app, "_current_path", None)
+            and (
+                not check_model_generation
+                or request["model_generation"]
+                == getattr(self._app, "_llm_load_generation", 0)
+            )
+            and not getattr(self._app, "_closing", False)
+        )
+
+    def _commit_request_ui(self, request: dict) -> None:
+        if request["ui_committed"]:
+            return
+        text = request["text"]
+        mode = request["mode"]
+        self._app._chat_write("\n", "")
+        self._app._chat_write("👤 あなた\n", "user_lbl")
+        self._app._chat_write(f"{text}\n", "user_msg")
+        self._app._chat_write("─" * 50 + "\n", "divider")
+        self._app._chat_write("🤖 AI\n", "ai_lbl")
+        self._app._stream_buf = ""
+        self._tts_stream.reset()
+        self._app.tts.begin_stream()
         self._active_mode = mode
         self._health_json_filter.reset()
-
-        # pending状態管理 + llm_input生成（modeベースで1回だけ）
         if mode == "kakeibo":
             self._app._kakeibo_pending_text = text
-            self._app._health_pending_text  = None
-            llm_input = self._prompt_builder.build_kakeibo_prompt(text)
+            self._app._health_pending_text = None
         elif mode == "health":
-            self._app._health_pending_text  = text
+            self._app._health_pending_text = text
             self._app._kakeibo_pending_text = None
-            llm_input = self._prompt_builder.build_health_prompt(text)
         else:
             self._app._kakeibo_pending_text = None
-            self._app._health_pending_text  = None
+            self._app._health_pending_text = None
+        request["ui_committed"] = True
+
+    def _attempt_request(self, request: dict) -> None:
+        if not self._request_is_current(request):
+            return
+        decision = self._resource_mgr.decide(
+            self._app._max_tokens,
+            self._consume_whisper_gpu_delta(),
+        )
+        if not decision["ok"]:
+            state = getattr(self._app, "_llm_offload_state", None)
+            actual_layers = (
+                state.get("n_gpu_layers") if isinstance(state, dict) else None
+            )
+            desired_mode = getattr(
+                self._app, "_llm_gpu_offload_mode", "auto")
+            can_downshift = (
+                desired_mode == "auto"
+                and isinstance(actual_layers, int)
+                and actual_layers != 0
+                and not request["retry_used"]
+                and decision.get("requires_relocation", True)
+            )
+            if can_downshift:
+                request["retry_used"] = True
+                self._operation_state = "reloading_llm"
+                self._app._update_status()
+
+                def _resume(success: bool, error) -> None:
+                    if not self._request_is_current(
+                        request, check_model_generation=False
+                    ):
+                        return
+                    if success:
+                        request["model_generation"] = getattr(
+                            self._app, "_llm_load_generation", 0)
+                        self._operation_state = "generating"
+                        self._attempt_request(request)
+                        return
+                    message = (
+                        f"VRAM不足に対する安全なLLM再配置に失敗しました（{error}）"
+                        if error else
+                        "VRAM不足に対する安全なLLM再配置に失敗しました"
+                    )
+                    self._on_request_rejected(
+                        request["text"], message, request["generation"])
+
+                started = self._app._request_auto_downshift(_resume)
+                if started:
+                    return
+
+            message = (
+                f"VRAM不足のため安全に実行できません（{decision['reason']}）"
+                if decision.get("reason_kind") == "vram_hard_limit"
+                else f"LLMを実行できません（{decision['reason']}）"
+            )
+            total_ms = (
+                time.perf_counter() - request["request_started_at"]
+            ) * 1000
+            print(
+                f"[Perf] prompt_build_ms=0.0 first_token_ms=n/a "
+                f"tokens_per_sec=0.00 total_ms={total_ms:.1f} "
+                "status=guard_blocked"
+            )
+            self._on_request_rejected(
+                request["text"], message, request["generation"])
+            return
+
+        if getattr(self._app, "llm", None) is None:
+            self._on_request_rejected(
+                request["text"],
+                "LLMを利用可能な状態へ読み込めませんでした",
+                request["generation"],
+            )
+            return
+
+        self._commit_request_ui(request)
+        text = request["text"]
+        mode = request["mode"]
+        if mode == "kakeibo":
+            llm_input = self._prompt_builder.build_kakeibo_prompt(text)
+        elif mode == "health":
+            llm_input = self._prompt_builder.build_health_prompt(text)
+        else:
             llm_input = text
-        # messages構築
         messages = self._prompt_builder.build(
             llm_input,
             self._app._current_session,
@@ -333,46 +451,35 @@ class Controller:
             history_budget_ratio=self._app._history_budget_ratio,
             system_buf_tokens=self._app._system_buf_tokens,
         )
-        prompt_build_ms = (time.perf_counter() - request_started_at) * 1000
+        prompt_build_ms = (
+            time.perf_counter() - request["request_started_at"]
+        ) * 1000
 
-        # ② VRAM / max_tokens 決定（ResourceManager の責務）
-        decision = self._resource_mgr.decide(
-            self._app._max_tokens,
-            self._consume_whisper_gpu_delta(),
-        )
-        if not decision["ok"]:
-            _msg = f"VRAM使用率が高いため実行できません（{decision['reason']}）"
-            print(f"[Guard] {_msg}")
-            total_ms = (time.perf_counter() - request_started_at) * 1000
-            print(
-                f"[Perf] prompt_build_ms={prompt_build_ms:.1f} "
-                f"first_token_ms=n/a tokens_per_sec=0.00 "
-                f"total_ms={total_ms:.1f} status=guard_blocked"
-            )
-            self._on_request_rejected(text, _msg, generation)
-            return
-
-        # ③ LLM 実行（LLMService に完全委譲）
         started = self._llm_service.generate(
             messages    = messages,
             max_tokens  = decision["max_tokens"],
             temperature = self._app._temperature,
             on_token = lambda t: self._post_ui(
-                lambda _t=t, _g=generation: self._on_stream_token(_t, _g)
+                lambda _t=t, _g=request["generation"]:
+                    self._on_stream_token(_t, _g)
             ),
             on_done = lambda r: self._post_ui(
-                lambda _r=r, _g=generation: self._on_llm_done(text, _r, _g)
+                lambda _r=r, _g=request["generation"]:
+                    self._on_llm_done(text, _r, _g)
             ),
             on_error = lambda e: self._post_ui(
-                lambda _e=e, _g=generation: self._on_llm_error(
+                lambda _e=e, _g=request["generation"]: self._on_llm_error(
                     text, f"[エラー: {_e}]", _g)
             ),
-            request_started_at = request_started_at,
+            request_started_at = request["request_started_at"],
             prompt_build_ms = prompt_build_ms,
         )
         if not started:
             self._on_llm_error(
-                text, "[エラー: LLMは既に実行中です]", generation)
+                text,
+                "[エラー: LLMは既に実行中です]",
+                request["generation"],
+            )
 
     # ── 停止 ──────────────────────────────────────────────
     def _on_stream_token(self, token: str, generation: int) -> None:
@@ -399,6 +506,8 @@ class Controller:
 
     def stop(self) -> None:
         """LLM・TTS・マイクを完全に、即座に、依存関係なしで止める"""
+        if getattr(self._app, "_llm_loading", False):
+            return
         print("[System] 停止命令を執行します")
 
         self._app._llm_abort = True

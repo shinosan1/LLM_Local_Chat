@@ -41,12 +41,14 @@ This document captures the current architecture of LLM Local Chat before the nex
 - Tkinter UI、アプリ状態、設定、チャット表示、アバター表示の中心。
 - `ChatApp` が依存オブジェクトを受け取り、UIイベントを `Controller` や各サービスへ接続する。
 - `init_llm()` は `resource_monitor.adjust_llm()` を使って LLM ロード時の GPU レイヤー設定を調整する。
+- `ChatApp._reload_llm()` は希望offloadモードの変更とAuto downshiftを、旧LLMのdetach/close後に新LLMをロードする世代管理付きworkerとして実行する。actual runtime stateだけを最新世代からUIへ反映する。
 - `main()` が `create_app_deps(LOG_DIR)` を呼び、`ChatApp` を起動する。
 
 `controller.py`
 
 - `Controller` は薄いオーケストレーター。
-- テキスト送信、音声入力、停止、LLM完了後の履歴更新、TTS、連携処理への分岐を管理する。
+- テキスト送信時に入力・セッション・モード・操作/モデル世代をrequest contextとして確定し、VRAM安全確認後に表示・履歴・TTS・連携処理を一度だけ開始する。
+- Autoの推論直前hard limitでは、入力を保持したまま`ChatApp`へ下位offloadへのhot reloadを要求し、成功時だけ同じ入力を最大1回再試行する。
 - プロンプト構築は `PromptBuilder`、推論は `LLMService`、VRAM判定は `ResourceManager` に委譲する。
 
 `prompt_builder.py`
@@ -123,12 +125,13 @@ This document captures the current architecture of LLM Local Chat before the nex
 
 1. ユーザーがテキスト入力、または `VoiceRecognizer` が音声をテキスト化する。
 2. `Controller.handle_text()` が入力を受け取り、現在モードを判定する。
-3. `PromptBuilder` が `messages` を構築する。
-4. `ResourceManager.decide()` が VRAM 状態から `max_tokens` と実行可否を決める。
-5. `LLMService.generate()` がストリーミング推論を別スレッドで実行する。
-6. token は `ChatApp._append_stream_token()` へ渡され、チャット欄に逐次表示される。
-7. 完了後、`Controller._on_llm_done()` が履歴、要約更新、TTS、保存、連携処理を進める。
-8. 性能ログの出力token数は生成本文をモデルtokenizerで数える。
+3. `Controller` が入力のrequest contextを保持し、`ResourceManager.decide()` が VRAM 状態から `max_tokens` と実行可否を決める。
+4. AutoのGPU配置でhard limitなら、旧LLMを解放して現在より低い配置へhot reloadし、同じrequest contextを最大1回だけ3へ戻す。
+5. 安全確認後にユーザー表示・TTS stream・モード別pending stateを一度だけ開始し、`PromptBuilder` が `messages` を構築する。
+6. `LLMService.generate()` がストリーミング推論を別スレッドで実行する。
+7. token は `ChatApp._append_stream_token()` へ渡され、チャット欄に逐次表示される。
+8. 完了後、`Controller._on_llm_done()` が履歴、要約更新、TTS、保存、連携処理を進める。
+9. 性能ログの出力token数は生成本文をモデルtokenizerで数える。
 
 停止処理の流れ:
 
@@ -174,9 +177,10 @@ VRAM安全フィルタの設計思想は「VRAMを管理する」ではなく「
 
 - `ResourceMonitor`: 0.5秒周期で VRAM/GPU/CPU を観測。
 - `VRAMGuard`: `vram_score` ベースで即時安全判定。
-- `adjust_llm()`: CUDA対応とGGUFサイズを含む実空き容量判定で、全層GPU要求またはCPUフォールバックを選ぶ。
-- `adjust_inference()`: 推論直前の実空き容量と動的予約領域で`max_tokens`を段階削減し、危険時だけ推論をブロックする。
-- `WhisperPool`: LLMロード後にCPU版smallをロードし、`whisper_mode`と空き容量に応じてGPU smallまたはGPU mediumもロードする。
+- `adjust_llm()`: CUDA対応、GGUFサイズ、metadataの総レイヤー数、実空き容量から、Full→約75%→50%→25%→CPUの適応型GPU offload候補を選ぶ。GPUロード後も最低予約量を再確認する。
+- `adjust_inference()`: 推論直前の実空き容量と動的予約領域で`max_tokens`を段階削減し、hard limitでは再配置が必要なことを返す。
+- `ChatApp` / `Controller`: Autoのhard limit時は現在より低いFull→約75%→50%→25%→CPUの候補だけへhot reloadし、同じ入力を最大1回継続する。推論ごとの自動upshiftは行わない。
+- `WhisperPool`: LLMロード後にCPU版smallをロードし、`whisper_mode`と空き容量に応じてGPU smallまたはGPU mediumもロードする。LLM hot reload中は新規転写を止め、進行中転写とlockで排他する。
 - `WhisperController`: GPU版がロード済みの場合だけ、GPU使用率のヒステリシスで使用モデルを切り替える。
 
 音声安全側の主な構成:

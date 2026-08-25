@@ -1,6 +1,10 @@
 import unittest
 
-from kakeibo_amount import extract_amount_result, normalize_manual_amount_input
+from kakeibo_amount import (
+    extract_amount_result,
+    find_amount_spans,
+    normalize_manual_amount_input,
+)
 
 
 def _status(text: str) -> str:
@@ -203,6 +207,143 @@ class KakeiboAmountSpacedDigitsTests(unittest.TestCase):
     def test_spaced_digits_mixed_with_valid_amount_is_rejected_entirely(self):
         result = extract_amount_result("1 500円と300円")
         self.assertEqual(result["status"], "invalid_amount_format")
+
+    def test_date_adjacent_normal_amount_is_valid(self):
+        cases = {
+            "業務スーパー8/20 1603円 食料品": 1603,
+            "業務スーパー2026/8/20 1603円 食料品": 1603,
+            "業務スーパー2026-08-20 1603円 食料品": 1603,
+            "業務スーパー8月20日 1603円 食料品": 1603,
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                result = extract_amount_result(text)
+                self.assertEqual(result["status"], "ok")
+                self.assertEqual(result["amount"], expected)
+                self.assertEqual(
+                    [value for _start, _end, value in find_amount_spans(text)],
+                    [expected],
+                )
+
+    def test_standalone_20_1603_is_rejected(self):
+        self.assertEqual(_status("20 1603円"), "invalid_amount_format")
+
+    def test_1_603_is_rejected(self):
+        self.assertEqual(_status("1 603円"), "invalid_amount_format")
+
+    def test_12_000_is_rejected(self):
+        self.assertEqual(_status("12 000円"), "invalid_amount_format")
+
+    def test_space_before_unit_does_not_hide_spaced_digits(self):
+        self.assertEqual(_status("1 500 円"), "invalid_amount_format")
+
+    def test_date_followed_by_spaced_digits_is_rejected(self):
+        for text in ("8/20 1 603円", "2026-08-20 1, 603円"):
+            with self.subTest(text=text):
+                self.assertEqual(_status(text), "invalid_amount_format")
+                self.assertEqual(find_amount_spans(text), [])
+
+    def test_date_valid_amount_mixed_with_spaced_digits_is_rejected(self):
+        text = "8/20 1603円と1 500円"
+        self.assertEqual(_status(text), "invalid_amount_format")
+        self.assertEqual(find_amount_spans(text), [])
+
+    def test_date_with_two_valid_amounts_remains_multiple(self):
+        text = "8/20 1603円と500円"
+        self.assertEqual(_status(text), "multiple_amounts")
+        self.assertEqual(
+            [value for _start, _end, value in find_amount_spans(text)],
+            [1603, 500],
+        )
+
+
+class KakeiboAmountJapaneseDateRightBoundaryTests(unittest.TestCase):
+    """金額直後の数字は、妥当な日本語日付の開始である場合だけ許可する。"""
+
+    def test_yearless_japanese_dates_after_amount_are_valid(self):
+        cases = {
+            "2170円8月18日": 2170,
+            "660円8月10日": 660,
+            "525円8月21日": 525,
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                result = extract_amount_result(text)
+                self.assertEqual(result["status"], "ok")
+                self.assertEqual(result["amount"], expected)
+
+    def test_yearful_japanese_date_after_amount_is_valid(self):
+        result = extract_amount_result("1130円2026年8月22日")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["amount"], 1130)
+
+    def test_fullwidth_japanese_dates_after_amount_are_valid(self):
+        cases = {
+            "２１７０円８月１８日": 2170,
+            "１１３０円２０２６年８月２２日": 1130,
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                result = extract_amount_result(text)
+                self.assertEqual(result["status"], "ok")
+                self.assertEqual(result["amount"], expected)
+
+    def test_thousand_and_manen_before_japanese_date_are_valid(self):
+        cases = {"5千円8月20日": 5000, "2万円2026年8月20日": 20000}
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(extract_amount_result(text)["amount"], expected)
+
+    def test_non_date_numeric_suffixes_are_not_amounts(self):
+        texts = (
+            "100円50", "100円123", "100円5個", "100円2026",
+            "100円1.5", "100円-20", "1603円8月20",
+            "1603円8/20", "1603円2026/8/20",
+        )
+        for text in texts:
+            with self.subTest(text=text):
+                self.assertEqual(_status(text), "no_amount")
+                self.assertEqual(find_amount_spans(text), [])
+
+    def test_impossible_japanese_dates_do_not_relax_boundary(self):
+        texts = (
+            "100円13月1日",
+            "100円2月30日",
+            "100円8月32日",
+            "100円2025年2月29日",
+            "100円0000年8月20日",
+        )
+        for text in texts:
+            with self.subTest(text=text):
+                self.assertEqual(_status(text), "no_amount")
+                self.assertEqual(find_amount_spans(text), [])
+
+    def test_yearless_leap_day_is_structurally_valid_but_impossible_day_is_not(self):
+        self.assertEqual(extract_amount_result("1603円2月29日")["amount"], 1603)
+        self.assertEqual(_status("1603円2月30日"), "no_amount")
+        self.assertEqual(extract_amount_result("1603円2024年2月29日")["amount"], 1603)
+        self.assertEqual(_status("1603円2025年2月29日"), "no_amount")
+
+    def test_japanese_date_suffix_preserves_multiple_amounts_status(self):
+        result = extract_amount_result("1603円8月20日と500円")
+        self.assertEqual(result["status"], "multiple_amounts")
+        self.assertEqual(result["amounts"], [1603, 500])
+
+    def test_invalid_spaced_amount_before_date_stays_invalid(self):
+        self.assertEqual(_status("1 603円8月20日"), "invalid_amount_format")
+        self.assertEqual(find_amount_spans("1 603円8月20日"), [])
+
+    def test_real_five_input_returns_exact_amount_spans(self):
+        text = (
+            "無印2170円8月18日日用品、ダイソー660円8月10日日用品、"
+            "業務スーパー8月10日食料品1361円、キャンドゥー7月26日330円日用品"
+            "キャンドゥー8月18日880円日用品"
+        )
+        self.assertEqual(
+            find_amount_spans(text),
+            [(2, 7, 2170), (20, 24, 660), (47, 52, 1361),
+             (64, 68, 330), (82, 86, 880)],
+        )
 
 
 class KakeiboAmountLlmDisagreementTests(unittest.TestCase):

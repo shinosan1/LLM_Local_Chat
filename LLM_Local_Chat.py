@@ -72,6 +72,7 @@ import threading
 import time
 import random
 import stat
+from copy import deepcopy
 from enum import Enum
 
 import tkinter as tk
@@ -112,7 +113,15 @@ from portable_history import (
     import_archive,
     session_digest,
 )
-from resource_monitor import adjust_llm, normalize_whisper_mode
+from resource_monitor import (
+    adjust_llm,
+    hard_reserve_mb,
+    normalize_llm_gpu_offload_mode,
+    normalize_whisper_mode,
+    read_gguf_total_layers,
+    required_vram_mb_for_layers,
+    startup_reserve_mb,
+)
 from history_crypto import HistoryCryptoError
 from session_store import (
     ALLOWED_RETENTION_DAYS,
@@ -135,7 +144,7 @@ if sys.platform == "win32":
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.7.1"
 
 
 def app_path(*parts: str) -> str:
@@ -214,6 +223,14 @@ WHISPER_MODE_LABELS = {
     "gpu_medium": "GPU medium（高精度・高VRAM）",
     "cpu_small": "CPU small（省VRAM）",
 }
+LLM_GPU_OFFLOAD_MODE_LABELS = {
+    "auto": "自動",
+    "full": "Full GPU",
+    "75": "約75%",
+    "50": "約50%",
+    "25": "約25%",
+    "cpu": "CPU",
+}
 
 
 def _valid_positive_int(value, fallback: int) -> int:
@@ -241,6 +258,7 @@ def load_settings() -> dict:
         tts_rate      = DEFAULT_TTS_RATE,
         mic_enabled   = False,
         whisper_mode  = "auto",
+        llm_gpu_offload_mode = "auto",
         vad_threshold = DEFAULT_VAD_RMS,
         n_threads_batch = DEFAULT_N_THREADS_BATCH,
         n_batch       = DEFAULT_N_BATCH,
@@ -274,26 +292,184 @@ def load_settings() -> dict:
         defaults.get("vad_threshold"), DEFAULT_VAD_RMS)
     defaults["whisper_mode"] = normalize_whisper_mode(
         defaults.get("whisper_mode"))
+    defaults["llm_gpu_offload_mode"] = normalize_llm_gpu_offload_mode(
+        defaults.get("llm_gpu_offload_mode"))
     defaults["history_retention_days"] = normalize_retention_days(
         defaults.get("history_retention_days"))
     return defaults
 
 
-def save_settings(d: dict) -> None:
+def save_settings(d: dict) -> bool:
     try:
         atomic_write_json(SETTINGS_FILE, d)
+        return True
     except Exception as e:
         print(f"[設定保存エラー] {e}")
+        return False
+
+
+_GPU_OOM_SPECIFIC_MARKERS = (
+    "cublas_status_alloc_failed",
+    "cudamalloc",
+    "cuda_error_out_of_memory",
+    "ggml_cuda_host_malloc",
+)
+_GPU_OOM_GENERAL_MARKERS = (
+    "out of memory",
+    "allocation failed",
+    "failed to allocate",
+)
+_GPU_CONTEXT_MARKERS = ("cuda", "gpu", "vram", "ggml_cuda")
+
+
+def _is_gpu_vram_load_error(exc: BaseException) -> bool:
+    """GPUメモリ由来と明示できるロード例外だけを段階降格対象にする。"""
+    messages = []
+    current = exc
+    seen = set()
+    while isinstance(current, BaseException) and id(current) not in seen:
+        seen.add(id(current))
+        messages.append(str(current).lower())
+        current = current.__cause__ or current.__context__
+    combined = "\n".join(messages)
+    if any(marker in combined for marker in _GPU_OOM_SPECIFIC_MARKERS):
+        return True
+    return (
+        any(marker in combined for marker in _GPU_OOM_GENERAL_MARKERS)
+        and any(marker in combined for marker in _GPU_CONTEXT_MARKERS)
+    )
+
+
+def _release_cuda_resources() -> None:
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _close_loaded_candidate(llm) -> None:
+    """次候補を重ねる前に、成功済みモデルを確実に解放する。"""
+    close = getattr(llm, "close", None)
+    if not callable(close):
+        raise RuntimeError("ロード済みLLMを安全に解放できません")
+    try:
+        close()
+    except Exception as exc:
+        raise RuntimeError("ロード済みLLMの解放に失敗しました") from exc
+    _release_cuda_resources()
+
+
+def _valid_gpu_snapshot(snapshot) -> bool:
+    if not isinstance(snapshot, dict) or snapshot.get("available") is not True:
+        return False
+    return all(
+        isinstance(snapshot.get(key), int)
+        and not isinstance(snapshot.get(key), bool)
+        and snapshot[key] >= 0
+        for key in ("total_mb", "used_mb", "free_mb")
+    ) and snapshot["total_mb"] > 0
+
+
+def _candidate_required_mb(candidate: dict, params: dict, snapshot: dict) -> int | None:
+    layers = candidate.get("n_gpu_layers")
+    if layers == 0:
+        return 0
+    if not _valid_gpu_snapshot(snapshot):
+        return None
+    reserve_mb = startup_reserve_mb(snapshot["total_mb"])
+    if layers == -1:
+        model_mb = params.get("model_mb")
+        if not isinstance(model_mb, int) or isinstance(model_mb, bool) or model_mb <= 0:
+            return None
+        return model_mb + reserve_mb
+    return required_vram_mb_for_layers(
+        params.get("model_mb"),
+        reserve_mb,
+        layers,
+        params.get("total_layers"),
+    )
+
+
+def _offload_percent_half_up(selected_layers: int, total_layers: int) -> int:
+    quotient, remainder = divmod(selected_layers * 100, total_layers)
+    return quotient + int(remainder * 2 >= total_layers)
+
+
+def format_llm_offload_state(state: dict | None) -> str:
+    """実ロード済みstateを設定画面向けの読み取り専用表示へ変換する。"""
+    if not isinstance(state, dict):
+        return "未ロード"
+    mode = state.get("mode")
+    requested = state.get("n_gpu_layers")
+    total = state.get("total_layers")
+    valid_total = (
+        isinstance(total, int)
+        and not isinstance(total, bool)
+        and total > 0
+    )
+    reason_label = {
+        "auto_select": "自動選択",
+        "auto_downshift": "VRAM不足により自動downshift",
+        "manual_select": "手動選択",
+        "safe_fallback": "安全fallback",
+        "recovery": "以前の設定へ復旧",
+    }.get(state.get("selection_reason"), "自動選択")
+    if not valid_total:
+        if mode == "full" and requested == -1:
+            return f"Full GPU（{reason_label}・総レイヤー数不明）"
+        if mode == "cpu" and requested == 0:
+            return f"CPU（{reason_label}・総レイヤー数不明）"
+        if mode == "partial" and isinstance(requested, int) and requested > 0:
+            return f"Partial GPU（{reason_label}・総レイヤー数不明）"
+        return "不明"
+
+    if mode == "full" and requested == -1:
+        selected = total
+        label = "Full GPU"
+    elif mode == "cpu" and requested == 0:
+        selected = 0
+        label = "CPU"
+    elif (
+        mode == "partial"
+        and isinstance(requested, int)
+        and not isinstance(requested, bool)
+        and 1 <= requested < total
+    ):
+        selected = requested
+        label = "Partial GPU"
+    else:
+        return "不明"
+    percent = _offload_percent_half_up(selected, total)
+    return (
+        f"{percent}%（{selected} / {total}層・{label}・{reason_label}）"
+    )
 
 
 # ═══════════════════════════════════════════════════════
 #  ■ LLM ユーティリティ
 # ═══════════════════════════════════════════════════════
-def init_llm(model_path: str, n_ctx: int, res_monitor, perf_settings: dict | None = None) -> Llama:
+def init_llm(
+    model_path: str,
+    n_ctx: int,
+    res_monitor,
+    perf_settings: dict | None = None,
+    *,
+    offload_mode: str = "auto",
+    downshift_from_layers: int | None = None,
+) -> Llama:
     model_path = resolve_model_path(model_path)
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"モデルが見つかりません:\n{model_path}")
-    params = adjust_llm(res_monitor, model_path=model_path)
+    offload_mode = normalize_llm_gpu_offload_mode(offload_mode)
+    params = adjust_llm(
+        res_monitor,
+        model_path=model_path,
+        offload_mode=offload_mode,
+        downshift_from_layers=downshift_from_layers,
+    )
     perf = perf_settings or {}
     base_kwargs = dict(
         model_path   = model_path,
@@ -315,13 +491,53 @@ def init_llm(model_path: str, n_ctx: int, res_monitor, perf_settings: dict | Non
         use_mmap = _valid_bool(perf.get("use_mmap"), DEFAULT_USE_MMAP),
     )
 
-    last_err = None
-    layer_modes = [params["n_gpu_layers"]]
-    if params["n_gpu_layers"] == -1:
-        layer_modes.append(0)
+    candidates = params.get("load_candidates")
+    if not isinstance(candidates, list) or not candidates:
+        layers = params.get("n_gpu_layers", 0)
+        candidates = [{
+            "n_gpu_layers": layers,
+            "mode": "full" if layers == -1 else "cpu",
+            "reason": params.get("reason", "legacy_decision"),
+            "required_mb": params.get("required_mb", 0),
+        }]
+        if layers == -1:
+            candidates.append({
+                "n_gpu_layers": 0,
+                "mode": "cpu",
+                "reason": "cpu_after_gpu_fallback",
+                "required_mb": 0,
+            })
 
-    before = params["snapshot"]
-    for layer_index, layers in enumerate(layer_modes):
+    last_err = None
+    before = params.get("snapshot", {})
+    for candidate in candidates:
+        layers = candidate.get("n_gpu_layers")
+        if not isinstance(layers, int) or isinstance(layers, bool):
+            continue
+        pre_snapshot = None
+        if layers != 0:
+            try:
+                pre_snapshot = res_monitor.snapshot()
+            except Exception:
+                pre_snapshot = None
+            required_mb = _candidate_required_mb(
+                candidate, params, pre_snapshot)
+            if (
+                required_mb is None
+                or not _valid_gpu_snapshot(pre_snapshot)
+                or pre_snapshot["free_mb"] < required_mb
+            ):
+                free_mb = (
+                    pre_snapshot.get("free_mb", "unknown")
+                    if isinstance(pre_snapshot, dict) else "unknown"
+                )
+                print(
+                    f"[LLM] skip {candidate.get('reason', 'gpu')} "
+                    f"layers={layers}: free={free_mb}MB "
+                    f"required={required_mb if required_mb is not None else 'unknown'}MB"
+                )
+                continue
+
         layer_base = {**base_kwargs, "n_gpu_layers": layers}
         attempts = [("perf", {**layer_base, **perf_kwargs})]
         if perf_kwargs["flash_attn"]:
@@ -329,35 +545,12 @@ def init_llm(model_path: str, n_ctx: int, res_monitor, perf_settings: dict | Non
             no_flash["flash_attn"] = False
             attempts.append(("perf_no_flash_attn", {**layer_base, **no_flash}))
         attempts.append(("base", layer_base))
-
-        if layer_index:
-            print("[LLM] GPU load failed; retrying once on CPU")
-            try:
-                import gc
-                import torch
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
-
+        downshift = False
         for idx, (label, kwargs) in enumerate(attempts[:3], 1):
             try:
                 if label != "perf":
                     print(f"[LLM] retry load with {label}")
                 llm = Llama(**kwargs)
-                res_monitor.llm_uses_gpu = layers == -1
-                after = res_monitor.snapshot()
-                print(
-                    f"[VRAM] after_llm total={after['total_mb']}MB "
-                    f"used={after['used_mb']}MB free={after['free_mb']}MB "
-                    f"delta={after['used_mb'] - before['used_mb']}MB"
-                )
-                print(
-                    f"[LLM] load complete device={'GPU' if layers == -1 else 'CPU'} "
-                    f"requested_layers={layers}"
-                )
-                return llm
             except Exception as e:
                 last_err = e
                 shown = {k: kwargs.get(k) for k in (
@@ -368,7 +561,104 @@ def init_llm(model_path: str, n_ctx: int, res_monitor, perf_settings: dict | Non
                     f"[LLM] load attempt {idx} failed ({label}): {shown} "
                     f"-> {type(e).__name__}: {e}"
                 )
-    raise last_err
+                if layers != 0 and _is_gpu_vram_load_error(e):
+                    print(
+                        f"[LLM] GPU memory load failure; lowering offload "
+                        f"from layers={layers}"
+                    )
+                    _release_cuda_resources()
+                    downshift = True
+                    break
+                continue
+
+            try:
+                after = res_monitor.snapshot()
+            except Exception:
+                after = None
+            if layers != 0 and (
+                not _valid_gpu_snapshot(after)
+                or after["free_mb"] < hard_reserve_mb(after["total_mb"])
+            ):
+                free_mb = (
+                    after.get("free_mb", "unknown")
+                    if isinstance(after, dict) else "unknown"
+                )
+                print(
+                    f"[LLM] post-load safety failed layers={layers}: "
+                    f"free={free_mb}MB"
+                )
+                _close_loaded_candidate(llm)
+                downshift = True
+                break
+
+            total_layers = params.get("total_layers")
+            if not isinstance(total_layers, int) or isinstance(total_layers, bool):
+                total_layers = None
+            mode = "full" if layers == -1 else ("partial" if layers > 0 else "cpu")
+            selected_layers = (
+                total_layers if layers == -1 and total_layers is not None
+                else (layers if layers >= 0 else None)
+            )
+            runtime_state = {
+                "total_layers": total_layers,
+                "n_gpu_layers": layers,
+                "selected_gpu_layers": selected_layers,
+                "mode": mode,
+                "selection_reason": "auto_downshift" if (
+                    downshift_from_layers is not None
+                ) else (
+                    "auto_select" if offload_mode == "auto" else (
+                        "manual_select"
+                        if layers == params.get("requested_n_gpu_layers")
+                        else "safe_fallback"
+                    )
+                ),
+                "candidate_reason": candidate.get("reason"),
+                "requested_mode": offload_mode,
+                "load_profile": label,
+                "selection_snapshot": deepcopy(
+                    pre_snapshot if layers != 0 else before),
+                "load_snapshot": deepcopy(after),
+            }
+            setattr(llm, "_offload_runtime_state", runtime_state)
+            after_for_log = after if isinstance(after, dict) else {}
+            before_used = before.get("used_mb", 0) if isinstance(before, dict) else 0
+            after_used = after_for_log.get("used_mb", 0)
+            print(
+                f"[VRAM] after_llm total={after_for_log.get('total_mb', 0)}MB "
+                f"used={after_used}MB free={after_for_log.get('free_mb', 0)}MB "
+                f"delta={after_used - before_used}MB"
+            )
+            if total_layers is not None:
+                shown_layers = total_layers if layers == -1 else layers
+                if mode == "cpu":
+                    print(
+                        f"[GPU] VRAM guard: CPU selected: "
+                        f"0/{total_layers} layers"
+                    )
+                else:
+                    print(
+                        f"[GPU] VRAM guard: {mode} GPU offload selected: "
+                        f"{shown_layers}/{total_layers} layers"
+                    )
+            else:
+                print(
+                    f"[GPU] VRAM guard: {mode} selected; total layers unknown"
+                )
+            print(
+                f"[LLM] load complete device={'GPU' if layers != 0 else 'CPU'} "
+                f"requested_layers={layers} profile={label}"
+            )
+            return llm
+
+        if downshift:
+            continue
+        if last_err is not None:
+            # 非VRAMエラーを層数変更で隠さない。
+            raise last_err
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("安全にロードできるLLM候補がありません")
 
 
 def count_tokens(llm: Llama, text: str) -> int:
@@ -710,7 +1000,12 @@ class DuplicateImportDialog(tk.Toplevel):
 #  ■ 設定ダイアログ
 # ═══════════════════════════════════════════════════════
 class SettingsDialog(tk.Toplevel):
-    def __init__(self, parent: tk.Tk, cfg: dict):
+    def __init__(
+        self,
+        parent: tk.Tk,
+        cfg: dict,
+        offload_state: dict | None = None,
+    ):
         super().__init__(parent)
         self.title("生成設定")
         self.configure(bg=C["bg_main"])
@@ -746,42 +1041,74 @@ class SettingsDialog(tk.Toplevel):
             command=self._browse,
         ).pack(side=tk.LEFT, padx=(6, 0))
 
+        # 希望モードは保存し、実配置はruntime stateだけを表示する。
+        lbl(1, "LLM GPUオフロード モード:")
+        current_offload_mode = normalize_llm_gpu_offload_mode(
+            cfg.get("llm_gpu_offload_mode"))
+        self.v_llm_offload_mode = tk.StringVar(
+            value=LLM_GPU_OFFLOAD_MODE_LABELS[current_offload_mode])
+        offload_menu = tk.OptionMenu(
+            self,
+            self.v_llm_offload_mode,
+            *LLM_GPU_OFFLOAD_MODE_LABELS.values(),
+        )
+        offload_menu.config(
+            bg=C["bg_input"], fg=C["fg_main"],
+            activebackground=C["accent"], bd=0, width=18,
+        )
+        offload_menu["menu"].config(bg=C["bg_input"], fg=C["fg_main"])
+        offload_menu.grid(row=1, column=1, sticky="w", **P)
+
+        lbl(2, "現在の実行状態:")
+        tk.Label(
+            self,
+            text=format_llm_offload_state(offload_state),
+            bg=C["bg_main"], fg=C["fg_main"],
+        ).grid(row=2, column=1, columnspan=2, sticky="w", **P)
+        tk.Label(
+            self,
+            text=(
+                "GPUへ配置したLLMレイヤー割合です。WindowsのGPU使用率とは異なります。"
+            ),
+            bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
+        ).grid(row=3, column=1, columnspan=2, sticky="w", padx=16, pady=(0, 4))
+
         # コンテキスト長
-        lbl(1, "コンテキスト長 (n_ctx):")
-        self.e_ctx = ent(1, cfg.get("n_ctx", DEFAULT_N_CTX))
+        lbl(4, "コンテキスト長 (n_ctx):")
+        self.e_ctx = ent(4, cfg.get("n_ctx", DEFAULT_N_CTX))
         tk.Label(self, text="推奨: 8192",
-                 bg=C["bg_main"], fg=C["fg_sub"],
-                 font=FONT_SMALL).grid(row=1, column=2, sticky="w", **P)
-
-        # 最大返答トークン
-        lbl(2, "最大返答トークン数:")
-        self.e_tok = ent(2, cfg.get("max_tokens", DEFAULT_MAX_TOKENS))
-        tk.Label(self, text="推奨: 256〜512",
-                 bg=C["bg_main"], fg=C["fg_sub"],
-                 font=FONT_SMALL).grid(row=2, column=2, sticky="w", **P)
-
-        # 会話の自由度
-        lbl(3, "会話の自由度 (0.0 – 2.0):")
-        self.e_temp = ent(3, cfg.get("temperature", DEFAULT_TEMP))
-
-        # VAD 感度
-        lbl(4, "音声検出感度 (RMS 閾値):")
-        self.e_vad = ent(4, cfg.get("vad_threshold", DEFAULT_VAD_RMS))
-        tk.Label(self, text="小さいほど高感度",
                  bg=C["bg_main"], fg=C["fg_sub"],
                  font=FONT_SMALL).grid(row=4, column=2, sticky="w", **P)
 
+        # 最大返答トークン
+        lbl(5, "最大返答トークン数:")
+        self.e_tok = ent(5, cfg.get("max_tokens", DEFAULT_MAX_TOKENS))
+        tk.Label(self, text="推奨: 256〜512",
+                 bg=C["bg_main"], fg=C["fg_sub"],
+                 font=FONT_SMALL).grid(row=5, column=2, sticky="w", **P)
+
+        # 会話の自由度
+        lbl(6, "会話の自由度 (0.0 – 2.0):")
+        self.e_temp = ent(6, cfg.get("temperature", DEFAULT_TEMP))
+
+        # VAD 感度
+        lbl(7, "音声検出感度 (RMS 閾値):")
+        self.e_vad = ent(7, cfg.get("vad_threshold", DEFAULT_VAD_RMS))
+        tk.Label(self, text="小さいほど高感度",
+                 bg=C["bg_main"], fg=C["fg_sub"],
+                 font=FONT_SMALL).grid(row=7, column=2, sticky="w", **P)
+
         # TTS 読み上げ速度
-        lbl(5, "読み上げ速度 (-10 ～ 10):")
-        self.e_tts_rate = ent(5, cfg.get("tts_rate", DEFAULT_TTS_RATE))
+        lbl(8, "読み上げ速度 (-10 ～ 10):")
+        self.e_tts_rate = ent(8, cfg.get("tts_rate", DEFAULT_TTS_RATE))
         tk.Label(
             self,
             text="0: 標準 / +2: 速め（次の読み上げから反映）",
             bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
-        ).grid(row=5, column=2, sticky="w", **P)
+        ).grid(row=8, column=2, sticky="w", **P)
 
         # Whisper 実行モード（起動時のみ反映）
-        lbl(6, "Whisper実行モード:")
+        lbl(9, "Whisper実行モード:")
         current_mode = normalize_whisper_mode(cfg.get("whisper_mode"))
         self.v_whisper_mode = tk.StringVar(
             value=WHISPER_MODE_LABELS[current_mode])
@@ -792,14 +1119,14 @@ class SettingsDialog(tk.Toplevel):
             activebackground=C["accent"], bd=0, width=25,
         )
         whisper_menu["menu"].config(bg=C["bg_input"], fg=C["fg_main"])
-        whisper_menu.grid(row=6, column=1, sticky="w", **P)
+        whisper_menu.grid(row=9, column=1, sticky="w", **P)
         tk.Label(
             self, text="変更は次回起動時に反映",
             bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
-        ).grid(row=6, column=2, sticky="w", **P)
+        ).grid(row=9, column=2, sticky="w", **P)
 
         # 会話履歴の保存期間
-        lbl(7, "会話履歴の保存期間:")
+        lbl(10, "会話履歴の保存期間:")
         retention_labels = {
             0: "無期限",
             30: "30日",
@@ -818,7 +1145,7 @@ class SettingsDialog(tk.Toplevel):
             activebackground=C["accent"], bd=0, width=18,
         )
         retention_menu["menu"].config(bg=C["bg_input"], fg=C["fg_main"])
-        retention_menu.grid(row=7, column=1, sticky="w", **P)
+        retention_menu.grid(row=10, column=1, sticky="w", **P)
         self._retention_labels = retention_labels
 
         # 起動時マイクON/OFF
@@ -828,7 +1155,7 @@ class SettingsDialog(tk.Toplevel):
             variable=self.v_mic,
             bg=C["bg_main"], fg=C["fg_main"],
             selectcolor=C["bg_input"], activebackground=C["bg_main"],
-        ).grid(row=8, column=0, columnspan=3, sticky="w", padx=16, pady=4)
+        ).grid(row=11, column=0, columnspan=3, sticky="w", padx=16, pady=4)
 
         # 起動時TTS ON/OFF
         self.v_tts = BooleanVar(value=cfg.get("tts_enabled", False))
@@ -837,21 +1164,26 @@ class SettingsDialog(tk.Toplevel):
             variable=self.v_tts,
             bg=C["bg_main"], fg=C["fg_main"],
             selectcolor=C["bg_input"], activebackground=C["bg_main"],
-        ).grid(row=9, column=0, columnspan=3, sticky="w", padx=16, pady=4)
+        ).grid(row=12, column=0, columnspan=3, sticky="w", padx=16, pady=4)
 
         tk.Label(
             self,
             text="※ 体感速度はWindowsの音声エンジンによって異なります",
             bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
-        ).grid(row=10, column=0, columnspan=3, sticky="w", padx=16, pady=(2, 4))
+        ).grid(row=13, column=0, columnspan=3, sticky="w", padx=16, pady=(2, 4))
 
         # ボタン
         bf = tk.Frame(self, bg=C["bg_main"])
-        bf.grid(row=11, column=0, columnspan=3, pady=16)
+        bf.grid(row=14, column=0, columnspan=3, pady=16)
         tk.Button(
             bf, text="保存して適用",
             bg=C["accent"], fg="white", width=14, bd=0,
             command=self._save,
+        ).pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            bf, text="GPU配置を再評価",
+            bg=C["bg_input"], fg=C["fg_main"], width=14, bd=0,
+            command=lambda: self._save(reassess=True),
         ).pack(side=tk.LEFT, padx=8)
         tk.Button(
             bf, text="キャンセル",
@@ -869,7 +1201,7 @@ class SettingsDialog(tk.Toplevel):
             self.e_model.delete(0, tk.END)
             self.e_model.insert(0, p)
 
-    def _save(self) -> None:
+    def _save(self, reassess: bool = False) -> None:
         try:
             mp  = self.e_model.get().strip()
             ctx = int(self.e_ctx.get())
@@ -891,6 +1223,17 @@ class SettingsDialog(tk.Toplevel):
                 key for key, label in WHISPER_MODE_LABELS.items()
                 if label == self.v_whisper_mode.get()
             )
+            llm_offload_mode = next(
+                key for key, label in LLM_GPU_OFFLOAD_MODE_LABELS.items()
+                if label == self.v_llm_offload_mode.get()
+            )
+            if reassess and llm_offload_mode != "auto":
+                messagebox.showinfo(
+                    "GPU配置を再評価",
+                    "GPU配置の再評価は「自動」モードで使用できます。",
+                    parent=self,
+                )
+                return
             retention_days = next(
                 days for days, label in self._retention_labels.items()
                 if label == self.v_retention.get()
@@ -900,6 +1243,8 @@ class SettingsDialog(tk.Toplevel):
                 temperature=tmp, vad_threshold=vad,
                 tts_rate=tts_rate,
                 whisper_mode=whisper_mode,
+                llm_gpu_offload_mode=llm_offload_mode,
+                gpu_reassess=reassess,
                 history_retention_days=retention_days,
                 mic_enabled=self.v_mic.get(),
                 tts_enabled=self.v_tts.get())
@@ -1274,6 +1619,8 @@ class ChatApp:
         self._max_tokens  = self._cfg["max_tokens"]
         self._temperature = self._cfg["temperature"]
         self._vad_thresh  = self._cfg.get("vad_threshold", DEFAULT_VAD_RMS)
+        self._llm_gpu_offload_mode = normalize_llm_gpu_offload_mode(
+            self._cfg.get("llm_gpu_offload_mode"))
         self._llm_perf_settings = {
             "n_threads_batch": self._cfg["n_threads_batch"],
             "n_batch": self._cfg["n_batch"],
@@ -1286,15 +1633,18 @@ class ChatApp:
         # ── ランタイム変数 ────────────────────────
         self._is_thinking  = False
         self._closing      = False
+        self._closing_event = threading.Event()
         self._llm_abort    = False   # 生成中断フラグ
         self._is_guest     = False
-        self._llm_loading  = True
+        self._llm_loading  = False
         self.llm: Llama | None        = None
+        self._llm_offload_state: dict | None = None
         self._whisper_model           = None   # バックグラウンドでロード
         self._whisper_load_skipped    = False  # 起動時にWhisperロードをスキップしたか
         self._whisper_load_started    = False  # LLM準備後に初回だけロードする
         self._llm_load_generation     = 0
         self._llm_load_active         = threading.Event()
+        self._active_reload_job: dict | None = None
         self._portable_pending        = threading.Event()
         self._files: list[str]        = []
         self._current_session: dict   = {}
@@ -1447,7 +1797,7 @@ class ChatApp:
     #  LLM ロード
     # ══════════════════════════════════════════════
     @staticmethod
-    def _close_llm_instance(llm) -> None:
+    def _close_llm_instance(llm, *, strict: bool = False) -> None:
         if llm is None:
             return
         close = getattr(llm, "close", None)
@@ -1456,6 +1806,8 @@ class ChatApp:
                 close()
             except Exception as exc:
                 print(f"[LLM] モデル解放エラー: {exc}")
+                if strict:
+                    raise RuntimeError("旧LLMを安全に解放できません") from exc
         del llm
         gc.collect()
         try:
@@ -1465,61 +1817,357 @@ class ChatApp:
         except Exception:
             pass
 
-    def _detach_current_llm(self) -> None:
+    def _detach_current_llm(self) -> list:
         current = self.llm
-        self.llm = None
         try:
             service_llm = self._ctrl._llm_service.detach_llm()
         except RuntimeError:
-            self.llm = current
             raise
-        self._close_llm_instance(service_llm)
-        if current is not service_llm:
-            self._close_llm_instance(current)
+        self.llm = None
+        return [
+            model for index, model in enumerate((service_llm, current))
+            if model is not None
+            and all(model is not previous for previous in (service_llm, current)[:index])
+        ]
+
+    def _set_reload_controls(self, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        for name in (
+            "_btn_send", "_btn_stop", "_btn_mic", "_btn_kakeibo",
+            "_btn_health", "_entry",
+        ):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                try:
+                    widget.config(state=state)
+                except (tk.TclError, AttributeError):
+                    pass
+
+    @staticmethod
+    def _preflight_llm_reload(model_path: str, offload_mode: str) -> None:
+        resolved = resolve_model_path(model_path)
+        if not os.path.isfile(resolved):
+            raise FileNotFoundError(f"モデルが見つかりません:\n{resolved}")
+        if os.path.getsize(resolved) <= 0:
+            raise ValueError("モデルファイルが空です")
+        if offload_mode in ("75", "50", "25"):
+            if read_gguf_total_layers(resolved) is None:
+                raise ValueError(
+                    "総レイヤー数を取得できないため、指定したPartial GPUを安全に選択できません"
+                )
 
     def _reload_llm(
         self,
         rollback_config: tuple[str, int] | None = None,
         recovery: bool = False,
-    ) -> None:
+        *,
+        target_config: tuple[str, int, str] | None = None,
+        downshift_from_layers: int | None = None,
+        reload_reason: str = "settings",
+        on_complete=None,
+        persist_on_success: bool = False,
+        allow_recovery: bool = True,
+        internal: bool = False,
+    ) -> bool:
+        if getattr(self, "_closing", False) or getattr(self, "_llm_loading", False):
+            return False
         if self._ctrl._llm_service.is_running():
             raise RuntimeError("LLM実行中はモデルを再読込できません")
+        if not internal and self._ctrl.is_busy():
+            return False
+
+        if target_config is None:
+            target_config = (
+                self._model_path,
+                self._n_ctx,
+                getattr(self, "_llm_gpu_offload_mode", "auto"),
+            )
+        target_path, target_n_ctx, target_mode = target_config
+        target_mode = normalize_llm_gpu_offload_mode(target_mode)
+        if not hasattr(self, "_closing_event"):
+            self._closing_event = threading.Event()
+        if not hasattr(self, "_llm_load_active"):
+            self._llm_load_active = threading.Event()
         self._llm_load_generation += 1
         generation = self._llm_load_generation
         self._llm_loading = True
-        self._detach_current_llm()
-        model_path = self._model_path
-        n_ctx = self._n_ctx
-        perf_settings = dict(self._llm_perf_settings)
+        self._llm_load_active.set()
+        self._set_reload_controls(False)
+        job = {
+            "generation": generation,
+            "target": (target_path, target_n_ctx, target_mode),
+            "old_config": (
+                self._model_path,
+                self._n_ctx,
+                getattr(self, "_llm_gpu_offload_mode", "auto"),
+            ),
+            "old_state": deepcopy(getattr(self, "_llm_offload_state", None)),
+            "old_models": [],
+            "downshift_from_layers": downshift_from_layers,
+            "reload_reason": reload_reason,
+            "on_complete": on_complete,
+            "persist_on_success": persist_on_success,
+            "allow_recovery": bool(allow_recovery and not recovery),
+            "prepare_event": threading.Event(),
+            "accept_event": threading.Event(),
+            "prepared": False,
+            "accepted": False,
+            "success": False,
+            "error": None,
+            "recovered": False,
+        }
+        self._active_reload_job = job
         self._status_set(
-            f"⏳ モデル読込中: {os.path.basename(model_path)} …")
+            f"⏳ LLM再読み込み中: {os.path.basename(target_path)} …")
 
         def _worker() -> None:
-            self._llm_load_active.set()
+            llm = None
+            whisper_guard = False
             try:
+                self._preflight_llm_reload(target_path, target_mode)
+                posted = self._post_ui(
+                    lambda: self._prepare_reload_on_main(job))
+                if not posted:
+                    raise RuntimeError("UIへLLM再読み込み準備を通知できません")
+                while not job["prepare_event"].wait(0.1):
+                    if self._closing_event.is_set():
+                        raise RuntimeError("終了処理のためLLM再読み込みを中止しました")
+                if not job["prepared"]:
+                    raise job["error"] or RuntimeError(
+                        "LLM再読み込みの準備に失敗しました")
+
+                for old_model in job["old_models"]:
+                    self._close_llm_instance(old_model, strict=True)
+
+                begin_reload = getattr(
+                    getattr(self._deps, "whisper_pool", None),
+                    "begin_llm_reload", None)
+                if callable(begin_reload):
+                    whisper_guard = begin_reload(
+                        timeout=30.0,
+                        closing_event=self._closing_event,
+                    )
+                    if not whisper_guard:
+                        raise RuntimeError(
+                            "音声認識の終了を待機中にLLM再読み込みを中止しました"
+                        )
+
                 llm = init_llm(
-                    model_path, n_ctx, self._deps.res_monitor, perf_settings)
-                if generation != self._llm_load_generation or self._closing:
-                    self._close_llm_instance(llm)
+                    target_path,
+                    target_n_ctx,
+                    self._deps.res_monitor,
+                    dict(self._llm_perf_settings),
+                    offload_mode=target_mode,
+                    downshift_from_layers=downshift_from_layers,
+                )
+                state = getattr(llm, "_offload_runtime_state", None)
+                if isinstance(state, dict):
+                    state["reload_generation"] = generation
+                    state["reload_reason"] = reload_reason
+            except Exception as exc:
+                job["error"] = exc
+                # 手動変更だけ、旧設定を最大1回復旧する。Auto downshiftは
+                # 危険な上位配置へ戻さない。
+                if (
+                    job["prepared"]
+                    and job["allow_recovery"]
+                    and reload_reason != "auto_downshift"
+                    and job["old_models"]
+                    and whisper_guard
+                ):
+                    old_path, old_n_ctx, old_mode = job["old_config"]
+                    try:
+                        llm = init_llm(
+                            old_path,
+                            old_n_ctx,
+                            self._deps.res_monitor,
+                            dict(self._llm_perf_settings),
+                            offload_mode=old_mode,
+                        )
+                        state = getattr(llm, "_offload_runtime_state", None)
+                        if isinstance(state, dict):
+                            state["selection_reason"] = "recovery"
+                            state["reload_generation"] = generation
+                            state["reload_reason"] = "recovery"
+                        job["recovered"] = True
+                    except Exception as recovery_exc:
+                        job["error"] = RuntimeError(
+                            f"新設定の読込失敗: {exc}; 旧設定の復旧失敗: {recovery_exc}"
+                        )
+                        llm = None
+
+            try:
+                if not job["prepared"] and job["error"] is not None:
+                    posted = self._post_ui(
+                        lambda: self._accept_reload_on_main(job, None))
+                else:
+                    posted = self._post_ui(
+                        lambda model=llm: self._accept_reload_on_main(job, model))
+                if not posted:
                     return
-                self._post_ui(lambda: self._on_llm_ready(
-                    generation, llm, None, rollback_config, recovery))
-            except Exception as e:
-                self._post_ui(lambda err=e: self._on_llm_ready(
-                    generation, None, err, rollback_config, recovery))
+                deadline = time.monotonic() + 10.0
+                while not job["accept_event"].wait(0.1):
+                    if self._closing_event.is_set() or time.monotonic() >= deadline:
+                        return
+                if job["accepted"]:
+                    llm = None
             finally:
+                if llm is not None:
+                    self._close_llm_instance(llm)
+                if whisper_guard:
+                    self._deps.whisper_pool.end_llm_reload()
+                else:
+                    cancel_pause = getattr(
+                        getattr(self._deps, "whisper_pool", None),
+                        "cancel_reload_pause", None)
+                    if callable(cancel_pause):
+                        cancel_pause()
                 self._llm_load_active.clear()
+                self._post_ui(lambda: self._finish_reload_on_main(job))
 
         threading.Thread(target=_worker, daemon=True).start()
+        return True
+
+    def _prepare_reload_on_main(self, job: dict) -> None:
+        if (
+            self._closing
+            or job["generation"] != self._llm_load_generation
+            or job is not self._active_reload_job
+        ):
+            job["prepare_event"].set()
+            return
+        try:
+            request_pause = getattr(
+                getattr(self._deps, "whisper_pool", None),
+                "request_reload_pause", None)
+            if callable(request_pause):
+                request_pause()
+            job["old_models"] = self._detach_current_llm()
+            self._deps.res_monitor.llm_uses_gpu = None
+            job["prepared"] = True
+        except Exception as exc:
+            job["error"] = exc
+        finally:
+            job["prepare_event"].set()
+
+    def _accept_reload_on_main(self, job: dict, llm) -> None:
+        if (
+            self._closing
+            or job["generation"] != self._llm_load_generation
+            or job is not self._active_reload_job
+        ):
+            job["accept_event"].set()
+            return
+
+        if not job["prepared"]:
+            # preflight/detach失敗では旧LLMを維持する。
+            job["accepted"] = False
+            job["success"] = False
+            job["accept_event"].set()
+            return
+
+        if llm is None:
+            self.llm = None
+            self._llm_offload_state = None
+            self._deps.res_monitor.llm_uses_gpu = None
+            job["accept_event"].set()
+            return
+
+        state = getattr(llm, "_offload_runtime_state", None)
+        self._llm_offload_state = (
+            deepcopy(state) if isinstance(state, dict) else None
+        )
+        self._deps.res_monitor.llm_uses_gpu = (
+            state.get("n_gpu_layers") != 0
+            if isinstance(state, dict)
+            and isinstance(state.get("n_gpu_layers"), int)
+            else None
+        )
+        self.llm = llm
+        self._ctrl._llm_service.attach_llm(llm)
+        self._ctrl.clear_token_cache()
+        job["accepted"] = True
+        job["success"] = not job["recovered"]
+        if job["success"]:
+            self._model_path, self._n_ctx, self._llm_gpu_offload_mode = job["target"]
+            if job["persist_on_success"]:
+                self._cfg.update({
+                    "model_path": self._model_path,
+                    "n_ctx": self._n_ctx,
+                    "llm_gpu_offload_mode": self._llm_gpu_offload_mode,
+                })
+                if not save_settings(self._cfg):
+                    job["save_failed"] = True
+        job["accept_event"].set()
+
+    def _finish_reload_on_main(self, job: dict) -> None:
+        if job is not self._active_reload_job:
+            return
+        self._active_reload_job = None
+        self._llm_loading = False
+        if not self._closing:
+            self._set_reload_controls(not self._ctrl.is_busy())
+            self._update_status()
+            if job.get("save_failed"):
+                messagebox.showwarning(
+                    "設定保存エラー",
+                    "GPUオフロードの変更はこのセッションでは有効ですが、設定を保存できませんでした。",
+                    parent=self.root,
+                )
+            if job["error"] is not None and not job["success"]:
+                title = "モデル読込エラー"
+                message = (
+                    "以前のモデル設定へ復旧しました。\n\n"
+                    if job["recovered"] else
+                    (
+                        "現在のモデルを維持しました。\n\n"
+                        if not job["prepared"] and self.llm is not None else
+                        "モデルを利用可能な状態へ再読み込みできませんでした。\n\n"
+                    )
+                )
+                messagebox.showerror(title, f"{message}{job['error']}", parent=self.root)
+            callback = job.get("on_complete")
+            if callable(callback):
+                callback(job["success"], job["error"])
+            self._start_whisper_after_llm_once()
+
+    def _request_auto_downshift(self, on_complete) -> bool:
+        state = self._llm_offload_state
+        current_layers = (
+            state.get("n_gpu_layers") if isinstance(state, dict) else None
+        )
+        if not isinstance(current_layers, int) or current_layers == 0:
+            return False
+        return self._reload_llm(
+            target_config=(self._model_path, self._n_ctx, "auto"),
+            downshift_from_layers=current_layers,
+            reload_reason="auto_downshift",
+            on_complete=on_complete,
+            persist_on_success=False,
+            allow_recovery=False,
+            internal=True,
+        )
 
     def _on_llm_ready(
         self, generation, llm, err, rollback_config=None, recovery=False
     ) -> None:
         if generation != self._llm_load_generation or self._closing:
-            self._close_llm_instance(llm)
+            threading.Thread(
+                target=self._close_llm_instance, args=(llm,), daemon=True
+            ).start()
             return
         self._llm_loading = False
         if llm:
+            state = getattr(llm, "_offload_runtime_state", None)
+            self._llm_offload_state = (
+                deepcopy(state) if isinstance(state, dict) else None
+            )
+            self._deps.res_monitor.llm_uses_gpu = (
+                state.get("n_gpu_layers") != 0
+                if isinstance(state, dict)
+                and isinstance(state.get("n_gpu_layers"), int)
+                else None
+            )
             self.llm = llm
             self._ctrl._llm_service.attach_llm(llm)
             self._ctrl.clear_token_cache()
@@ -2754,19 +3402,25 @@ class ChatApp:
         )
 
     def _open_settings(self) -> None:
-        dlg = SettingsDialog(self.root, dict(
-            model_path    = self._model_path,
-            n_ctx         = self._n_ctx,
-            max_tokens    = self._max_tokens,
-            temperature   = self._temperature,
-            vad_threshold = self._vad_thresh,
-            tts_rate      = self.tts.rate,
-            history_retention_days=self._cfg.get(
-                "history_retention_days", 0),
-            mic_enabled = self._cfg.get("mic_enabled", False),
-            whisper_mode = self._cfg.get("whisper_mode", "auto"),
-            tts_enabled   = self.tts.enabled,
-        ))
+        dlg = SettingsDialog(
+            self.root,
+            dict(
+                model_path    = self._model_path,
+                n_ctx         = self._n_ctx,
+                max_tokens    = self._max_tokens,
+                temperature   = self._temperature,
+                vad_threshold = self._vad_thresh,
+                tts_rate      = self.tts.rate,
+                history_retention_days=self._cfg.get(
+                    "history_retention_days", 0),
+                mic_enabled = self._cfg.get("mic_enabled", False),
+                whisper_mode = self._cfg.get("whisper_mode", "auto"),
+                llm_gpu_offload_mode = getattr(
+                    self, "_llm_gpu_offload_mode", "auto"),
+                tts_enabled   = self.tts.enabled,
+            ),
+            offload_state=deepcopy(self._llm_offload_state),
+        )
         self.root.wait_window(dlg)
         if dlg.result is None:
             return
@@ -2797,15 +3451,24 @@ class ChatApp:
             new["model_path"] != self._model_path
             or new["n_ctx"] != self._n_ctx
         )
-        if model_changed and (self._ctrl.is_busy() or self._llm_loading):
+        requested_offload_mode = normalize_llm_gpu_offload_mode(
+            new.get("llm_gpu_offload_mode"))
+        offload_changed = requested_offload_mode != self._llm_gpu_offload_mode
+        reassess = bool(new.pop("gpu_reassess", False))
+        reload_requested = model_changed or offload_changed or reassess
+        if reload_requested and (self._ctrl.is_busy() or self._llm_loading):
             messagebox.showwarning(
                 "設定",
-                "AIの処理中またはモデル読込中はモデル設定を変更できません。\n"
+                "AIの処理中またはLLM再読込中はGPU配置・モデル設定を変更できません。\n"
                 "その他の設定だけを適用します。",
             )
             new["model_path"] = self._model_path
             new["n_ctx"] = self._n_ctx
+            new["llm_gpu_offload_mode"] = self._llm_gpu_offload_mode
             model_changed = False
+            offload_changed = False
+            reassess = False
+            reload_requested = False
         self._max_tokens  = new["max_tokens"]
         self._temperature = new["temperature"]
         self._vad_thresh  = new["vad_threshold"]
@@ -2816,8 +3479,25 @@ class ChatApp:
         self.tts.rate = new["tts_rate"]
         self._tts_var.set(new["tts_enabled"])  # メニューのチェック状態を同期
 
-        self._cfg.update(new)
-        save_settings(self._cfg)
+        # reload対象の3値は成功後にだけcommitする。その他は先に適用する。
+        non_reload = {
+            key: value for key, value in new.items()
+            if key not in ("model_path", "n_ctx", "llm_gpu_offload_mode")
+        }
+        self._cfg.update(non_reload)
+        if not reload_requested:
+            self._cfg.update({
+                "model_path": self._model_path,
+                "n_ctx": self._n_ctx,
+                "llm_gpu_offload_mode": self._llm_gpu_offload_mode,
+            })
+        settings_saved = save_settings(self._cfg)
+        if not settings_saved:
+            messagebox.showwarning(
+                "設定保存エラー",
+                "変更はこのセッションでは有効ですが、設定ファイルへ保存できませんでした。",
+                parent=self.root,
+            )
         applied_retention = normalize_retention_days(
             self._cfg.get("history_retention_days"))
         if applied_retention and applied_retention != old_retention:
@@ -2837,11 +3517,23 @@ class ChatApp:
                 "Whisper実行モードは次回起動時に反映されます。",
             )
 
-        if model_changed:
-            rollback_config = (self._model_path, self._n_ctx)
-            self._model_path = new["model_path"]
-            self._n_ctx      = new["n_ctx"]
-            self._reload_llm(rollback_config=rollback_config)
+        if reload_requested:
+            started = self._reload_llm(
+                target_config=(
+                    new["model_path"],
+                    new["n_ctx"],
+                    requested_offload_mode,
+                ),
+                reload_reason=("auto_reassess" if reassess else "settings"),
+                persist_on_success=True,
+                allow_recovery=True,
+            )
+            if not started:
+                messagebox.showwarning(
+                    "設定",
+                    "現在処理中のため、LLM GPUオフロードの変更を開始できませんでした。",
+                    parent=self.root,
+                )
         else:
             self._update_status()
 
@@ -2917,7 +3609,16 @@ class ChatApp:
             ):
                 return
         self._closing = True
+        closing_event = getattr(self, "_closing_event", None)
+        if closing_event is None:
+            closing_event = threading.Event()
+            self._closing_event = closing_event
+        closing_event.set()
         self._llm_load_generation += 1
+        reload_job = getattr(self, "_active_reload_job", None)
+        if isinstance(reload_job, dict):
+            reload_job.get("prepare_event", threading.Event()).set()
+            reload_job.get("accept_event", threading.Event()).set()
         self._ctrl.begin_shutdown()
         self._integrations.begin_closing()
         if self._voice:

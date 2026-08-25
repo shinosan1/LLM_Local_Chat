@@ -118,6 +118,26 @@ class KakeiboPromptTemplateTests(unittest.TestCase):
         prompt = self._prompt()
         self.assertNotIn("支出または収入", prompt)
 
+    def test_source_text_exact_substring_contract_is_stated(self):
+        prompt = self._prompt()
+        required = [
+            "連続する部分文字列",
+            "一字一句変更せず",
+            "半角スペース(U+0020)",
+            "全角スペース(U+3000)",
+            "句読点・カンマ・改行・数字の変更をしない",
+            "要約・言い換え・表記の整形・補完をせず",
+            "原文に存在しない文字を追加しない",
+        ]
+        for contract in required:
+            with self.subTest(contract=contract):
+                self.assertIn(contract, prompt)
+
+    def test_kakeibo_prompt_requests_json_only_without_explanation(self):
+        prompt = self._prompt()
+        self.assertIn("JSONオブジェクトを1個だけ", prompt)
+        self.assertIn("前後に説明文を付けない", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -30,6 +30,7 @@ __all__ = [
 _ALLOWED_TRANSACTION_KEYS = frozenset(
     {"source_text", "store", "category", "type", "memo"}
 )
+_HORIZONTAL_SPACES = frozenset({" ", "　"})
 
 
 def _clean_source_text(value) -> str:
@@ -78,6 +79,81 @@ def _locate_spans(fragments: list[str], user_text: str) -> list[tuple[int, int]]
     return located
 
 
+def _find_all(text: str, fragment: str) -> list[int]:
+    """fragment の全出現位置を、重なりを含めて返す。"""
+    starts: list[int] = []
+    position = 0
+    while True:
+        index = text.find(fragment, position)
+        if index < 0:
+            return starts
+        starts.append(index)
+        position = index + 1
+
+
+def _remove_horizontal_spaces_with_map(text: str) -> tuple[str, list[int]]:
+    """U+0020/U+3000だけを除き、各文字の原文位置を保持する。"""
+    characters: list[str] = []
+    source_indexes: list[int] = []
+    for index, character in enumerate(text):
+        if character in _HORIZONTAL_SPACES:
+            continue
+        characters.append(character)
+        source_indexes.append(index)
+    return "".join(characters), source_indexes
+
+
+def _recover_horizontal_space_fragments(
+    fragments: list[str], user_text: str
+) -> tuple[list[str], list[tuple[int, int]]] | None:
+    """半角/全角スペース差だけを許し、一意な原文断片とspanへ戻す。
+
+    完全一致しなかった入力にだけ使う安全側fallback。句読点・数字・改行など
+    U+0020/U+3000以外の文字は一切正規化しない。各断片の位置が1か所に決まり、
+    spanが重複しない場合だけ、LLM文字列ではなく user_text の実スライスを返す。
+    """
+    compact_user_text, source_indexes = _remove_horizontal_spaces_with_map(
+        user_text)
+    recovered: list[str] = []
+    spans: list[tuple[int, int]] = []
+
+    for fragment in fragments:
+        exact_starts = _find_all(user_text, fragment)
+        if exact_starts:
+            if len(exact_starts) != 1:
+                return None
+            start = exact_starts[0]
+            end = start + len(fragment)
+            original_fragment = fragment
+        else:
+            compact_fragment, _ = _remove_horizontal_spaces_with_map(fragment)
+            if not compact_fragment:
+                return None
+            compact_starts = _find_all(compact_user_text, compact_fragment)
+            if len(compact_starts) != 1:
+                return None
+            compact_start = compact_starts[0]
+            compact_end = compact_start + len(compact_fragment)
+            start = source_indexes[compact_start]
+            end = source_indexes[compact_end - 1] + 1
+            original_fragment = user_text[start:end]
+            original_compact, _ = _remove_horizontal_spaces_with_map(
+                original_fragment)
+            if original_compact != compact_fragment:
+                return None
+
+        recovered.append(original_fragment)
+        spans.append((start, end))
+
+    ordered_spans = sorted(spans)
+    for (_, previous_end), (next_start, _) in zip(
+        ordered_spans, ordered_spans[1:]
+    ):
+        if next_start < previous_end:
+            return None
+    return recovered, spans
+
+
 def normalize_transactions(transactions, user_text: str) -> dict:
     """LLM が返した取引候補列を検証し、原文順の断片とレコードへ正規化する。
 
@@ -99,14 +175,20 @@ def normalize_transactions(transactions, user_text: str) -> dict:
         if not entry.keys() <= _ALLOWED_TRANSACTION_KEYS:
             return {"status": "invalid_split", "items": [], "spans": []}
         fragment = _clean_source_text(entry.get("source_text"))
-        if not fragment or fragment not in user_text:
+        if not fragment:
             return {"status": "invalid_split", "items": [], "spans": []}
         fragments.append(fragment)
         records.append({k: v for k, v in entry.items() if k != "source_text"})
 
-    spans = _locate_spans(fragments, user_text)
-    if spans is None:
-        return {"status": "invalid_split", "items": [], "spans": []}
+    if all(fragment in user_text for fragment in fragments):
+        spans = _locate_spans(fragments, user_text)
+        if spans is None:
+            return {"status": "invalid_split", "items": [], "spans": []}
+    else:
+        recovered = _recover_horizontal_space_fragments(fragments, user_text)
+        if recovered is None:
+            return {"status": "invalid_split", "items": [], "spans": []}
+        fragments, spans = recovered
 
     order = sorted(range(len(fragments)), key=lambda i: spans[i][0])
     items = [(fragments[i], records[i]) for i in order]

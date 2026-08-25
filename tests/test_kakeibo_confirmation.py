@@ -1,5 +1,6 @@
 import datetime
 import unittest
+from unittest.mock import patch
 
 from kakeibo_confirmation import (
     build_kakeibo_candidate,
@@ -107,6 +108,60 @@ class BuildKakeiboCandidateTests(unittest.TestCase):
             llm_record, "ここら歯科　クリーニング 3020円 7/17")
         expected = f"{datetime.date.today().year}-07-17"
         self.assertEqual(candidate["date"], expected)
+
+    def test_japanese_month_day_reaches_confirmation_candidate(self):
+        real_date = datetime.date
+        fixed_today = real_date(2026, 8, 24)
+        with patch("kakeibo_date.datetime.date") as mocked_date:
+            mocked_date.today.return_value = fixed_today
+            mocked_date.side_effect = lambda *args, **kwargs: real_date(
+                *args, **kwargs)
+            candidate = build_kakeibo_candidate(
+                {"type": "支出", "category": "日用品", "store": "セリア"},
+                "8月22日セリア1130円",
+            )
+        self.assertEqual(candidate["date"], "2026-08-22")
+        self.assertEqual(candidate["amount"], 1130)
+
+    def test_natural_date_and_amount_inputs_reach_confirmation_candidate(self):
+        real_date = datetime.date
+        fixed_today = real_date(2026, 8, 24)
+        cases = {
+            "業務スーパー8/20 1603円 食料品": ("2026-08-20", 1603),
+            "8/20 業務スーパー 1603円 食料品": ("2026-08-20", 1603),
+            "業務スーパー 1603円 8/20": ("2026-08-20", 1603),
+            "業務スーパー2026/8/20 1603円 食料品": ("2026-08-20", 1603),
+            "業務スーパー2026-08-20 1603円 食料品": ("2026-08-20", 1603),
+            "業務スーパー8月20日 1603円 食料品": ("2026-08-20", 1603),
+            "セリア8月22日1130円 日用品": ("2026-08-22", 1130),
+            "2026/8/20 セリア 1130円 日用品": ("2026-08-20", 1130),
+            "2026年8月20日 セリア 1130円 日用品": ("2026-08-20", 1130),
+        }
+        with patch("kakeibo_date.datetime.date") as mocked_date:
+            mocked_date.today.return_value = fixed_today
+            mocked_date.side_effect = lambda *args, **kwargs: real_date(
+                *args, **kwargs)
+            for text, (expected_date, expected_amount) in cases.items():
+                with self.subTest(text=text):
+                    candidate = build_kakeibo_candidate(None, text)
+                    self.assertEqual(candidate["status"], "ok")
+                    self.assertEqual(candidate["date"], expected_date)
+                    self.assertEqual(candidate["amount"], expected_amount)
+
+    def test_date_prefixed_invalid_and_multiple_amounts_stay_rejected(self):
+        cases = {
+            "1 603円": "invalid_amount_format",
+            "20 1603円": "invalid_amount_format",
+            "8/20 1 603円": "invalid_amount_format",
+            "2026-08-20 1, 603円": "invalid_amount_format",
+            "8/20 1603円と1 500円": "invalid_amount_format",
+            "8/20 1603円と500円": "multiple_amounts",
+        }
+        for text, expected_status in cases.items():
+            with self.subTest(text=text):
+                candidate = build_kakeibo_candidate(None, text)
+                self.assertEqual(candidate["status"], expected_status)
+                self.assertIsNone(candidate["amount"])
 
     def test_type_expense_with_missing_category_key_gets_sono_ta(self):
         # category キー自体が存在しない場合も、typeがtruthyなら「その他支出」を設定する

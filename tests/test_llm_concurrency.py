@@ -56,6 +56,7 @@ class _TTS:
     def __init__(self):
         self.spoken = []
         self.stream_ended = 0
+        self.stream_begun = 0
 
     def speak(self, _text):
         self.spoken.append(_text)
@@ -64,7 +65,7 @@ class _TTS:
         self.stream_ended += 1
 
     def begin_stream(self):
-        pass
+        self.stream_begun += 1
 
     def stop_all(self):
         pass
@@ -98,6 +99,14 @@ class _App:
         self.root = _Root()
         self._is_thinking = False
         self._llm_abort = False
+        self._llm_loading = False
+        self._llm_load_generation = 1
+        self._llm_gpu_offload_mode = "auto"
+        self._llm_offload_state = {
+            "mode": "partial", "n_gpu_layers": 32, "total_layers": 42,
+        }
+        self._closing = False
+        self._current_path = "session"
         self._btn_send = _Widget()
         self._entry = _Widget()
         self._stream_buf = ""
@@ -288,6 +297,180 @@ class LeadingJsonFilterTests(unittest.TestCase):
 
 
 class ControllerGenerationTests(unittest.TestCase):
+    def test_hard_limit_auto_downshifts_and_retries_same_input_once(self):
+        app = _App()
+        app._entry.text = "通常入力"
+        ctrl = _controller(app)
+        decisions = iter((
+            {
+                "ok": False,
+                "reason": "free<512mb",
+                "reason_kind": "vram_hard_limit",
+                "requires_relocation": True,
+            },
+            {"ok": True, "max_tokens": 100},
+        ))
+        ctrl._resource_mgr.decide = lambda *_args, **_kwargs: next(decisions)
+        reload_calls = []
+
+        def downshift(callback):
+            reload_calls.append(app._entry.text)
+            app._llm_load_generation += 1
+            app._llm_offload_state = {
+                "mode": "partial", "n_gpu_layers": 21,
+                "total_layers": 42,
+                "selection_reason": "auto_downshift",
+            }
+            replacement = object()
+            app.llm = replacement
+            ctrl._llm_service.attach_llm(replacement)
+            callback(True, None)
+            return True
+
+        app._request_auto_downshift = downshift
+        generated = []
+
+        def generate(**kwargs):
+            generated.append(kwargs)
+            kwargs["on_done"]("応答")
+            return True
+
+        ctrl._llm_service.generate = generate
+        ctrl._prompt_builder.build = lambda *_args, **_kwargs: []
+
+        ctrl.handle_text()
+
+        self.assertEqual(len(reload_calls), 1)
+        self.assertEqual(len(generated), 1)
+        self.assertEqual(app._entry.text, "")
+        self.assertEqual(
+            [text for text, tag in app.writes if tag == "user_msg"],
+            ["通常入力\n"],
+        )
+        self.assertEqual(app.tts.stream_begun, 1)
+        self.assertEqual(len(app._current_session["history"]), 1)
+        self.assertEqual(app._current_session["history"][0]["user"], "通常入力")
+        self.assertEqual(app._llm_offload_state["n_gpu_layers"], 21)
+
+    def test_hard_limit_kakeibo_downshift_does_not_duplicate_confirmation(self):
+        app = _App()
+        app._kakeibo_mode = True
+        app._entry.text = "セリア8月22日1130円 日用品"
+        ctrl = _controller(app)
+        decisions = iter((
+            {
+                "ok": False,
+                "reason": "free<512mb",
+                "reason_kind": "vram_hard_limit",
+                "requires_relocation": True,
+            },
+            {"ok": True, "max_tokens": 100},
+        ))
+        ctrl._resource_mgr.decide = lambda *_args, **_kwargs: next(decisions)
+
+        def downshift(callback):
+            app._llm_load_generation += 1
+            replacement = object()
+            app.llm = replacement
+            ctrl._llm_service.attach_llm(replacement)
+            callback(True, None)
+            return True
+
+        app._request_auto_downshift = downshift
+        reply = (
+            '{"transactions":[{"source_text":'
+            '"セリア8月22日1130円 日用品","store":"セリア",'
+            '"category":"日用品","type":"expense","memo":""}]}'
+        )
+        generate_calls = []
+
+        def generate(**kwargs):
+            generate_calls.append(kwargs)
+            kwargs["on_done"](reply)
+            return True
+
+        ctrl._llm_service.generate = generate
+        ctrl._prompt_builder.build = lambda *_args, **_kwargs: []
+
+        ctrl.handle_text()
+
+        self.assertEqual(len(generate_calls), 1)
+        self.assertEqual(len(app.kakeibo_confirm_calls), 1)
+        self.assertEqual(len(app.kakeibo_confirm_calls[0]), 1)
+        self.assertEqual(app.kakeibo_confirm_calls[0][0]["amount"], 1130)
+        self.assertEqual(app.tts.stream_begun, 1)
+        self.assertEqual(
+            sum(tag == "user_msg" for _text, tag in app.writes), 1)
+
+    def test_hard_limit_health_route_resumes_once(self):
+        app = _App()
+        app._health_mode = True
+        app._entry.text = "メモ テストデータ"
+        ctrl = _controller(app)
+        decisions = iter((
+            {
+                "ok": False,
+                "reason": "free<512mb",
+                "reason_kind": "vram_hard_limit",
+                "requires_relocation": True,
+            },
+            {"ok": True, "max_tokens": 100},
+        ))
+        ctrl._resource_mgr.decide = lambda *_args, **_kwargs: next(decisions)
+
+        def downshift(callback):
+            app._llm_load_generation += 1
+            replacement = object()
+            app.llm = replacement
+            ctrl._llm_service.attach_llm(replacement)
+            callback(True, None)
+            return True
+
+        app._request_auto_downshift = downshift
+        generate_calls = []
+
+        def generate(**kwargs):
+            generate_calls.append(kwargs)
+            kwargs["on_done"]('{"memo":"テストデータ"}\n記録します。')
+            return True
+
+        ctrl._llm_service.generate = generate
+        ctrl._prompt_builder.build = lambda *_args, **_kwargs: []
+        ctrl.handle_text()
+
+        self.assertEqual(len(generate_calls), 1)
+        self.assertEqual(app.biolog_records, [{"memo": "テストデータ"}])
+        self.assertEqual(len(app._current_session["history"]), 1)
+        self.assertEqual(app.tts.stream_begun, 1)
+
+    def test_second_hard_limit_after_retry_is_finite_and_restores_input(self):
+        app = _App()
+        app._entry.text = "retry once"
+        ctrl = _controller(app)
+        blocked = {
+            "ok": False,
+            "reason": "free<512mb",
+            "reason_kind": "vram_hard_limit",
+            "requires_relocation": True,
+        }
+        ctrl._resource_mgr.decide = lambda *_args, **_kwargs: dict(blocked)
+        reload_count = 0
+
+        def downshift(callback):
+            nonlocal reload_count
+            reload_count += 1
+            app._llm_load_generation += 1
+            callback(True, None)
+            return True
+
+        app._request_auto_downshift = downshift
+        ctrl.handle_text()
+
+        self.assertEqual(reload_count, 1)
+        self.assertEqual(app._entry.text, "retry once")
+        self.assertFalse(ctrl.is_busy())
+        self.assertEqual(app.tts.stream_begun, 0)
+
     def test_health_stream_pipeline_hides_json_from_display_and_tts(self):
         app = _App()
         ctrl = _controller(app)
@@ -763,6 +946,10 @@ class ControllerGenerationTests(unittest.TestCase):
 
     def test_guard_block_completes_without_service_thread(self):
         app = _App()
+        app._llm_gpu_offload_mode = "cpu"
+        app._llm_offload_state = {
+            "mode": "cpu", "n_gpu_layers": 0, "total_layers": 42,
+        }
         app._entry.text = "guarded input"
         ctrl = _controller(app)
         ctrl._prompt_builder.build = lambda *_args, **_kwargs: []

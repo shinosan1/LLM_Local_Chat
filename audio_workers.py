@@ -663,12 +663,10 @@ class VoiceRecognizer:
                 )
                 try:
                     _t = time.time()
-                    # MODIFIED: WhisperPool がヒステリシス付きで GPU/CPU を切替
-                    _model, _on_gpu = self.whisper_model.get_model(self.res_monitor)
-                    res = _model.transcribe(
-                        audio_np,
+                    transcribe_guarded = getattr(
+                        self.whisper_model, "transcribe_guarded", None)
+                    transcribe_kwargs = dict(
                         language="ja",
-                        fp16=_on_gpu,
                         no_speech_threshold=0.8,
                         logprob_threshold=-1.5,
                         condition_on_previous_text=False,
@@ -676,6 +674,21 @@ class VoiceRecognizer:
                         best_of=1,
                         temperature=0.0,
                     )
+                    if callable(transcribe_guarded):
+                        guarded = transcribe_guarded(
+                            self.res_monitor, audio_np, **transcribe_kwargs)
+                        if guarded is None:
+                            print(
+                                "[WhisperDiag] decision=discard "
+                                "reason=llm_reload_pause"
+                            )
+                            continue
+                        res, _on_gpu = guarded
+                    else:
+                        _model, _on_gpu = self.whisper_model.get_model(
+                            self.res_monitor)
+                        res = _model.transcribe(
+                            audio_np, fp16=_on_gpu, **transcribe_kwargs)
                     text = res.get("text", "").strip()
                     segments = res.get("segments") or []
                     no_speech_avg, no_speech_max = _segment_metric_summary(

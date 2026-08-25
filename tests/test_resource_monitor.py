@@ -1,4 +1,5 @@
 import sys
+import threading
 import types
 import unittest
 from unittest.mock import patch
@@ -8,7 +9,12 @@ from resource_monitor import (
     WhisperPool,
     adjust_inference,
     adjust_llm,
+    build_partial_layer_candidates,
+    normalize_llm_gpu_offload_mode,
     normalize_whisper_mode,
+    read_gguf_total_layers,
+    required_vram_mb_for_layers,
+    select_llm_offload,
     select_whisper_profile,
 )
 
@@ -90,6 +96,241 @@ class ResourceDecisionTests(unittest.TestCase):
                 gpu_offload_supported=True,
             )
         self.assertEqual(result["n_gpu_layers"], 0)
+
+
+class AdaptiveOffloadSelectorTests(unittest.TestCase):
+    MODEL_MB = 5088
+    RESERVE_MB = 1024
+
+    def select(self, free_mb, total_layers=42, **overrides):
+        values = dict(
+            free_mb=free_mb,
+            model_mb=self.MODEL_MB,
+            reserve_mb=self.RESERVE_MB,
+            total_layers=total_layers,
+            gpu_offload_supported=True,
+            gpu_memory_available=True,
+        )
+        values.update(overrides)
+        return select_llm_offload(**values)
+
+    def test_full_is_preserved_when_existing_requirement_fits(self):
+        self.assertEqual(self.select(7000)["n_gpu_layers"], -1)
+
+    def test_external_gpu_idle_load_selects_three_quarters(self):
+        self.assertEqual(self.select(5976)["n_gpu_layers"], 32)
+
+    def test_external_gpu_peak_load_selects_three_quarters(self):
+        self.assertEqual(self.select(5771)["n_gpu_layers"], 32)
+
+    def test_falls_to_half_at_three_quarter_boundary(self):
+        required_75 = required_vram_mb_for_layers(
+            self.MODEL_MB, self.RESERVE_MB, 32, 42)
+        result = self.select(required_75 - 1)
+        self.assertEqual(result["n_gpu_layers"], 21)
+
+    def test_falls_to_quarter_at_half_boundary(self):
+        required_50 = required_vram_mb_for_layers(
+            self.MODEL_MB, self.RESERVE_MB, 21, 42)
+        result = self.select(required_50 - 1)
+        self.assertEqual(result["n_gpu_layers"], 11)
+
+    def test_falls_to_cpu_below_quarter_boundary(self):
+        required_25 = required_vram_mb_for_layers(
+            self.MODEL_MB, self.RESERVE_MB, 11, 42)
+        result = self.select(required_25 - 1)
+        self.assertEqual(result["n_gpu_layers"], 0)
+
+    def test_equal_partial_boundary_is_eligible(self):
+        required_75 = required_vram_mb_for_layers(
+            self.MODEL_MB, self.RESERVE_MB, 32, 42)
+        self.assertEqual(self.select(required_75)["n_gpu_layers"], 32)
+
+    def test_cuda_unavailable_always_selects_cpu(self):
+        result = self.select(7000, gpu_offload_supported=False)
+        self.assertEqual(result["n_gpu_layers"], 0)
+
+    def test_gpu_snapshot_unavailable_always_selects_cpu(self):
+        result = self.select(7000, gpu_memory_available=False)
+        self.assertEqual(result["n_gpu_layers"], 0)
+
+    def test_unknown_metadata_preserves_only_safe_legacy_choices(self):
+        self.assertEqual(self.select(7000, total_layers=None)["n_gpu_layers"], -1)
+        self.assertEqual(self.select(5976, total_layers=None)["n_gpu_layers"], 0)
+
+    def test_unknown_model_size_never_selects_gpu(self):
+        result = self.select(7000, model_mb=0)
+        self.assertEqual(result["n_gpu_layers"], 0)
+
+    def test_manual_modes_and_full_safety_fallback_use_dynamic_layers(self):
+        self.assertEqual(self.select(7000, offload_mode="full")["n_gpu_layers"], -1)
+        self.assertEqual(self.select(5976, offload_mode="full")["n_gpu_layers"], 32)
+        self.assertEqual(self.select(7000, offload_mode="75")["n_gpu_layers"], 32)
+        self.assertEqual(self.select(7000, offload_mode="50")["n_gpu_layers"], 21)
+        self.assertEqual(self.select(7000, offload_mode="25")["n_gpu_layers"], 11)
+        self.assertEqual(self.select(7000, offload_mode="cpu")["n_gpu_layers"], 0)
+
+    def test_auto_downshift_never_reselects_current_or_higher_layer(self):
+        cases = ((-1, 32), (32, 21), (21, 11), (11, 0), (0, 0))
+        for current, expected in cases:
+            with self.subTest(current=current):
+                result = self.select(
+                    7000,
+                    offload_mode="auto",
+                    downshift_from_layers=current,
+                )
+                self.assertEqual(result["n_gpu_layers"], expected)
+
+    def test_unknown_metadata_downshift_and_manual_partial_fail_closed_to_cpu(self):
+        self.assertEqual(
+            self.select(
+                7000, total_layers=None,
+                offload_mode="auto", downshift_from_layers=-1,
+            )["n_gpu_layers"],
+            0,
+        )
+        self.assertEqual(
+            self.select(7000, total_layers=None, offload_mode="75")[
+                "n_gpu_layers"
+            ],
+            0,
+        )
+
+    def test_invalid_saved_offload_mode_normalizes_to_auto(self):
+        for value in (None, "", "100", True, 1):
+            with self.subTest(value=value):
+                self.assertEqual(normalize_llm_gpu_offload_mode(value), "auto")
+
+    def test_layer_candidates_are_dynamic_half_up_and_deduplicated(self):
+        expected = {
+            32: [24, 16, 8],
+            40: [30, 20, 10],
+            42: [32, 21, 11],
+            80: [60, 40, 20],
+            1: [],
+            2: [1],
+            3: [2, 1],
+        }
+        for total, layers in expected.items():
+            with self.subTest(total=total):
+                actual = [
+                    item["n_gpu_layers"]
+                    for item in build_partial_layer_candidates(total)
+                ]
+                self.assertEqual(actual, layers)
+                self.assertEqual(actual, sorted(set(actual), reverse=True))
+                self.assertTrue(all(0 < layer < total for layer in actual))
+
+    def test_invalid_layer_counts_produce_no_partial_candidates(self):
+        for total in (None, True, 0, -1, 4097):
+            with self.subTest(total=total):
+                self.assertEqual(build_partial_layer_candidates(total), [])
+
+    def test_partial_required_uses_ceiling(self):
+        self.assertEqual(
+            required_vram_mb_for_layers(5088, 1024, 11, 42),
+            2357,
+        )
+
+
+class GgufMetadataTests(unittest.TestCase):
+    @staticmethod
+    def _fake_package(metadata=None, metadata_error=None, close_error=None):
+        instances = []
+
+        class FakeModel:
+            def __init__(self, *, path_model, params, verbose):
+                self.params = params
+                self.closed = False
+                instances.append(self)
+
+            def metadata(self):
+                if metadata_error:
+                    raise metadata_error
+                return metadata
+
+            def close(self):
+                self.closed = True
+                if close_error:
+                    raise close_error
+
+        params = types.SimpleNamespace(
+            vocab_only=False,
+            n_gpu_layers=-1,
+            use_mmap=False,
+        )
+        low_level = types.SimpleNamespace(
+            llama_model_default_params=lambda: params,
+        )
+        internals = types.SimpleNamespace(LlamaModel=FakeModel)
+        package = types.SimpleNamespace(
+            _internals=internals,
+            llama_cpp=low_level,
+        )
+        return package, instances, params
+
+    def test_reads_architecture_specific_block_count_and_closes(self):
+        package, instances, params = self._fake_package({
+            "general.architecture": "gemma4",
+            "gemma4.block_count": "42",
+        })
+        with patch.dict(sys.modules, {"llama_cpp": package}):
+            result = read_gguf_total_layers("model.gguf")
+        self.assertEqual(result, 42)
+        self.assertTrue(instances[0].closed)
+        self.assertTrue(params.vocab_only)
+        self.assertEqual(params.n_gpu_layers, 0)
+        self.assertTrue(params.use_mmap)
+
+    def test_does_not_rescue_invalid_declared_architecture_with_other_key(self):
+        package, instances, _params = self._fake_package({
+            "general.architecture": "gemma4",
+            "gemma4.block_count": "invalid",
+            "llama.block_count": "32",
+        })
+        with patch.dict(sys.modules, {"llama_cpp": package}):
+            result = read_gguf_total_layers("model.gguf")
+        self.assertIsNone(result)
+        self.assertTrue(instances[0].closed)
+
+    def test_architecture_missing_allows_only_one_valid_block_count(self):
+        package, _instances, _params = self._fake_package({
+            "gemma4.block_count": "42",
+        })
+        with patch.dict(sys.modules, {"llama_cpp": package}):
+            self.assertEqual(read_gguf_total_layers("model.gguf"), 42)
+        package, _instances, _params = self._fake_package({
+            "gemma4.block_count": "42",
+            "llama.block_count": "32",
+        })
+        with patch.dict(sys.modules, {"llama_cpp": package}):
+            self.assertIsNone(read_gguf_total_layers("model.gguf"))
+
+    def test_invalid_metadata_values_are_rejected(self):
+        for value in ("0", "-1", "+42", "42.0", "4097", 42):
+            package, _instances, _params = self._fake_package({
+                "general.architecture": "gemma4",
+                "gemma4.block_count": value,
+            })
+            with self.subTest(value=value), patch.dict(
+                sys.modules, {"llama_cpp": package}
+            ):
+                self.assertIsNone(read_gguf_total_layers("model.gguf"))
+
+    def test_metadata_and_close_failures_return_none_and_attempt_close(self):
+        package, instances, _params = self._fake_package(
+            metadata_error=RuntimeError("broken metadata"))
+        with patch.dict(sys.modules, {"llama_cpp": package}):
+            self.assertIsNone(read_gguf_total_layers("model.gguf"))
+        self.assertTrue(instances[0].closed)
+
+        package, instances, _params = self._fake_package(
+            {"general.architecture": "gemma4", "gemma4.block_count": "42"},
+            close_error=RuntimeError("close failed"),
+        )
+        with patch.dict(sys.modules, {"llama_cpp": package}):
+            self.assertIsNone(read_gguf_total_layers("model.gguf"))
+        self.assertTrue(instances[0].closed)
 
 
 class WhisperPolicyTests(unittest.TestCase):
@@ -221,6 +462,44 @@ class WhisperPolicyTests(unittest.TestCase):
 
         self.assertEqual(ctrl.consume_delta_gpu_pct(), 25)
         self.assertEqual(ctrl.consume_delta_gpu_pct(), 0.0)
+
+    def test_reload_pause_waits_for_transcribe_and_blocks_new_transcribe(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class Model:
+            def transcribe(self, _audio, **_kwargs):
+                entered.set()
+                release.wait(1)
+                return {"text": "ok"}
+
+        pool = WhisperPool()
+        pool._cpu_model = Model()
+        monitor = FakeMonitor()
+        result = []
+        worker = threading.Thread(
+            target=lambda: result.append(
+                pool.transcribe_guarded(monitor, b"audio")),
+            daemon=True,
+        )
+        worker.start()
+        self.assertTrue(entered.wait(1))
+        pool.request_reload_pause()
+        self.assertIsNone(pool.transcribe_guarded(monitor, b"new"))
+
+        acquired = []
+        waiter = threading.Thread(
+            target=lambda: acquired.append(pool.begin_llm_reload(timeout=1)),
+            daemon=True,
+        )
+        waiter.start()
+        self.assertFalse(acquired)
+        release.set()
+        worker.join(1)
+        waiter.join(1)
+        self.assertEqual(acquired, [True])
+        pool.end_llm_reload()
+        self.assertEqual(result[0][0]["text"], "ok")
 
 
 if __name__ == "__main__":
