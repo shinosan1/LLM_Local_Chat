@@ -1,7 +1,7 @@
 # LLM Local Chat 現行仕様
 
-作成日: 2026-07-11 / 最終更新: 2026-08-15
-基準: 開発用作業ツリーの現行コードを静的に読解し、回帰テストで確認した結果。
+作成日: 2026-07-11 / 最終更新: 2026-08-26
+基準: 公開版v1.7.3の現行コードの静的読解、回帰テスト、および§13に明記した範囲の実機確認結果。
 このファイルは「現在実装されている事実」だけを記載する。将来予定・改善案は含まない。
 確認済み事実と推測は区別して記載する(推測には「推測」と明記)。
 
@@ -41,6 +41,12 @@
 - 実装: `controller.py` `Controller.handle_text` → `llm_service.py` `LLMService.generate`。
 - 使用条件: GGUFモデルファイルが `model_path` に存在すること。
 - 保存/外部影響: 応答完了ごとにセッションJSONを自動保存(ゲストモード時を除く)。
+
+### パーソナライズとファイル添付
+- `chat_settings.json`の任意キーからsystem prompt、ユーザー向けpersona、応答言語、内部思考を表示しない指示を組み立てる。外部promptはUTF-8のTXT / MD、相対パスはアプリ配置フォルダ基準。正常に読めた外部system/personaは対応するinline値より優先し、同一ファイル・同一文章は重複挿入しない。読込失敗はUI警告後、利用できるinline値または既定promptで継続する。
+- 通常チャットでTXT / MD / JSON / CSVとPNG / JPEGを選択できる。最大8件、画像1枚、テキスト1MiB/件、画像10MiB/件・16メガピクセル以下。上限超過は切り捨てず送信しない。
+- 添付は送信1回限り。生成リクエスト受理時にUIから解除し、添付の実パス、画像バイナリ、テキスト本文は履歴・セッションJSONへ保存しない。後続ターンでは再添付が必要。資源判定等で生成開始前に拒否した場合は入力と添付を保持する。
+- 入力本文は必須。添付は家計簿・健康記録モードでは使用せず、同じbasenameの複数選択は重複として除外する。
 
 ### ストリーミング表示
 - 概要: 生成トークンを逐次チャット欄に表示。
@@ -120,6 +126,7 @@
 - 概要: 健康記録モード中の発話から体重・食事等を抽出し、確認ダイアログ後にローカルAPIへPOST。
 - 操作: 💪ボタンでモードON/OFF。
 - 実装: `PromptBuilder.build_health_prompt` → `extract_health_json` → `prepare_biolog_record` → `IntegrationBridge.confirm_and_send_biolog`。ユーザー原文の `食事ログ`／`行動ログ`／`メモ`（各「追加」形式を含む）は決定的に解析され、同じフィールドのLLM抽出値より優先される。
+- 日付確定: 日付省略時は送信直前にJSTの登録日を確定してPOST recordの`date`へ保持する。明示済みの有効日付は変更しない。成功表示はAPI応答の有効な`date`を優先し、応答に日付がなければ実際にPOSTした確定recordの`date`を使用する。
 - 外部影響: **あり**(ローカルBiolog APIへの登録)。詳細は§10。
 
 ### 付属ユーティリティ
@@ -139,6 +146,7 @@
 | チャット表示エリア | `_chat_text`(ScrolledText、読取専用)、右クリックでコピーメニュー(`_copy_selected` / `_copy_all`) |
 | 要約メモリ表示(📝 メモリ:) | `_summary_var` / `_summary_label` |
 | 入力欄(3行、Enter送信 / Shift+Enter改行) | `_entry`、`_on_entry_return` / `_on_entry_shift_return` |
+| 添付操作(ファイルを添付 / ファイル名表示 / 添付解除) | `_select_attachments` / `_attachment_var` / `_clear_attachments` |
 | 🎤 マイクボタン | `_toggle_mic`(状態色: 赤=ON待機、黄=認識中/処理中、灰=OFF。`_mic_idle` / `_mic_listening` / `_mic_processing`) |
 | ⏹ 停止ボタン | `_stop_all` → `Controller.stop`(LLM生成・TTS・マイクを停止) |
 | 🏠 家計簿モードボタン | `_toggle_kakeibo` |
@@ -158,6 +166,7 @@
 | controller.py | 送信・停止・要約、操作世代ID、トークンコストLRUの管理 | `Controller` `ControllerDeps` `TokenCostCache` | `ChatApp.__init__` | llm_service, prompt_builder, resource_manager, json_extractors |
 | llm_service.py | 通常生成と要約の排他的な別スレッド実行+[Perf]計測ログ | `LLMService`(`generate` `summarize` `abort` `is_running`) | Controller | llama_cpp |
 | prompt_builder.py | messages構築、履歴トークン予算管理、モード別プロンプト | `PromptBuilder`(`build` `build_kakeibo_prompt` `build_health_prompt`) | Controller | — |
+| prompt_inputs.py | 外部prompt解決、添付の検証・上限、テキスト区切り、画像data URI化 | `Attachment` `load_attachment` `resolve_system_prompt` `build_multimodal_user_content` | ChatApp, Controller | Pillow |
 | json_extractors.py | LLM応答からのJSON抽出(正規表現) | `extract_kakeibo_transactions` `extract_kakeibo_json` `extract_health_json` | Controller._on_llm_done | — |
 | kakeibo_split.py | 1入力を複数取引候補へ分割し、source_textの実在・重複・順序・件数上限・原文金額の網羅・断片の文脈・日付の一意性を検証 | `MAX_KAKEIBO_TRANSACTIONS_PER_INPUT` `normalize_transactions` `build_kakeibo_candidates` | Controller._on_llm_done | kakeibo_amount, kakeibo_confirmation, kakeibo_date, prompt_builder |
 | session_store.py | セッションJSONの保存/読込/削除/改名、検索メタデータキャッシュ | `SessionStore` | create_app_deps → ChatApp | — |
@@ -191,6 +200,14 @@
 | use_mmap | bool | true | mmap使用 | ✕ | モデル再ロードが必要 | `init_llm`(検証あり) |
 | vram_danger_gpu_pct | int | (ファイル上88) | — | ✕ | — | **未使用**(コードから参照ゼロ。閾値は `resource_monitor.py` の定数にハードコード) |
 | vram_danger_vram_pct | int | (ファイル上90) | — | ✕ | — | **未使用**(同上) |
+| system_prompt | str | 未指定 | inline system prompt。空/未指定時はコード既定 | ✕(ファイルのみ) | 必要 | `resolve_system_prompt` |
+| user_personalization | str | 未指定 | ユーザー向けpersona文章 | ✕ | 必要 | `resolve_system_prompt` |
+| response_language | str | 未指定 | 応答言語の指示 | ✕ | 必要 | `resolve_system_prompt` |
+| reasoning_visibility_instruction | str | 未指定 | 内部思考・分析を表示しないための指示 | ✕ | 必要 | `resolve_system_prompt` |
+| external_prompt_files | object | 未指定 | system/persona/profile/instructions用TXT / MD。相対パスはアプリ配置フォルダ基準 | ✕ | 必要 | `resolve_system_prompt` |
+| vision_enabled | bool | false | Vision handlerを有効化 | ✕ | モデル再ロードが必要 | `vision_settings_from_config`, `init_llm` |
+| vision_handler | str | gemma4 | `gemma4` / `llava15` | ✕ | モデル再ロードが必要 | `create_vision_chat_handler` |
+| vision_projector_path | str | 空 | 対応projector / mmproj GGUF。相対パスはアプリ配置フォルダ基準 | ✕ | モデル再ロードが必要 | `_validate_vision_settings` |
 
 - 値検証: perf系6キー(`n_threads_batch`〜`use_mmap`)のみ `_valid_positive_int` / `_valid_bool` でフォールバックあり。その他のキーはファイル値をそのまま採用(型不正時は後段処理でエラーになり得る)。
 - 自動保存: 終了時(`_on_close`)・設定ダイアログ保存時・TTSメニュー切替時に `save_settings` で全体を上書き保存。
@@ -199,6 +216,7 @@
 ## 7. モデルと生成処理
 
 - **対応モデル形式**: GGUF(llama-cpp-python 0.3.34 CUDA 12.4版)。
+- **Vision**: `vision_enabled=true`かつ有効なprojectorがある場合だけ、0.3.34の`Gemma4ChatHandler`または`Llava15ChatHandler`を`chat_handler`として各ロード候補へ新規生成する。画像はローカルdata URIで渡し、MTMDの`image_max_tokens`と事前context予約を4,096にそろえる。handlerはLlamaより先に解放する。Vision無効時は既存のテキスト専用Llama引数を維持する。
 - **読み込み処理**: `init_llm(model_path, n_ctx, res_monitor, perf_settings)`。
   1. パス存在チェック(なければ `FileNotFoundError`)
   2. `vocab_only`のGGUF metadataからモデル名に依存せず総レイヤー数を取得。取得不能でもFull条件成立時は従来どおり`n_gpu_layers=-1`、Full条件不成立時は安全側でCPUを選ぶ
@@ -236,6 +254,7 @@
 | ログ | 専用ファイルなし(標準出力へのprint。loggingはハンドラ未設定で既定非表示) | — | — | — | — |
 | アバター画像 | avatars/(4ファイル) | PNG | `AvatarWindow._load`(読み取りのみ) | なし | なし(アプリは書き込まない) |
 | Whisperキャッシュ | ~/.cache/whisper | モデルファイル | whisper内部(初回ダウンロード) | whisper内部 | アプリは削除しない |
+| チャット添付 | 永続保存なし | 送信中だけメモリ | ファイル選択時 | 履歴・保存JSONへ書き込まない | 受理した1回の送信後、新規/履歴セッション切替時 |
 
 - 破損時挙動: 一覧生成では壊れたJSONを黙ってスキップ、個別読込ではエラーダイアログ。
 - ゲストモード中はセッション書き込みが行われない。
@@ -287,7 +306,11 @@
 
 コードだけでは確定できない事項(実装済みの事実と混同しないこと):
 
-- 実機での起動・モデルロード・基本チャット・音声・TTS・連携の動作可否(静的読解のみで、GUI操作による実行確認は未実施)
+- 2026-08-25までに、実機での起動・モデルロード、GPUオフロード設定のGUI smoke、再起動不要のhot reload、Auto runtime downshift、実モデル推論、家計簿候補生成を確認済み。これらの確認範囲を、未確認の音声・TTS・外部連携全般へ拡張して解釈しないこと
+- v1.7.2のBiolog日付表示修正は自動テストで確認済み。重複データを避けるため、修正後の実Biolog APIへの再登録によるend-to-end確認は未実施
+- v1.7.3のパーソナライズ・添付・Vision設定は全回帰597件、同期後runtime対象102件、添付GUI smoke、llama-cpp-python 0.3.34 handler smokeで確認
+- Vision用projector / mmprojは配布物に含まれないため、実Visionモデルでの画像推論完走は未確認。設定検証、MTMD handler生成引数・解放順、非Vision拒否、data URI、context事前拒否は自動テストで確認
+- 実際のマイク・オーディオドライバを使う音声認識、利用環境のSAPI5音声、別途用意した各連携APIのあらゆる構成での動作
 - 実機での要約待機、停止、TTSフラグ、マイク案内の操作確認
 - `llm_service.py`・`resource_manager.py` の正確な作成経緯(CHANGELOG未記載。ファイル日時と内容から、それぞれ速度最適化作業・v1.2.0後の作業で作成と推測)
 - README・操作マニュアルPDFの記述と実装の逐条一致(見出しレベルの確認のみ実施)
@@ -295,11 +318,11 @@
 
 ## 14. 仕様の根拠
 
-本書の各記載は、以下のファイルの直接読解と2026-07-19時点の回帰テストによる。主な根拠はクラス名・関数名で本文中に併記した。
+本書の各記載は、以下のファイルの直接読解、2026-08-26までの回帰テスト、および§13に明記した範囲の実機確認による。主な根拠はクラス名・関数名で本文中に併記した。
 
 - LLM_Local_Chat.py(`main`, `ChatApp`, `SettingsDialog`, `AvatarWindow`, `load_settings`, `save_settings`, `init_llm`)
 - app_composition.py(`create_app_deps`)/ controller.py(`Controller`)/ llm_service.py(`LLMService`)
-- prompt_builder.py(`PromptBuilder`)/ json_extractors.py / session_store.py(`SessionStore`)
+- prompt_builder.py(`PromptBuilder`)/ prompt_inputs.py / json_extractors.py / session_store.py(`SessionStore`)
 - integrations.py(`IntegrationBridge`, `sanitize_*`, `is_allowed_local_api_url`)
 - audio_workers.py(`TTSWorker`, `VoiceRecognizer`)/ resource_manager.py(`ResourceManager`)
 - resource_monitor.py(`ResourceMonitor`, `VRAMGuard`, `adjust_llm`, `adjust_inference`, `WhisperController`, `WhisperPool`)

@@ -13,6 +13,10 @@ KAKEIBO_INCOME_CATS  = ["給与", "賞与", "副収入", "お小遣い", "売却
 MAX_KAKEIBO_TRANSACTIONS_PER_INPUT = 10
 
 
+class PromptInputTooLargeError(ValueError):
+    """system promptと現在入力だけでcontext上限を超える。"""
+
+
 class PromptBuilder:
     MODE_HINT = {
         "kakeibo": "\n\n[モード: 家計簿]",
@@ -34,6 +38,8 @@ class PromptBuilder:
         count_tokens_func=None,
         history_budget_ratio: float = 0.60,
         system_buf_tokens: int = 256,
+        extra_reserved_tokens: int = 0,
+        enforce_context_limit: bool = False,
     ) -> list:
         history = session.get("history", [])
         summary = session.get("summary", "")
@@ -53,8 +59,19 @@ class PromptBuilder:
             cache = token_cost_cache if token_cost_cache is not None else {}
             sys_tokens = count_tokens_func(llm, sys_content) + system_buf_tokens
             user_tokens = count_tokens_func(llm, user_text)
+            fixed_tokens = (
+                max_tokens
+                + sys_tokens
+                + user_tokens
+                + max(0, extra_reserved_tokens)
+            )
+            if enforce_context_limit and fixed_tokens > n_ctx:
+                raise PromptInputTooLargeError(
+                    "system prompt、入力、応答予約を合わせると"
+                    f"context上限を超えます（{fixed_tokens} > {n_ctx} tokens）。"
+                )
             budget = int(
-                (n_ctx - max_tokens - sys_tokens - user_tokens)
+                (n_ctx - fixed_tokens)
                 * history_budget_ratio
             )
             budget = max(0, budget)

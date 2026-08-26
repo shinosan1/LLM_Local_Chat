@@ -6,7 +6,7 @@
 ローカル処理を重視した構成です。機密情報を扱う業務環境へ導入する場合は、端末のアクセス制御、Windowsユーザープロファイル、ディスク暗号化、Dockerポート、依存ライブラリ、バックアップ方法を含め、組織の情報セキュリティ担当者による事前評価を行ってください。
 
 ![Python](https://img.shields.io/badge/Python-3.12.10-blue)
-![Version](https://img.shields.io/badge/Version-1.7.2-green)
+![Version](https://img.shields.io/badge/Version-1.7.3-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
@@ -20,12 +20,36 @@
 - アバターウィンドウ（瞬き・口パクアニメーション）
 - 会話の要約メモリ（長期会話対応）
 - チャット履歴の保存・読み込み・検索
+- `chat_settings.json`によるsystem prompt・persona・応答言語等のパーソナライズ
+- TXT / MD / JSON / CSVとPNG / JPEGの1送信限りの添付
 - ゲストモード（`chat_logs/`への履歴保存なし）
 - ダークテーマUI
 - **Biolog健康記録連携** — 💪ボタンで計測値・食事・活動内容・メモを入力し、確認後にBiolog APIへPOST（v1.1.0）
 - **家計簿API連携（オプション）** — ユーザー入力から最大10件の取引候補を生成し、1件ずつ確認したうえで、別途用意したローカルの`kakeibo-bridge` APIへ1件ずつPOSTします。家計簿アプリ、家計簿DB、`kakeibo-bridge`サーバー実装は本リポジトリに含まれません
 - **VRAM安全フィルタ** — LLM・Whisper 同時動作時のVRAM枯渇によるクラッシュを確率的に削減（v1.2.0）
 - **LLM GPUオフロード切替** — 自動・Full GPU・約75%・約50%・約25%・CPUを設定画面から選び、アプリを再起動せずモデルを安全に再読み込みします
+
+---
+## v1.7.3 パーソナライズ・ファイル添付・Vision対応
+
+リリース日: 2026-08-26
+
+`chat_settings.json`からsystem prompt、persona、応答言語、内部思考を表示しない指示を設定できるようになりました。長いpromptは、アプリ配置フォルダ基準のUTF-8 TXT / MDから読み込めます。
+
+通常チャットではTXT / MD / JSON / CSVとPNG / JPEGを添付できます。添付は送信1回限りで、実パス、画像バイナリ、テキスト添付本文を会話履歴・保存JSONへ残しません。
+
+Visionは`llama-cpp-python 0.3.34`の`gemma4` / `llava15` handlerに対応します。対応projector / mmprojが設定されていないモデルでは画像を送信せず、UIへ警告します。
+
+---
+## v1.7.2 不具合修正
+
+### Biologの日付省略時の完了表示を修正
+
+日付を省略したBiolog登録では、送信直前にJSTの登録日を確定し、実際にPOSTするrecordへ保持します。
+
+成功時の表示日付は、API応答に有効な日付がある場合はその日付を優先し、ない場合は実際にPOSTした確定日付を使用します。これにより、登録自体は成功しているのに完了日付が`?`と表示される問題を修正しました。
+
+明示日付は変更せず、API失敗時に成功表示を出さない既存挙動も維持しています。
 
 ---
 ## v1.7.1 不具合修正
@@ -645,6 +669,30 @@ PowerShellの実行ポリシーを変更せず、以降は仮想環境のPython�
 
 起動前に手動設定したい場合だけ、`chat_settings.json.example`を`chat_settings.json`へコピーし、`model_path`などを編集してください。
 
+パーソナライズとVisionは、設定画面ではなく`chat_settings.json`で設定します。既存の設定ファイルに次のキーがなくても従来どおり起動します。
+
+```json
+{
+  "system_prompt": "",
+  "user_personalization": "",
+  "response_language": "回答は必ず日本語のみで行ってください。",
+  "reasoning_visibility_instruction": "内部の思考過程、分析、推論、計画は表示せず、ユーザーに見せる最終回答だけを出力してください。",
+  "external_prompt_files": {
+    "system_prompt": "prompts/system.md",
+    "user_personalization": "",
+    "user_profile": "prompts/profile.txt",
+    "instructions": []
+  },
+  "vision_enabled": false,
+  "vision_handler": "gemma4",
+  "vision_projector_path": ""
+}
+```
+
+外部promptはUTF-8の`.txt` / `.md`に対応し、相対パスはアプリ配置フォルダ基準です。外部`system_prompt` / `user_personalization`を正常に読めた場合は対応するJSON内文章より優先し、同一ファイル・同一文章は重複挿入しません。欠損・形式・文字コード・サイズのエラーは警告を表示し、読める設定だけで起動を継続します。
+
+Visionを使う場合は、現在の`llama-cpp-python 0.3.34`で利用できる`gemma4`または`llava15`を指定し、対象モデルに対応するprojector / mmproj GGUFを`vision_projector_path`へ設定してください。`vision_enabled`の既定値は`false`です。
+
 
 ### 7. 起動
 
@@ -680,6 +728,14 @@ PowerShellの実行ポリシーを変更せず、以降は仮想環境のPython�
 
 テキスト入力欄にメッセージを入力して `Enter` キーまたは「送信」ボタンで送信します。  
 `Shift + Enter` で改行できます。
+
+### ファイル添付
+
+入力欄上の「📎 ファイルを添付」から、TXT / MD / JSON / CSVまたはPNG / JPEGを選択できます。入力本文は必須です。添付は通常チャットだけで使用でき、最大8件、画像はそのうち1枚までです。同じファイル名の重複選択は1件として扱います。
+
+添付は送信1回限りです。生成リクエストを受理した時点でUIから自動解除し、実パス、画像バイナリ、テキスト添付本文はいずれも会話履歴・保存JSONへ保存しません。添付内容はその送信時のLLM入力だけへ渡すため、次のターンで同じファイルについて質問する場合は再添付してください。Vision非対応モデルでは画像を送信せず、「現在のモデルは画像入力に対応していません。」と表示します。
+
+テキストは1ファイル1MiB、画像は1ファイル10MiBかつ16メガピクセル以下です。上限超過やUTF-8で読めないテキストは切り捨てずに拒否します。画像入力時はMTMD側と事前計算側の双方で4,096画像トークンを上限・予約として扱い、contextへ収まらない場合は送信前に警告します。
 
 ### 音声入力
 

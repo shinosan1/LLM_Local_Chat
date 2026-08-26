@@ -24,7 +24,14 @@ from kakeibo_split import (
     build_kakeibo_candidates,
 )
 from llm_service import LLMService
-from prompt_builder import PromptBuilder
+from prompt_builder import PromptBuilder, PromptInputTooLargeError
+from prompt_inputs import (
+    IMAGE_CONTEXT_TOKEN_RESERVE,
+    PromptInputError,
+    build_multimodal_user_content,
+    format_text_attachment_input,
+    validate_attachment_set,
+)
 from resource_manager import ResourceManager
 
 
@@ -244,6 +251,10 @@ class Controller:
         self._operation_state = state
         self._app._is_thinking = True
         self._app._btn_send.config(state="disabled")
+        set_attachment_controls = getattr(
+            self._app, "_set_attachment_controls", None)
+        if callable(set_attachment_controls):
+            set_attachment_controls(False)
         self._app._update_status()
         return self._operation_generation
 
@@ -262,6 +273,10 @@ class Controller:
             and getattr(self._app, "llm", None) is not None
         ):
             self._app._btn_send.config(state="normal")
+        set_attachment_controls = getattr(
+            self._app, "_set_attachment_controls", None)
+        if callable(set_attachment_controls):
+            set_attachment_controls(True)
         self._app._stream_buf = ""
         self._active_mode = "default"
         self._health_json_filter.reset()
@@ -291,16 +306,73 @@ class Controller:
             return
 
         request_started_at = time.perf_counter()
-        self._app._entry.delete("1.0", "end")
-        self._app._llm_abort = False
-        generation = self._begin_operation("generating")
-        self._request_id += 1
         if self._app._kakeibo_mode:
             mode = "kakeibo"
         elif self._app._health_mode:
             mode = "health"
         else:
             mode = "default"
+
+        snapshot_attachments = getattr(
+            self._app, "_snapshot_attachments", lambda: ())
+        attachments = tuple(snapshot_attachments())
+        if attachments and mode != "default":
+            messagebox.showwarning(
+                "添付ファイル",
+                "添付ファイルは通常チャットでのみ使用できます。",
+            )
+            return
+        try:
+            validate_attachment_set(attachments)
+        except PromptInputError as exc:
+            messagebox.showwarning("添付ファイル", str(exc))
+            return
+        has_image = any(attachment.kind == "image" for attachment in attachments)
+        can_send_images = getattr(self._app, "_can_send_images", lambda: False)
+        if has_image and not can_send_images():
+            messagebox.showwarning(
+                "画像を送信できません",
+                "現在のモデルは画像入力に対応していません。",
+            )
+            return
+
+        if mode == "kakeibo":
+            llm_input = self._prompt_builder.build_kakeibo_prompt(text)
+        elif mode == "health":
+            llm_input = self._prompt_builder.build_health_prompt(text)
+        else:
+            llm_input = format_text_attachment_input(text, attachments)
+        try:
+            messages = self._prompt_builder.build(
+                llm_input,
+                self._app._current_session,
+                mode=mode,
+                llm=self._app.llm,
+                n_ctx=self._app._n_ctx,
+                max_tokens=self._app._max_tokens,
+                token_cost_cache=self._token_cost_cache,
+                count_tokens_func=self._app._count_tokens,
+                history_budget_ratio=self._app._history_budget_ratio,
+                system_buf_tokens=self._app._system_buf_tokens,
+                extra_reserved_tokens=(
+                    IMAGE_CONTEXT_TOKEN_RESERVE if has_image else 0
+                ),
+                enforce_context_limit=True,
+            )
+        except PromptInputTooLargeError as exc:
+            messagebox.showwarning(
+                "入力が長すぎます",
+                f"{exc}\n\n添付内容を減らして再度送信してください。",
+            )
+            return
+        if has_image:
+            messages[-1]["content"] = build_multimodal_user_content(
+                llm_input, attachments)
+
+        self._app._entry.delete("1.0", "end")
+        self._app._llm_abort = False
+        generation = self._begin_operation("generating")
+        self._request_id += 1
         request = {
             "request_id": self._request_id,
             "generation": generation,
@@ -309,6 +381,9 @@ class Controller:
             "session_path": getattr(self._app, "_current_path", None),
             "model_generation": getattr(self._app, "_llm_load_generation", 0),
             "mode": mode,
+            "messages": messages,
+            "attachments": attachments,
+            "has_image": has_image,
             "retry_used": False,
             "ui_committed": False,
             "request_started_at": request_started_at,
@@ -338,6 +413,10 @@ class Controller:
         self._app._chat_write("\n", "")
         self._app._chat_write("👤 あなた\n", "user_lbl")
         self._app._chat_write(f"{text}\n", "user_msg")
+        attachments = request.get("attachments", ())
+        if attachments:
+            names = "、".join(attachment.name for attachment in attachments)
+            self._app._chat_write(f"📎 添付: {names}\n", "attachment")
         self._app._chat_write("─" * 50 + "\n", "divider")
         self._app._chat_write("🤖 AI\n", "ai_lbl")
         self._app._stream_buf = ""
@@ -355,6 +434,9 @@ class Controller:
             self._app._kakeibo_pending_text = None
             self._app._health_pending_text = None
         request["ui_committed"] = True
+        clear_attachments = getattr(self._app, "_clear_attachments", None)
+        if callable(clear_attachments):
+            clear_attachments(attachments)
 
     def _attempt_request(self, request: dict) -> None:
         if not self._request_is_current(request):
@@ -432,25 +514,7 @@ class Controller:
 
         self._commit_request_ui(request)
         text = request["text"]
-        mode = request["mode"]
-        if mode == "kakeibo":
-            llm_input = self._prompt_builder.build_kakeibo_prompt(text)
-        elif mode == "health":
-            llm_input = self._prompt_builder.build_health_prompt(text)
-        else:
-            llm_input = text
-        messages = self._prompt_builder.build(
-            llm_input,
-            self._app._current_session,
-            mode=mode,
-            llm=self._app.llm,
-            n_ctx=self._app._n_ctx,
-            max_tokens=self._app._max_tokens,
-            token_cost_cache=self._token_cost_cache,
-            count_tokens_func=self._app._count_tokens,
-            history_budget_ratio=self._app._history_budget_ratio,
-            system_buf_tokens=self._app._system_buf_tokens,
-        )
+        messages = request["messages"]
         prompt_build_ms = (
             time.perf_counter() - request["request_started_at"]
         ) * 1000
@@ -469,7 +533,10 @@ class Controller:
             ),
             on_error = lambda e: self._post_ui(
                 lambda _e=e, _g=request["generation"]: self._on_llm_error(
-                    text, f"[エラー: {_e}]", _g)
+                    text,
+                    self._format_generation_error(_e, request["has_image"]),
+                    _g,
+                )
             ),
             request_started_at = request["request_started_at"],
             prompt_build_ms = prompt_build_ms,
@@ -480,6 +547,26 @@ class Controller:
                 "[エラー: LLMは既に実行中です]",
                 request["generation"],
             )
+
+    @staticmethod
+    def _format_generation_error(error: Exception, has_image: bool) -> str:
+        message = str(error)
+        lowered = message.lower()
+        context_markers = (
+            "n_ctx",
+            "context window",
+            "context size",
+            "context length",
+            "too many tokens",
+            "maximum context",
+            "position exceeds",
+        )
+        if has_image and any(marker in lowered for marker in context_markers):
+            return (
+                "画像を含む入力がcontext上限を超えました。"
+                "画像や本文を減らし、画像を再添付して送信してください。"
+            )
+        return f"[エラー: {message}]"
 
     # ── 停止 ──────────────────────────────────────────────
     def _on_stream_token(self, token: str, generation: int) -> None:

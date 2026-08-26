@@ -15,5 +15,18 @@
   "tts_rate": 0,
   "mic_enabled": false,
   "whisper_mode": "auto",
-  "vad_threshold": 150
+  "vad_threshold": 150,
+  "system_prompt": "",
+  "user_personalization": "",
+  "response_language": "回答は必ず日本語のみで行ってください。",
+  "reasoning_visibility_instruction": "内部の思考過程、分析、推論、計画は表示せず、ユーザーに見せる最終回答だけを出力してください。",
+  "external_prompt_files": {
+    "system_prompt": "",
+    "user_personalization": "",
+    "user_profile": "",
+    "instructions": []
+  },
+  "vision_enabled": false,
+  "vision_handler": "gemma4",
+  "vision_projector_path": ""
 }

@@ -10,12 +10,12 @@ This document captures the current architecture of LLM Local Chat before the nex
 
 ## 2. Version Baseline
 
-- Baseline: `CHANGELOG.md` の最新エントリ `1.3.0 - 2026-06-25`
-- Snapshot target: 現在のワークツリー
+- Baseline: 公開版 `v1.7.3`（`CHANGELOG.md` の最新エントリ `1.7.3 - 2026-08-26`）
+- Snapshot target: 公開版v1.7.3の現行実装
 - Main entrypoint: `LLM_Local_Chat.py`
 - Runtime platform: Windows native desktop app
 
-`git status` 上では未コミット変更と未追跡ファイルが多いため、この文書は「現在の作業ツリー」を基準にしています。過去リリースとの差分ではなく、次作業に渡すための現状整理です。
+本書は2026-08-26にv1.7.3のコードと公開文書を再確認したスナップショットです。パーソナライズ、1送信限りの添付、Vision handlerを現行baselineへ含めます。
 
 ## 3. Recent Architectural Changes
 
@@ -23,6 +23,7 @@ This document captures the current architecture of LLM Local Chat before the nex
 
 - `controller.py`: 送信、停止、LLM完了処理のオーケストレーション。
 - `prompt_builder.py`: 通常会話、家計簿、健康記録のプロンプト生成と履歴予算管理。
+- `prompt_inputs.py`: 外部prompt解決、添付形式・サイズ検証、テキスト区切り、画像data URI構築。
 - `llm_service.py`: llama.cpp のストリーミング推論実行。
 - `resource_manager.py`: 推論直前の VRAM 状態に応じた `max_tokens` 決定。
 - `history_crypto.py`: WindowsユーザースコープDPAPIによる履歴暗号化、復号、エンベロープ検証。
@@ -34,6 +35,10 @@ This document captures the current architecture of LLM Local Chat before the nex
 
 また、Biolog/家計簿連携では、LLM出力をそのまま送信せず、送信前に payload をサニタイズし、ローカルAPI URLのみ許可し、確認ダイアログを経由する構造になっています。
 
+`1.7.2`では、日付を省略したBiolog登録について送信直前にJST登録日を確定し、POST recordへ保持するようになりました。完了表示は有効なAPI応答日付を優先し、応答に日付がなければ実際にPOSTした確定日付を使用します。
+
+`1.7.3`では、設定からsystem prompt・persona・応答言語等を合成し、UTF-8の外部TXT / MDを読み込む経路を追加しました。通常チャットではテキスト/画像添付を一時入力として扱い、履歴には添付内容を保存しません。Vision有効時だけMTMD chat handlerをLLMへ接続し、非対応モデルでは画像送信を拒否します。
+
 ## 4. Current Module Responsibilities
 
 `LLM_Local_Chat.py`
@@ -41,6 +46,7 @@ This document captures the current architecture of LLM Local Chat before the nex
 - Tkinter UI、アプリ状態、設定、チャット表示、アバター表示の中心。
 - `ChatApp` が依存オブジェクトを受け取り、UIイベントを `Controller` や各サービスへ接続する。
 - `init_llm()` は `resource_monitor.adjust_llm()` を使って LLM ロード時の GPU レイヤー設定を調整する。
+- Vision有効時の`init_llm()`は、対応projectorとhandler名を検証し、各ロード候補へ新しいMTMD chat handlerを接続する。解放順はhandler、Llamaの順。
 - `ChatApp._reload_llm()` は希望offloadモードの変更とAuto downshiftを、旧LLMのdetach/close後に新LLMをロードする世代管理付きworkerとして実行する。actual runtime stateだけを最新世代からUIへ反映する。
 - `main()` が `create_app_deps(LOG_DIR)` を呼び、`ChatApp` を起動する。
 
@@ -49,6 +55,7 @@ This document captures the current architecture of LLM Local Chat before the nex
 - `Controller` は薄いオーケストレーター。
 - テキスト送信時に入力・セッション・モード・操作/モデル世代をrequest contextとして確定し、VRAM安全確認後に表示・履歴・TTS・連携処理を一度だけ開始する。
 - Autoの推論直前hard limitでは、入力を保持したまま`ChatApp`へ下位offloadへのhot reloadを要求し、成功時だけ同じ入力を最大1回再試行する。
+- 通常チャットの添付を送信時requestだけへ保持し、生成受理後にUIから解除する。履歴へ保存するuser値は入力欄の本文だけ。
 - プロンプト構築は `PromptBuilder`、推論は `LLMService`、VRAM判定は `ResourceManager` に委譲する。
 
 `prompt_builder.py`
@@ -56,6 +63,13 @@ This document captures the current architecture of LLM Local Chat before the nex
 - system prompt、要約、履歴、ユーザー入力から llama.cpp 用 `messages` を組み立てる。
 - `n_ctx`、`max_tokens`、履歴予算比率、token count cache を使い、古い履歴を予算内に収める。
 - 家計簿モードと健康記録モードでは、LLMに JSON を出力させるための追加プロンプトを作る。
+- 画像入力時はMTMD上限と同じ4,096トークンをcontext予算へ追加予約する。
+
+`prompt_inputs.py`
+
+- `chat_settings.json`のinline値と外部TXT / MDからsystem promptを解決し、正常に読めた外部system/personaを対応するinline値より優先する。
+- TXT / MD / JSON / CSVとPNG / JPEGを検証し、実パスを保持しない`Attachment`へ読み込む。
+- テキスト添付を区切り付き入力へ、画像をローカルdata URIへ変換する。どちらも自動実行しない。
 
 `llm_service.py`
 
@@ -95,7 +109,7 @@ This document captures the current architecture of LLM Local Chat before the nex
 
 `app_composition.py`
 
-- `create_app_deps(log_dir)` で `ResourceMonitor`、`VRAMGuard`、`WhisperPool`、`SessionStore` を作成する。
+- `create_app_deps(log_dir)` で `ResourceMonitor`、`WhisperPool`、`SessionStore` を作成する。`VRAMGuard`は`resource_monitor.py`に定義されているが、この生成経路では使用しない。
 - import時の重い副作用を避け、`main()` 起動時に依存生成するための境界。
 
 ## 5. Runtime Composition
@@ -123,15 +137,16 @@ This document captures the current architecture of LLM Local Chat before the nex
 
 通常チャットの流れ:
 
-1. ユーザーがテキスト入力、または `VoiceRecognizer` が音声をテキスト化する。
-2. `Controller.handle_text()` が入力を受け取り、現在モードを判定する。
-3. `Controller` が入力のrequest contextを保持し、`ResourceManager.decide()` が VRAM 状態から `max_tokens` と実行可否を決める。
-4. AutoのGPU配置でhard limitなら、旧LLMを解放して現在より低い配置へhot reloadし、同じrequest contextを最大1回だけ3へ戻す。
-5. 安全確認後にユーザー表示・TTS stream・モード別pending stateを一度だけ開始し、`PromptBuilder` が `messages` を構築する。
-6. `LLMService.generate()` がストリーミング推論を別スレッドで実行する。
-7. token は `ChatApp._append_stream_token()` へ渡され、チャット欄に逐次表示される。
-8. 完了後、`Controller._on_llm_done()` が履歴、要約更新、TTS、保存、連携処理を進める。
-9. 性能ログの出力token数は生成本文をモデルtokenizerで数える。
+1. ユーザーが本文を入力し、必要ならファイルを添付する。または `VoiceRecognizer` が音声をテキスト化する。
+2. `Controller.handle_text()` が入力を受け取り、現在モードとVision可否を判定する。
+3. `prompt_inputs.py`が添付を本文と区別して整形し、`PromptBuilder`がcontext上限を事前確認して`messages`を構築する。
+4. `Controller` がrequest contextを保持し、`ResourceManager.decide()` がVRAM状態から`max_tokens`と実行可否を決める。
+5. AutoのGPU配置でhard limitなら、旧LLMを解放して現在より低い配置へhot reloadし、同じrequest contextを最大1回だけ4へ戻す。
+6. 安全確認後にユーザー表示・TTS stream・モード別pending stateを一度だけ開始し、受理済み添付をUIから解除する。
+7. `LLMService.generate()` がストリーミング推論を別スレッドで実行する。
+8. token は `ChatApp._append_stream_token()` へ渡され、チャット欄に逐次表示される。
+9. 完了後、`Controller._on_llm_done()` が履歴、要約更新、TTS、保存、連携処理を進める。添付内容は履歴へ保存しない。
+10. 性能ログの出力token数は生成本文をモデルtokenizerで数える。
 
 停止処理の流れ:
 
@@ -160,7 +175,8 @@ This document captures the current architecture of LLM Local Chat before the nex
 4. `prepare_biolog_record()` がユーザー原文の明示ラベル（食事ログ・行動ログ・メモ）を決定的に解析し、同じフィールドのLLM値より優先して統合する。
 5. `IntegrationBridge.confirm_and_send_biolog()` が明示由来情報を保持したまま最終サニタイズする。由来情報はAPI payloadには含めない。
 6. ローカルAPI URLであることを確認する。
-7. ユーザー確認後、`user_id: "self"` を付与して `BIOLOG_API_URL` へ POST する。
+7. ユーザー確認後、日付省略時はJST登録日を確定してrecordへ保持し、`user_id: "self"` を付与して `BIOLOG_API_URL` へ POST する。
+8. 成功応答に有効な`date`があればその日付を、なければ実際にPOSTしたrecordの確定日付を完了表示に使う。
 
 重要な保護:
 
@@ -219,13 +235,13 @@ Risks:
 - `WhisperPool` の内部属性 `_ctrl` を `Controller` 側が参照しているため、境界がやや脆い。
 - VRAM観測は TOCTOU があり、他プロセスや CUDA allocator の挙動までは制御できない。
 - JSON抽出は正規表現ベースであり、LLM応答の形式崩れには限界がある。健康JSONが複数ある場合は厳格JSONとして有効な最後の候補を採るため「例示→本番」は緩和できるが、逆順を意味的に完全判定するものではない。
-- 現在のワークツリーは未コミット/未追跡ファイルが多く、次作業前に差分確認が必要。
+- 公開版baselineと作業中の差分を混同しない。次作業前には、公開リポジトリのGit状態と対象差分を改めて確認する。
 
 ## 11. Next Refactoring Notes
 
 Fable 5 に渡す場合の推奨順序:
 
-1. まずこのスナップショットと `CHANGELOG.md` の `1.3.0` を読む。
+1. まずこのスナップショットと `CHANGELOG.md` の最新`1.7.2`を読み、`1.3.0`は責務分離の履歴として参照する。
 2. 次に現行ファイルを実際に読み、存在しないモジュール名や古い責務名を前提にしない。
 3. 最初の改修は小さく、`ChatApp` からさらに1責務だけ切り出す。
 4. 外部連携、停止処理、TTS/VAD排他、VRAMガードは高リスク領域として扱う。

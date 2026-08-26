@@ -1,11 +1,23 @@
+import ctypes
+import sys
 import threading
 import time
 import unittest
+from ctypes import wintypes
 from unittest.mock import patch
+
+import tkinter as tk
 
 from integrations import IntegrationBridge
 from history_crypto import HistoryCryptoError
-from LLM_Local_Chat import APP_VERSION, ChatApp, main
+from LLM_Local_Chat import (
+    APP_VERSION,
+    FONT_CHAT,
+    ChatApp,
+    _LOGFONTW,
+    _set_windows_ime_composition_font,
+    main,
+)
 from llm_service import LLMService
 
 
@@ -55,6 +67,56 @@ class HelpDialogTests(unittest.TestCase):
         message = showinfo.call_args.args[1]
         self.assertIn("DPAPI", message)
         self.assertIn("削除せず", message)
+
+
+@unittest.skipUnless(sys.platform == "win32", "Windows IME専用")
+class WindowsImeFontTests(unittest.TestCase):
+    def test_chat_font_is_applied_to_ime_composition(self):
+        root = tk.Tk()
+        root.withdraw()
+        entry = tk.Text(root, font=FONT_CHAT)
+        entry.pack()
+        root.update_idletasks()
+        try:
+            self.assertTrue(_set_windows_ime_composition_font(entry))
+
+            imm32 = ctypes.WinDLL("imm32", use_last_error=True)
+            imm32.ImmGetContext.argtypes = [wintypes.HWND]
+            imm32.ImmGetContext.restype = wintypes.HANDLE
+            imm32.ImmGetCompositionFontW.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(_LOGFONTW),
+            ]
+            imm32.ImmGetCompositionFontW.restype = wintypes.BOOL
+            imm32.ImmReleaseContext.argtypes = [
+                wintypes.HWND,
+                wintypes.HANDLE,
+            ]
+            imm32.ImmReleaseContext.restype = wintypes.BOOL
+
+            hwnd = entry.winfo_id()
+            input_context = imm32.ImmGetContext(hwnd)
+            self.assertTrue(input_context)
+            try:
+                actual = _LOGFONTW()
+                self.assertTrue(imm32.ImmGetCompositionFontW(
+                    input_context, ctypes.byref(actual)))
+            finally:
+                imm32.ImmReleaseContext(hwnd, input_context)
+
+            font_name = entry.cget("font")
+            expected_family = str(entry.tk.call(
+                "font", "actual", font_name, "-family"))
+            point_size = int(entry.tk.call(
+                "font", "actual", font_name, "-size"))
+            expected_height = -max(
+                1,
+                round(point_size * float(entry.winfo_fpixels("1i")) / 72),
+            )
+            self.assertEqual(actual.lfFaceName, expected_family[:31])
+            self.assertEqual(actual.lfHeight, expected_height)
+        finally:
+            root.destroy()
 
 
 class ModelReferenceTests(unittest.TestCase):

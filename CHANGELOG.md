@@ -4,6 +4,24 @@
 バージョン番号は [Semantic Versioning](https://semver.org/lang/ja/) を参考にしています。過去版には保存形式の互換性変更をパッチ版として公開した例があります。
 
 ---
+## [1.7.3] - 2026-08-26
+
+### 追加
+- `chat_settings.json`へsystem prompt、persona、応答言語、内部思考を表示しない指示、UTF-8の外部TXT / MD prompt読込を追加。既存設定ファイルは変換不要で、外部ファイルの欠損・読込失敗時も警告して起動を継続
+- 通常チャットへTXT / MD / JSON / CSV、PNG / JPEGの添付UIを追加。添付は送信1回限りで、実パス・画像バイナリ・テキスト本文を履歴JSONへ保存しない
+- Visionモデル設定として`vision_enabled`、`vision_handler`、`vision_projector_path`を追加。非対応モデルでは画像送信を拒否し、対応時はllama-cpp-python 0.3.34のMTMD chat handlerへローカルdata URIを渡す
+
+### 修正
+- Windows日本語IMEの未確定文字だけ別フォント・別サイズで表示される問題を修正。チャット入力欄の実フォントをIME composition fontへ同期し、通常文字のフォントサイズは維持
+
+### 安全性・互換性
+- テキスト1MiB、画像10MiB・16メガピクセル、添付8件・画像1枚の上限を設け、超過時は切り捨てずUIへ表示
+- 画像用に4,096トークンをMTMD上限とcontext事前予約へ反映し、Vision handlerをLLMより先に解放。テキスト専用モデルの既存ロード引数と既存履歴形式を維持
+
+### テスト
+- 旧設定互換、外部promptの優先・重複排除・読込失敗、対応添付形式・サイズ、添付の一回限り利用と履歴非永続、Vision拒否・MTMD handler lifecycle・context上限の回帰テストを追加
+
+---
 ## [1.7.2] - 2026-08-25
 
 v1.7.1 に対する後方互換の不具合修正版。

@@ -68,10 +68,12 @@ import sys
 import json
 import datetime
 import gc
+import ctypes
 import threading
 import time
 import random
 import stat
+from ctypes import wintypes
 from copy import deepcopy
 from enum import Enum
 
@@ -106,6 +108,15 @@ from integrations import IntegrationBridge
 from kakeibo_amount import normalize_manual_amount_input
 from kakeibo_confirmation import can_submit_kakeibo_candidate
 from prompt_builder import KAKEIBO_EXPENSE_CATS, KAKEIBO_INCOME_CATS
+from prompt_inputs import (
+    IMAGE_CONTEXT_TOKEN_RESERVE,
+    MAX_ATTACHMENTS,
+    Attachment,
+    PromptInputError,
+    load_attachment,
+    resolve_system_prompt,
+    validate_attachment_set,
+)
 from portable_history import (
     MAX_ARCHIVE_BYTES,
     PortableHistoryError,
@@ -144,7 +155,7 @@ if sys.platform == "win32":
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.7.2"
+APP_VERSION = "1.7.3"
 
 
 def app_path(*parts: str) -> str:
@@ -217,6 +228,88 @@ FONT_BOLD  = (_FONT_JP, 10, "bold")
 FONT_TITLE = (_FONT_JP, 12, "bold")
 FONT_CHAT  = (_FONT_JP, 11)
 FONT_SMALL = (_FONT_JP,  9)
+
+
+class _LOGFONTW(ctypes.Structure):
+    _fields_ = [
+        ("lfHeight", wintypes.LONG),
+        ("lfWidth", wintypes.LONG),
+        ("lfEscapement", wintypes.LONG),
+        ("lfOrientation", wintypes.LONG),
+        ("lfWeight", wintypes.LONG),
+        ("lfItalic", wintypes.BYTE),
+        ("lfUnderline", wintypes.BYTE),
+        ("lfStrikeOut", wintypes.BYTE),
+        ("lfCharSet", wintypes.BYTE),
+        ("lfOutPrecision", wintypes.BYTE),
+        ("lfClipPrecision", wintypes.BYTE),
+        ("lfQuality", wintypes.BYTE),
+        ("lfPitchAndFamily", wintypes.BYTE),
+        ("lfFaceName", wintypes.WCHAR * 32),
+    ]
+
+
+def _set_windows_ime_composition_font(widget: tk.Misc) -> bool:
+    """入力欄の実フォントをWindows IMEの未確定文字へ同期する。"""
+    if sys.platform != "win32":
+        return False
+    try:
+        font_name = widget.cget("font")
+        family = str(widget.tk.call(
+            "font", "actual", font_name, "-family"))
+        size = int(widget.tk.call("font", "actual", font_name, "-size"))
+        weight = str(widget.tk.call(
+            "font", "actual", font_name, "-weight"))
+        slant = str(widget.tk.call(
+            "font", "actual", font_name, "-slant"))
+        underline = int(widget.tk.call(
+            "font", "actual", font_name, "-underline"))
+        overstrike = int(widget.tk.call(
+            "font", "actual", font_name, "-overstrike"))
+
+        if size > 0:
+            pixel_height = round(
+                size * float(widget.winfo_fpixels("1i")) / 72)
+        else:
+            pixel_height = abs(size)
+
+        logfont = _LOGFONTW()
+        logfont.lfHeight = -max(1, pixel_height)
+        logfont.lfWeight = 700 if weight == "bold" else 400
+        logfont.lfItalic = slant == "italic"
+        logfont.lfUnderline = bool(underline)
+        logfont.lfStrikeOut = bool(overstrike)
+        logfont.lfCharSet = 1  # DEFAULT_CHARSET
+        logfont.lfQuality = 5  # CLEARTYPE_QUALITY
+        logfont.lfFaceName = family[:31]
+
+        imm32 = ctypes.WinDLL("imm32", use_last_error=True)
+        imm32.ImmGetContext.argtypes = [wintypes.HWND]
+        imm32.ImmGetContext.restype = wintypes.HANDLE
+        imm32.ImmSetCompositionFontW.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_LOGFONTW),
+        ]
+        imm32.ImmSetCompositionFontW.restype = wintypes.BOOL
+        imm32.ImmReleaseContext.argtypes = [
+            wintypes.HWND,
+            wintypes.HANDLE,
+        ]
+        imm32.ImmReleaseContext.restype = wintypes.BOOL
+
+        hwnd = widget.winfo_id()
+        input_context = imm32.ImmGetContext(hwnd)
+        if not input_context:
+            return False
+        try:
+            return bool(imm32.ImmSetCompositionFontW(
+                input_context, ctypes.byref(logfont)))
+        finally:
+            imm32.ImmReleaseContext(hwnd, input_context)
+    except (AttributeError, OSError, tk.TclError, TypeError, ValueError):
+        return False
+
+
 WHISPER_MODE_LABELS = {
     "auto": "自動（推奨）",
     "gpu_small": "GPU small（高速）",
@@ -308,6 +401,144 @@ def save_settings(d: dict) -> bool:
         return False
 
 
+def vision_settings_from_config(settings: dict) -> dict:
+    return {
+        "enabled": settings.get("vision_enabled") is True,
+        "handler": settings.get("vision_handler", "gemma4"),
+        "projector_path": settings.get("vision_projector_path", ""),
+    }
+
+
+def _resolve_vision_projector_path(path: str) -> str:
+    return path if os.path.isabs(path) else app_path(path)
+
+
+def _validate_vision_settings(vision_settings: dict | None) -> dict | None:
+    if not vision_settings or vision_settings.get("enabled") is not True:
+        return None
+    handler = vision_settings.get("handler")
+    projector_path = vision_settings.get("projector_path")
+    if not isinstance(handler, str) or handler.strip().lower() not in (
+        "gemma4", "llava15"
+    ):
+        raise ValueError(
+            "vision_handler は gemma4 または llava15 を指定してください"
+        )
+    if not isinstance(projector_path, str) or not projector_path.strip():
+        raise ValueError("Vision用projectorパスが設定されていません")
+    resolved = _resolve_vision_projector_path(projector_path.strip())
+    if not os.path.isfile(resolved):
+        raise FileNotFoundError(
+            f"Vision用projectorが見つかりません:\n{resolved}"
+        )
+    if os.path.getsize(resolved) <= 0:
+        raise ValueError("Vision用projectorファイルが空です")
+    return {
+        "enabled": True,
+        "handler": handler.strip().lower(),
+        "projector_path": resolved,
+    }
+
+
+def create_vision_chat_handler(vision_settings: dict | None):
+    validated = _validate_vision_settings(vision_settings)
+    if validated is None:
+        return None
+    from llama_cpp.llama_chat_format import (
+        Gemma4ChatHandler,
+        Llava15ChatHandler,
+    )
+
+    handler_name = validated["handler"]
+    base_class = (
+        Gemma4ChatHandler if handler_name == "gemma4" else Llava15ChatHandler
+    )
+
+    class ManagedVisionHandler(base_class):
+        def __init__(self, *args, **kwargs):
+            self._shiro_close_lock = threading.Lock()
+            self._shiro_closed = False
+            try:
+                super().__init__(*args, **kwargs)
+            except Exception:
+                self.close()
+                raise
+
+        def close(self) -> None:
+            with self._shiro_close_lock:
+                if self._shiro_closed:
+                    return
+                self._shiro_closed = True
+                exit_stack = getattr(self, "_exit_stack", None)
+                if exit_stack is not None:
+                    exit_stack.close()
+
+    class BoundedMTMDModule:
+        """MTMD APIを委譲し、画像トークン上限だけを固定する。"""
+
+        def __init__(self, module):
+            self._module = module
+
+        def __getattr__(self, name):
+            return getattr(self._module, name)
+
+        def mtmd_context_params_default(self):
+            params = self._module.mtmd_context_params_default()
+            params.image_max_tokens = IMAGE_CONTEXT_TOKEN_RESERVE
+            return params
+
+    kwargs = {
+        "clip_model_path": validated["projector_path"],
+        "verbose": False,
+    }
+    if handler_name == "gemma4":
+        kwargs["use_gpu"] = True
+    handler = ManagedVisionHandler(**kwargs)
+    mtmd_module = getattr(handler, "_mtmd_cpp", None)
+    if mtmd_module is not None:
+        handler._mtmd_cpp = BoundedMTMDModule(mtmd_module)
+    return handler
+
+
+def _close_llm_resources(llm, *, strict: bool = False) -> None:
+    if llm is None:
+        return
+    if getattr(llm, "_shiro_closed", False):
+        return
+    try:
+        setattr(llm, "_shiro_closed", True)
+    except Exception:
+        pass
+    errors = []
+    handler = getattr(llm, "_shiro_vision_handler", None)
+    if handler is not None:
+        try:
+            delattr(llm, "_shiro_vision_handler")
+        except AttributeError:
+            pass
+        close_handler = getattr(handler, "close", None)
+        if callable(close_handler):
+            try:
+                close_handler()
+            except Exception as exc:
+                errors.append(exc)
+                print(f"[Vision] handler解放エラー: {exc}")
+        else:
+            errors.append(RuntimeError("Vision handlerを安全に解放できません"))
+
+    close_llm = getattr(llm, "close", None)
+    if callable(close_llm):
+        try:
+            close_llm()
+        except Exception as exc:
+            errors.append(exc)
+            print(f"[LLM] モデル解放エラー: {exc}")
+    else:
+        errors.append(RuntimeError("ロード済みLLMを安全に解放できません"))
+    if strict and errors:
+        raise RuntimeError("ロード済みLLMの解放に失敗しました") from errors[0]
+
+
 _GPU_OOM_SPECIFIC_MARKERS = (
     "cublas_status_alloc_failed",
     "cudamalloc",
@@ -352,13 +583,7 @@ def _release_cuda_resources() -> None:
 
 def _close_loaded_candidate(llm) -> None:
     """次候補を重ねる前に、成功済みモデルを確実に解放する。"""
-    close = getattr(llm, "close", None)
-    if not callable(close):
-        raise RuntimeError("ロード済みLLMを安全に解放できません")
-    try:
-        close()
-    except Exception as exc:
-        raise RuntimeError("ロード済みLLMの解放に失敗しました") from exc
+    _close_llm_resources(llm, strict=True)
     _release_cuda_resources()
 
 
@@ -459,10 +684,12 @@ def init_llm(
     *,
     offload_mode: str = "auto",
     downshift_from_layers: int | None = None,
+    vision_settings: dict | None = None,
 ) -> Llama:
     model_path = resolve_model_path(model_path)
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"モデルが見つかりません:\n{model_path}")
+    validated_vision = _validate_vision_settings(vision_settings)
     offload_mode = normalize_llm_gpu_offload_mode(offload_mode)
     params = adjust_llm(
         res_monitor,
@@ -547,11 +774,56 @@ def init_llm(
         attempts.append(("base", layer_base))
         downshift = False
         for idx, (label, kwargs) in enumerate(attempts[:3], 1):
+            vision_handler = None
+            candidate_llm = None
             try:
                 if label != "perf":
                     print(f"[LLM] retry load with {label}")
-                llm = Llama(**kwargs)
+                llama_kwargs = kwargs
+                if validated_vision is not None:
+                    vision_handler = create_vision_chat_handler(
+                        validated_vision)
+                    llama_kwargs = {**kwargs, "chat_handler": vision_handler}
+                candidate_llm = Llama(**llama_kwargs)
+                if vision_handler is not None:
+                    setattr(
+                        candidate_llm,
+                        "_shiro_vision_handler",
+                        vision_handler,
+                    )
+                llm = candidate_llm
             except Exception as e:
+                cleanup_error = None
+                if candidate_llm is not None:
+                    if getattr(
+                        candidate_llm, "_shiro_vision_handler", None
+                    ) is not None:
+                        try:
+                            _close_llm_resources(candidate_llm, strict=True)
+                        except Exception as close_exc:
+                            cleanup_error = close_exc
+                    else:
+                        try:
+                            if vision_handler is not None:
+                                vision_handler.close()
+                        except Exception as close_exc:
+                            cleanup_error = close_exc
+                        finally:
+                            close_candidate = getattr(candidate_llm, "close", None)
+                            if callable(close_candidate):
+                                try:
+                                    close_candidate()
+                                except Exception as close_exc:
+                                    cleanup_error = cleanup_error or close_exc
+                elif vision_handler is not None:
+                    try:
+                        vision_handler.close()
+                    except Exception as close_exc:
+                        cleanup_error = close_exc
+                if cleanup_error is not None:
+                    raise RuntimeError(
+                        "Vision/LLMリソースの解放に失敗しました"
+                    ) from cleanup_error
                 last_err = e
                 shown = {k: kwargs.get(k) for k in (
                     "n_threads", "n_threads_batch", "n_batch", "n_ubatch",
@@ -1607,13 +1879,15 @@ class ChatApp:
     def __init__(self, root: tk.Tk, deps: AppDeps) -> None:
         self.root = root
         self._deps = deps
-        self.SYSTEM_PROMPT = SYSTEM_PROMPT
         self.root.title("LLM Local Chat")
         self.root.geometry("1100x850")
         self.root.configure(bg=C["bg_main"])
 
         # ── 設定読み込み ──────────────────────────
         self._cfg         = load_settings()
+        self.SYSTEM_PROMPT, self._prompt_file_errors = resolve_system_prompt(
+            self._cfg, SYSTEM_PROMPT, APP_DIR)
+        self._vision_settings = vision_settings_from_config(self._cfg)
         self._model_path  = self._cfg["model_path"]
         self._n_ctx       = self._cfg["n_ctx"]
         self._max_tokens  = self._cfg["max_tokens"]
@@ -1647,6 +1921,7 @@ class ChatApp:
         self._active_reload_job: dict | None = None
         self._portable_pending        = threading.Event()
         self._files: list[str]        = []
+        self._attachments: list[Attachment] = []
         self._current_session: dict   = {}
         self._current_path: str | None = None
         self._voice: VoiceRecognizer | None = None
@@ -1684,6 +1959,8 @@ class ChatApp:
 
         # ── UI 構築 ───────────────────────────────
         self._build_ui()
+        if self._prompt_file_errors:
+            self.root.after(0, self._show_prompt_file_errors)
 
         # ── 初期セッション ────────────────────────
         self._new_session()
@@ -1800,14 +2077,7 @@ class ChatApp:
     def _close_llm_instance(llm, *, strict: bool = False) -> None:
         if llm is None:
             return
-        close = getattr(llm, "close", None)
-        if callable(close):
-            try:
-                close()
-            except Exception as exc:
-                print(f"[LLM] モデル解放エラー: {exc}")
-                if strict:
-                    raise RuntimeError("旧LLMを安全に解放できません") from exc
+        _close_llm_resources(llm, strict=strict)
         del llm
         gc.collect()
         try:
@@ -1842,9 +2112,14 @@ class ChatApp:
                     widget.config(state=state)
                 except (tk.TclError, AttributeError):
                     pass
+        self._set_attachment_controls(enabled)
 
     @staticmethod
-    def _preflight_llm_reload(model_path: str, offload_mode: str) -> None:
+    def _preflight_llm_reload(
+        model_path: str,
+        offload_mode: str,
+        vision_settings: dict | None = None,
+    ) -> None:
         resolved = resolve_model_path(model_path)
         if not os.path.isfile(resolved):
             raise FileNotFoundError(f"モデルが見つかりません:\n{resolved}")
@@ -1855,6 +2130,7 @@ class ChatApp:
                 raise ValueError(
                     "総レイヤー数を取得できないため、指定したPartial GPUを安全に選択できません"
                 )
+        _validate_vision_settings(vision_settings)
 
     def _reload_llm(
         self,
@@ -1924,7 +2200,11 @@ class ChatApp:
             llm = None
             whisper_guard = False
             try:
-                self._preflight_llm_reload(target_path, target_mode)
+                self._preflight_llm_reload(
+                    target_path,
+                    target_mode,
+                    getattr(self, "_vision_settings", None),
+                )
                 posted = self._post_ui(
                     lambda: self._prepare_reload_on_main(job))
                 if not posted:
@@ -1959,6 +2239,7 @@ class ChatApp:
                     dict(self._llm_perf_settings),
                     offload_mode=target_mode,
                     downshift_from_layers=downshift_from_layers,
+                    vision_settings=getattr(self, "_vision_settings", None),
                 )
                 state = getattr(llm, "_offload_runtime_state", None)
                 if isinstance(state, dict):
@@ -1983,6 +2264,8 @@ class ChatApp:
                             self._deps.res_monitor,
                             dict(self._llm_perf_settings),
                             offload_mode=old_mode,
+                            vision_settings=getattr(
+                                self, "_vision_settings", None),
                         )
                         state = getattr(llm, "_offload_runtime_state", None)
                         if isinstance(state, dict):
@@ -2436,6 +2719,11 @@ class ChatApp:
             font=FONT_CHAT,
             lmargin1=24, lmargin2=24)
         self._chat_text.tag_config(
+            "attachment",
+            foreground=C["fg_sub"],
+            font=FONT_SMALL,
+            lmargin1=24, lmargin2=24)
+        self._chat_text.tag_config(
             "ai_lbl",
             foreground=C["fg_sub"],
             font=("Noto Sans CJK JP", 10, "bold"))
@@ -2493,6 +2781,32 @@ class ChatApp:
             bg=C["bg_main"], fg=C["fg_sub"],
             font=FONT_SMALL, anchor=tk.CENTER,
         ).pack(fill=tk.X, pady=(0, 4))
+
+        attachment_row = tk.Frame(in_outer, bg=C["bg_main"])
+        attachment_row.pack(fill=tk.X, pady=(0, 4))
+        self._btn_attach = tk.Button(
+            attachment_row,
+            text="📎 ファイルを添付",
+            command=self._select_attachments,
+            bg=C["bg_input"], fg=C["fg_main"],
+            bd=0, padx=8, pady=3, cursor="hand2",
+        )
+        self._btn_attach.pack(side=tk.LEFT)
+        self._attachment_var = tk.StringVar(value="添付なし")
+        tk.Label(
+            attachment_row,
+            textvariable=self._attachment_var,
+            bg=C["bg_main"], fg=C["fg_sub"],
+            font=FONT_SMALL, anchor=tk.W,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+        self._btn_clear_attachments = tk.Button(
+            attachment_row,
+            text="添付解除",
+            command=self._clear_attachments,
+            bg=C["bg_input"], fg=C["fg_sub"],
+            bd=0, padx=8, pady=3, state=tk.DISABLED,
+        )
+        self._btn_clear_attachments.pack(side=tk.RIGHT)
 
         in_box = tk.Frame(
             in_outer,
@@ -2569,6 +2883,8 @@ class ChatApp:
         # ─────────────────────────────────────────
         self._entry.bind("<Return>",       self._on_entry_return)
         self._entry.bind("<Shift-Return>", self._on_entry_shift_return)
+        self._entry.bind(
+            "<FocusIn>", self._sync_entry_ime_composition_font, add="+")
 
         # 送信ボタン
         self._btn_send = tk.Button(
@@ -2585,6 +2901,114 @@ class ChatApp:
             bg=C["bg_main"], fg=C["fg_sub"],
             font=("Noto Sans CJK JP", 8),
         ).pack(anchor="e")
+
+    def _sync_entry_ime_composition_font(self, _event=None) -> None:
+        _set_windows_ime_composition_font(self._entry)
+
+    def _show_prompt_file_errors(self) -> None:
+        if self._closing or not self._prompt_file_errors:
+            return
+        details = "\n".join(f"・{error}" for error in self._prompt_file_errors[:10])
+        messagebox.showwarning(
+            "外部プロンプト読込エラー",
+            "一部の外部プロンプトを読み込めませんでした。\n"
+            "読み込めた設定または既定のsystem promptで続行します。\n\n"
+            f"{details}",
+            parent=self.root,
+        )
+
+    def _select_attachments(self) -> None:
+        if hasattr(self, "_ctrl") and self._ctrl.is_busy():
+            return
+        paths = filedialog.askopenfilenames(
+            title="チャットへ添付するファイルを選択",
+            filetypes=[
+                ("対応ファイル", "*.txt *.md *.json *.csv *.png *.jpg *.jpeg"),
+                ("テキスト", "*.txt *.md *.json *.csv"),
+                ("画像", "*.png *.jpg *.jpeg"),
+            ],
+            parent=self.root,
+        )
+        if not paths:
+            return
+        errors = []
+        existing_names = {attachment.name.casefold() for attachment in self._attachments}
+        for path in paths:
+            if len(self._attachments) >= MAX_ATTACHMENTS:
+                errors.append(f"添付できるファイルは最大{MAX_ATTACHMENTS}件です。")
+                break
+            try:
+                attachment = load_attachment(path)
+                if attachment.name.casefold() in existing_names:
+                    continue
+                validate_attachment_set([*self._attachments, attachment])
+            except PromptInputError as exc:
+                errors.append(str(exc))
+                continue
+            self._attachments.append(attachment)
+            existing_names.add(attachment.name.casefold())
+        self._update_attachment_display()
+        if errors:
+            messagebox.showwarning(
+                "添付ファイル",
+                "\n".join(dict.fromkeys(errors)),
+                parent=self.root,
+            )
+
+    def _update_attachment_display(self) -> None:
+        if not hasattr(self, "_attachment_var"):
+            return
+        if self._attachments:
+            self._attachment_var.set(
+                " / ".join(attachment.name for attachment in self._attachments))
+        else:
+            self._attachment_var.set("添付なし")
+        enabled = not (
+            getattr(self, "_closing", False)
+            or getattr(self, "_llm_loading", False)
+            or (hasattr(self, "_ctrl") and self._ctrl.is_busy())
+        )
+        self._set_attachment_controls(enabled)
+
+    def _clear_attachments(self, expected=None) -> None:
+        if expected is None:
+            self._attachments.clear()
+        else:
+            expected_ids = {id(attachment) for attachment in expected}
+            self._attachments = [
+                attachment for attachment in self._attachments
+                if id(attachment) not in expected_ids
+            ]
+        self._update_attachment_display()
+
+    def _snapshot_attachments(self) -> tuple[Attachment, ...]:
+        return tuple(self._attachments)
+
+    def _can_send_images(self) -> bool:
+        return (
+            self._vision_settings.get("enabled") is True
+            and self.llm is not None
+            and getattr(self.llm, "_shiro_vision_handler", None) is not None
+        )
+
+    def _set_attachment_controls(self, enabled: bool) -> None:
+        enabled = bool(
+            enabled
+            and not getattr(self, "_closing", False)
+            and not getattr(self, "_llm_loading", False)
+        )
+        attach_button = getattr(self, "_btn_attach", None)
+        clear_button = getattr(self, "_btn_clear_attachments", None)
+        if attach_button is not None:
+            attach_button.config(state=tk.NORMAL if enabled else tk.DISABLED)
+        if clear_button is not None:
+            clear_button.config(
+                state=(
+                    tk.NORMAL
+                    if enabled and getattr(self, "_attachments", ())
+                    else tk.DISABLED
+                )
+            )
 
     # ── Entry キーバインド ─────────────────────
     def _on_entry_return(self, event) -> str:
@@ -2958,6 +3382,7 @@ class ChatApp:
             messagebox.showwarning(
                 "警告", "AIの処理中です。しばらくお待ちください。")
             return
+        self._clear_attachments()
         self._current_session = self._session_store.new_session()
         self._current_path = None
         self._title_var.set("新しいチャット")
@@ -3274,6 +3699,7 @@ class ChatApp:
             messagebox.showerror("読込エラー", str(e))
             return
 
+        self._clear_attachments()
         self._current_session = data
         self._current_path    = fp
         self._title_var.set(data.get("title", "不明"))
@@ -3635,6 +4061,11 @@ class ChatApp:
             loading = self._llm_load_active.is_set()
             pending_api = self._integrations.pending_operations()
             if not llm_running and not loading and not pending_api:
+                try:
+                    for model in self._detach_current_llm():
+                        self._close_llm_instance(model)
+                except Exception as exc:
+                    print(f"[Shutdown] LLM cleanup failed: {exc}")
                 self.root.destroy()
                 return
             if time.monotonic() >= deadline:

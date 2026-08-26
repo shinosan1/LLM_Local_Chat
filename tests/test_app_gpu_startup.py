@@ -2,6 +2,9 @@ import unittest
 import types
 import threading
 import time
+import json
+import tempfile
+from pathlib import Path
 from unittest.mock import mock_open, patch
 
 import LLM_Local_Chat
@@ -210,6 +213,158 @@ class StartupOrderingTests(unittest.TestCase):
         self.assertEqual(set(calls), {32})
 
 
+class VisionHandlerLifecycleTests(unittest.TestCase):
+    def test_handler_specific_constructor_arguments_match_034_api(self):
+        for handler_name, expects_use_gpu in (("gemma4", True), ("llava15", False)):
+            captured = {}
+
+            class ExitStack:
+                def close(self):
+                    captured["closed"] = captured.get("closed", 0) + 1
+
+            class BaseHandler:
+                def __init__(self, **kwargs):
+                    captured["kwargs"] = kwargs
+                    self._exit_stack = ExitStack()
+
+                    class Params:
+                        image_max_tokens = -1
+
+                    class MTMDModule:
+                        @staticmethod
+                        def mtmd_context_params_default():
+                            return Params()
+
+                    self._mtmd_cpp = MTMDModule()
+
+            patch_name = (
+                "llama_cpp.llama_chat_format.Gemma4ChatHandler"
+                if handler_name == "gemma4"
+                else "llama_cpp.llama_chat_format.Llava15ChatHandler"
+            )
+            settings = {
+                "enabled": True,
+                "handler": handler_name,
+                "projector_path": __file__,
+            }
+            with self.subTest(handler=handler_name), patch(
+                patch_name, BaseHandler
+            ):
+                handler = LLM_Local_Chat.create_vision_chat_handler(settings)
+                self.assertEqual(
+                    captured["kwargs"]["clip_model_path"], __file__)
+                self.assertFalse(captured["kwargs"]["verbose"])
+                self.assertEqual(
+                    "use_gpu" in captured["kwargs"], expects_use_gpu)
+                params = handler._mtmd_cpp.mtmd_context_params_default()
+                self.assertEqual(
+                    params.image_max_tokens,
+                    LLM_Local_Chat.IMAGE_CONTEXT_TOKEN_RESERVE,
+                )
+                handler.close()
+                handler.close()
+                self.assertEqual(captured["closed"], 1)
+
+    def test_text_model_load_keeps_existing_llama_kwargs(self):
+        captured = []
+
+        def fake_llama(**kwargs):
+            captured.append(kwargs)
+            return _FakeModel()
+
+        with (
+            patch.object(
+                LLM_Local_Chat,
+                "adjust_llm",
+                return_value=_decision([(0, "cpu", "cpu", 0)]),
+            ),
+            patch.object(LLM_Local_Chat, "Llama", side_effect=fake_llama),
+        ):
+            init_llm(__file__, 1024, _Monitor())
+        self.assertNotIn("chat_handler", captured[0])
+
+    def test_llama_failure_closes_handler_and_retry_gets_new_handler(self):
+        handlers = []
+        calls = []
+
+        class Handler:
+            def __init__(self):
+                self.closed = 0
+
+            def close(self):
+                self.closed += 1
+
+        def make_handler(_settings):
+            handler = Handler()
+            handlers.append(handler)
+            return handler
+
+        def fake_llama(**kwargs):
+            calls.append(kwargs["chat_handler"])
+            if len(calls) == 1:
+                raise TypeError("unsupported perf")
+            return _FakeModel()
+
+        vision = {
+            "enabled": True,
+            "handler": "gemma4",
+            "projector_path": __file__,
+        }
+        with (
+            patch.object(
+                LLM_Local_Chat,
+                "adjust_llm",
+                return_value=_decision([(0, "cpu", "cpu", 0)]),
+            ),
+            patch.object(
+                LLM_Local_Chat,
+                "create_vision_chat_handler",
+                side_effect=make_handler,
+            ),
+            patch.object(LLM_Local_Chat, "Llama", side_effect=fake_llama),
+        ):
+            model = init_llm(
+                __file__, 1024, _Monitor(), vision_settings=vision)
+
+        self.assertEqual(len(handlers), 2)
+        self.assertEqual(handlers[0].closed, 1)
+        self.assertEqual(handlers[1].closed, 0)
+        self.assertIs(model._shiro_vision_handler, handlers[1])
+
+    def test_close_order_is_handler_then_llama_and_is_idempotent(self):
+        events = []
+
+        class Handler:
+            def close(self):
+                events.append("handler")
+
+        class Model:
+            _shiro_vision_handler = Handler()
+
+            def close(self):
+                events.append("llama")
+
+        model = Model()
+        with patch.object(LLM_Local_Chat, "_release_cuda_resources"):
+            LLM_Local_Chat._close_loaded_candidate(model)
+        LLM_Local_Chat._close_llm_resources(model)
+        self.assertEqual(events, ["handler", "llama"])
+
+    def test_invalid_handler_and_missing_projector_are_rejected_before_llama(self):
+        for vision, error in (
+            ({"enabled": True, "handler": "unknown", "projector_path": __file__},
+             "vision_handler"),
+            ({"enabled": True, "handler": "gemma4", "projector_path": ""},
+             "projector"),
+        ):
+            with self.subTest(vision=vision), patch.object(
+                LLM_Local_Chat, "Llama"
+            ) as llama:
+                with self.assertRaisesRegex((ValueError, FileNotFoundError), error):
+                    init_llm(__file__, 1024, _Monitor(), vision_settings=vision)
+                llama.assert_not_called()
+
+
 class GpuLoadErrorClassificationTests(unittest.TestCase):
     def test_accepts_only_gpu_specific_or_gpu_context_oom(self):
         positives = (
@@ -238,6 +393,29 @@ class GpuLoadErrorClassificationTests(unittest.TestCase):
 
 
 class OffloadStateUiTests(unittest.TestCase):
+    def test_old_settings_are_not_forced_to_add_new_optional_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "chat_settings.json"
+            settings_path.write_text(
+                json.dumps({"model_path": "old.gguf"}), encoding="utf-8")
+            with patch.object(
+                LLM_Local_Chat, "SETTINGS_FILE", str(settings_path)
+            ):
+                loaded = load_settings()
+                self.assertTrue(LLM_Local_Chat.save_settings(loaded))
+            saved = json.loads(settings_path.read_text(encoding="utf-8"))
+        for key in (
+            "system_prompt",
+            "user_personalization",
+            "response_language",
+            "reasoning_visibility_instruction",
+            "external_prompt_files",
+            "vision_enabled",
+            "vision_handler",
+            "vision_projector_path",
+        ):
+            self.assertNotIn(key, saved)
+
     def test_missing_or_invalid_saved_mode_is_backward_compatible_auto(self):
         for payload in ("{}", '{"llm_gpu_offload_mode":"invalid"}'):
             with (

@@ -11,6 +11,7 @@ from controller import (
     TokenCostCache,
 )
 from llm_service import LLMService
+from prompt_inputs import Attachment
 
 
 class _Value:
@@ -133,6 +134,9 @@ class _App:
         self.biolog_records = []
         self.biolog_explicit_fields = []
         self.kakeibo_confirm_calls = []
+        self._attachments = []
+        self._vision_capable = False
+        self.attachment_controls_enabled = True
 
     def _update_status(self):
         pass
@@ -161,6 +165,25 @@ class _App:
 
     def _apply_summary(self, summary):
         self._current_session["summary"] = summary
+
+    def _snapshot_attachments(self):
+        return tuple(self._attachments)
+
+    def _clear_attachments(self, expected=None):
+        if expected is None:
+            self._attachments.clear()
+            return
+        expected_ids = {id(attachment) for attachment in expected}
+        self._attachments = [
+            attachment for attachment in self._attachments
+            if id(attachment) not in expected_ids
+        ]
+
+    def _can_send_images(self):
+        return self._vision_capable
+
+    def _set_attachment_controls(self, enabled):
+        self.attachment_controls_enabled = enabled
 
 
 def _controller(app, threshold=99):
@@ -297,6 +320,190 @@ class LeadingJsonFilterTests(unittest.TestCase):
 
 
 class ControllerGenerationTests(unittest.TestCase):
+    def test_image_context_error_is_user_facing_and_requires_reattach(self):
+        for error in (
+            ValueError("Prompt exceeds n_ctx token limit"),
+            ValueError("maximum context length reached"),
+            ValueError("position exceeds model window"),
+        ):
+            with self.subTest(error=error):
+                message = Controller._format_generation_error(error, True)
+                self.assertIn("context上限", message)
+                self.assertIn("再添付", message)
+
+    def test_image_context_reserve_rejects_before_consuming_ui(self):
+        app = _App()
+        app._entry.text = "画像を説明して"
+        app._vision_capable = True
+        app._n_ctx = 4096
+        app._max_tokens = 1
+        app._system_buf_tokens = 0
+        app._count_tokens = lambda _llm, _text: 0
+        app._attachments = [Attachment(
+            name="image.png",
+            kind="image",
+            mime_type="image/png",
+            data=b"png",
+        )]
+        ctrl = _controller(app)
+        with patch.object(controller_module.messagebox, "showwarning") as warning:
+            ctrl.handle_text()
+        warning.assert_called_once()
+        self.assertEqual(app._entry.text, "画像を説明して")
+        self.assertEqual(len(app._attachments), 1)
+        self.assertEqual(ctrl._operation_state, "idle")
+
+    def test_text_attachment_is_one_shot_and_never_enters_history(self):
+        app = _App()
+        app._entry.text = "この内容を説明して"
+        attachment = Attachment(
+            name="sample.txt",
+            kind="text",
+            mime_type="text/plain",
+            text="保存してはいけない添付本文",
+        )
+        app._attachments = [attachment]
+        ctrl = _controller(app)
+        ctrl._resource_mgr.decide = lambda *_args, **_kwargs: {
+            "ok": True, "max_tokens": 100
+        }
+        generated = []
+
+        def generate(**kwargs):
+            generated.append(kwargs["messages"])
+            kwargs["on_done"]("回答")
+            return True
+
+        ctrl._llm_service.generate = generate
+        ctrl.handle_text()
+
+        self.assertIn("保存してはいけない添付本文", str(generated[0]))
+        self.assertEqual(app._attachments, [])
+        self.assertEqual(
+            app._current_session["history"][0]["user"],
+            "この内容を説明して",
+        )
+        self.assertNotIn(
+            "保存してはいけない添付本文",
+            str(app._current_session),
+        )
+        self.assertNotIn("sample.txt", str(app._current_session))
+
+    def test_non_vision_model_rejects_image_without_consuming_ui(self):
+        app = _App()
+        app._entry.text = "画像を説明して"
+        app._attachments = [Attachment(
+            name="image.png",
+            kind="image",
+            mime_type="image/png",
+            data=b"png",
+        )]
+        ctrl = _controller(app)
+        with patch.object(controller_module.messagebox, "showwarning") as warning:
+            ctrl.handle_text()
+        warning.assert_called_once()
+        self.assertIn("対応していません", warning.call_args.args[1])
+        self.assertEqual(app._entry.text, "画像を説明して")
+        self.assertEqual(len(app._attachments), 1)
+        self.assertEqual(ctrl._operation_state, "idle")
+
+    def test_vision_image_is_data_uri_for_one_request_only(self):
+        app = _App()
+        app._entry.text = "画像を説明して"
+        app._vision_capable = True
+        app._n_ctx = 8192
+        app._attachments = [Attachment(
+            name="image.jpg",
+            kind="image",
+            mime_type="image/jpeg",
+            data=b"jpeg bytes",
+        )]
+        ctrl = _controller(app)
+        ctrl._resource_mgr.decide = lambda *_args, **_kwargs: {
+            "ok": True, "max_tokens": 100
+        }
+        generated = []
+
+        def generate(**kwargs):
+            generated.append(kwargs["messages"])
+            kwargs["on_done"]("画像の回答")
+            return True
+
+        ctrl._llm_service.generate = generate
+        ctrl.handle_text()
+
+        self.assertIn("data:image/jpeg;base64,", str(generated[0]))
+        self.assertEqual(app._attachments, [])
+        self.assertNotIn("base64", str(app._current_session))
+        self.assertNotIn("jpeg bytes", str(app._current_session))
+
+    def test_attachment_context_overflow_keeps_draft_and_attachment(self):
+        app = _App()
+        app._entry.text = "質問"
+        app._attachments = [Attachment(
+            name="large.txt",
+            kind="text",
+            mime_type="text/plain",
+            text="x" * 100,
+        )]
+        app._n_ctx = 20
+        app._max_tokens = 10
+        app._system_buf_tokens = 1
+        app._count_tokens = lambda _llm, text: len(text)
+        ctrl = _controller(app)
+        with patch.object(controller_module.messagebox, "showwarning") as warning:
+            ctrl.handle_text()
+        warning.assert_called_once()
+        self.assertEqual(app._entry.text, "質問")
+        self.assertEqual(len(app._attachments), 1)
+        self.assertEqual(ctrl._operation_state, "idle")
+
+    def test_resource_rejection_keeps_attachment_for_retry(self):
+        app = _App()
+        app._entry.text = "質問"
+        app._llm_gpu_offload_mode = "cpu"
+        app._attachments = [Attachment(
+            name="retry.md",
+            kind="text",
+            mime_type="text/plain",
+            text="再送する本文",
+        )]
+        ctrl = _controller(app)
+        ctrl._resource_mgr.decide = lambda *_args, **_kwargs: {
+            "ok": False,
+            "reason": "guard",
+            "reason_kind": "other",
+            "requires_relocation": False,
+        }
+        ctrl.handle_text()
+        self.assertEqual(app._entry.text, "質問")
+        self.assertEqual(len(app._attachments), 1)
+        self.assertEqual(ctrl._operation_state, "idle")
+
+    def test_generation_error_does_not_restore_consumed_attachment(self):
+        app = _App()
+        app._entry.text = "質問"
+        app._attachments = [Attachment(
+            name="once.txt",
+            kind="text",
+            mime_type="text/plain",
+            text="一回だけの本文",
+        )]
+        ctrl = _controller(app)
+        ctrl._resource_mgr.decide = lambda *_args, **_kwargs: {
+            "ok": True, "max_tokens": 100
+        }
+
+        def generate(**kwargs):
+            kwargs["on_error"](RuntimeError("generation failed"))
+            return True
+
+        ctrl._llm_service.generate = generate
+        ctrl.handle_text()
+        self.assertEqual(app._attachments, [])
+        self.assertEqual(app._entry.text, "質問")
+        self.assertEqual(app._current_session["history"], [])
+
     def test_hard_limit_auto_downshifts_and_retries_same_input_once(self):
         app = _App()
         app._entry.text = "通常入力"
