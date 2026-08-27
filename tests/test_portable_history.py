@@ -136,6 +136,26 @@ class PortableArchiveTests(unittest.TestCase):
         second["last_activity_at"] = "2026-07-28T00:00:00+00:00"
         self.assertNotEqual(session_digest(first), session_digest(second))
 
+    def test_export_omits_local_attachment_metadata_and_identity(self):
+        session = sample_session()
+        session["session_id"] = "1" * 32
+        session["attachments"] = [{
+            "id": "2" * 32,
+            "name": "private.csv",
+            "kind": "text",
+            "mime_type": "text/csv",
+            "extension": ".csv",
+            "size": 5,
+            "sha256": hashlib.sha256(b"a,b\n1").hexdigest(),
+        }]
+        raw = export_archive([session], "correct passphrase")
+        restored = import_archive(raw, "correct passphrase")[0]
+        self.assertNotIn("session_id", restored)
+        self.assertNotIn("attachments", restored)
+        self.assertNotIn("private.csv", str(restored))
+        plain = sample_session()
+        self.assertEqual(session_digest(session), session_digest(plain))
+
 
 class PortableSessionStoreTests(unittest.TestCase):
     def setUp(self):

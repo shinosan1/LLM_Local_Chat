@@ -80,7 +80,7 @@ from enum import Enum
 import tkinter as tk
 from tkinter import (
     scrolledtext, Menu, BooleanVar,
-    messagebox, filedialog, simpledialog,
+    messagebox, filedialog, simpledialog, ttk,
 )
 
 from llama_cpp import Llama
@@ -113,7 +113,10 @@ from prompt_inputs import (
     MAX_ATTACHMENTS,
     Attachment,
     PromptInputError,
+    attachment_display_names,
+    attachment_fingerprint,
     load_attachment,
+    load_attachment_bytes,
     resolve_system_prompt,
     validate_attachment_set,
 )
@@ -155,7 +158,7 @@ if sys.platform == "win32":
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.7.3"
+APP_VERSION = "1.8.0"
 
 
 def app_path(*parts: str) -> str:
@@ -1269,6 +1272,501 @@ class DuplicateImportDialog(tk.Toplevel):
 
 
 # ═══════════════════════════════════════════════════════
+#  ■ 保存済み添付ファイル管理
+# ═══════════════════════════════════════════════════════
+def _format_attachment_size(size: int) -> str:
+    value = max(0, int(size))
+    if value < 1024:
+        return f"{value} B"
+    if value < 1024 * 1024:
+        return f"{value / 1024:.1f} KB"
+    return f"{value / (1024 * 1024):.1f} MB"
+
+
+class SavedAttachmentsDialog(tk.Toplevel):
+    """全チャットの保存済み添付を内部ID単位で管理する。"""
+
+    TREE_STYLE = "ShiroSavedAttachments.Treeview"
+    SCROLLBAR_STYLE = "ShiroSavedAttachments.Vertical.TScrollbar"
+    TREE_FIELD_ELEMENT = "ShiroSavedAttachments.Treeview.field"
+    HEADING_CELL_ELEMENT = "ShiroSavedAttachments.Treeheading.cell"
+    HEADING_BORDER_ELEMENT = "ShiroSavedAttachments.Treeheading.border"
+    SCROLLBAR_TROUGH_ELEMENT = (
+        "ShiroSavedAttachments.Vertical.Scrollbar.trough")
+    SCROLLBAR_UP_ELEMENT = (
+        "ShiroSavedAttachments.Vertical.Scrollbar.uparrow")
+    SCROLLBAR_DOWN_ELEMENT = (
+        "ShiroSavedAttachments.Vertical.Scrollbar.downarrow")
+    SCROLLBAR_THUMB_ELEMENT = (
+        "ShiroSavedAttachments.Vertical.Scrollbar.thumb")
+
+    def __init__(
+        self,
+        parent,
+        load_snapshot,
+        delete_one,
+        delete_all,
+        post_ui,
+        current_context,
+        apply_current_snapshot,
+        modification_block_reason,
+        operation_busy,
+    ):
+        super().__init__(parent)
+        self.title("保存済み添付ファイル")
+        self.configure(bg=C["bg_main"])
+        self.geometry("860x430")
+        self.minsize(760, 360)
+        self.transient(parent)
+        self._load_snapshot = load_snapshot
+        self._delete_one = delete_one
+        self._delete_all = delete_all
+        self._post_ui = post_ui
+        self._current_context = current_context
+        self._apply_current_snapshot = apply_current_snapshot
+        self._modification_block_reason = modification_block_reason
+        self._operation_busy = operation_busy
+        self._operation_serial = 0
+        self._alive = True
+        self._rows: dict[str, dict] = {}
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+        self._style = ttk.Style(self)
+        self._configure_styles()
+        self.bind("<<ThemeChanged>>", self._on_theme_changed, add="+")
+
+        self._summary_var = tk.StringVar(value="保存済み添付ファイル: 読み込み中")
+        tk.Label(
+            self,
+            textvariable=self._summary_var,
+            bg=C["bg_main"], fg=C["fg_main"],
+            anchor=tk.W,
+        ).pack(fill=tk.X, padx=14, pady=(12, 6))
+
+        columns = ("name", "kind", "size", "chat", "status")
+        tree_frame = tk.Frame(self, bg=C["bg_main"])
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=14, pady=6)
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+        self._tree = ttk.Treeview(
+            tree_frame,
+            columns=columns,
+            show="headings",
+            selectmode="browse",
+            style=self.TREE_STYLE,
+        )
+        headings = {
+            "name": "ファイル名",
+            "kind": "種類",
+            "size": "サイズ",
+            "chat": "紐づくチャット",
+            "status": "状態",
+        }
+        widths = {"name": 220, "kind": 100, "size": 90,
+                  "chat": 270, "status": 110}
+        for key in columns:
+            self._tree.heading(key, text=headings[key])
+            self._tree.column(key, width=widths[key], minwidth=70)
+        self._tree.grid(row=0, column=0, sticky="nsew")
+        self._scrollbar = ttk.Scrollbar(
+            tree_frame,
+            orient=tk.VERTICAL,
+            command=self._tree.yview,
+            style=self.SCROLLBAR_STYLE,
+        )
+        self._scrollbar.grid(row=0, column=1, sticky="ns")
+        self._tree.configure(yscrollcommand=self._scrollbar.set)
+
+        note = (
+            "削除しても会話履歴とAI回答は残りますが、"
+            "削除した添付は過去チャットから参照できません。"
+        )
+        tk.Label(
+            self, text=note, bg=C["bg_main"], fg=C["fg_sub"],
+            font=FONT_SMALL, anchor=tk.W,
+        ).pack(fill=tk.X, padx=14, pady=(2, 6))
+
+        buttons = tk.Frame(self, bg=C["bg_main"])
+        buttons.pack(fill=tk.X, padx=14, pady=(0, 12))
+        self._delete_button = tk.Button(
+            buttons, text="選択した添付を削除",
+            bg=C["bg_input"], fg=C["delete_fg"], bd=0, padx=12,
+            command=self._delete_selected,
+        )
+        self._delete_button.pack(side=tk.LEFT)
+        self._delete_all_button = tk.Button(
+            buttons, text="保存済み添付ファイルをすべて削除",
+            bg=C["bg_input"], fg=C["delete_fg"], bd=0, padx=12,
+            command=self._delete_everything,
+        )
+        self._delete_all_button.pack(side=tk.LEFT, padx=8)
+        self._close_button = tk.Button(
+            buttons, text="閉じる",
+            bg=C["bg_input"], fg=C["fg_main"], bd=0, padx=18,
+            command=self._close,
+        )
+        self._close_button.pack(side=tk.RIGHT)
+
+        self._refresh()
+        self.grab_set()
+
+    def _configure_styles(self) -> None:
+        elements = {
+            self.TREE_FIELD_ELEMENT: "Treeview.field",
+            self.HEADING_CELL_ELEMENT: "Treeheading.cell",
+            self.HEADING_BORDER_ELEMENT: "Treeheading.border",
+            self.SCROLLBAR_TROUGH_ELEMENT: "Vertical.Scrollbar.trough",
+            self.SCROLLBAR_UP_ELEMENT: "Vertical.Scrollbar.uparrow",
+            self.SCROLLBAR_DOWN_ELEMENT: "Vertical.Scrollbar.downarrow",
+            self.SCROLLBAR_THUMB_ELEMENT: "Vertical.Scrollbar.thumb",
+        }
+        existing_elements = set(self._style.element_names())
+        for element, source in elements.items():
+            if element not in existing_elements:
+                self._style.element_create(element, "from", "clam", source)
+
+        self._style.layout(self.TREE_STYLE, [
+            (self.TREE_FIELD_ELEMENT, {
+                "sticky": "nswe",
+                "border": "1",
+                "children": [
+                    ("Treeview.padding", {
+                        "sticky": "nswe",
+                        "children": [
+                            ("Treeview.treearea", {"sticky": "nswe"}),
+                        ],
+                    }),
+                ],
+            }),
+        ])
+        self._style.layout(f"{self.TREE_STYLE}.Heading", [
+            (self.HEADING_CELL_ELEMENT, {"sticky": "nswe"}),
+            (self.HEADING_BORDER_ELEMENT, {
+                "sticky": "nswe",
+                "children": [
+                    ("Treeheading.padding", {
+                        "sticky": "nswe",
+                        "children": [
+                            ("Treeheading.image", {
+                                "side": "right", "sticky": ""}),
+                            ("Treeheading.text", {"sticky": "we"}),
+                        ],
+                    }),
+                ],
+            }),
+        ])
+        self._style.layout(self.SCROLLBAR_STYLE, [
+            (self.SCROLLBAR_TROUGH_ELEMENT, {
+                "sticky": "ns",
+                "children": [
+                    (self.SCROLLBAR_UP_ELEMENT, {
+                        "side": "top", "sticky": ""}),
+                    (self.SCROLLBAR_DOWN_ELEMENT, {
+                        "side": "bottom", "sticky": ""}),
+                    (self.SCROLLBAR_THUMB_ELEMENT, {"sticky": "nswe"}),
+                ],
+            }),
+        ])
+
+        scaling = max(1.0, float(self.tk.call("tk", "scaling")))
+        self._style.configure(
+            self.TREE_STYLE,
+            background=C["bg_input"],
+            fieldbackground=C["bg_input"],
+            foreground=C["fg_main"],
+            bordercolor=C["divider"],
+            lightcolor=C["divider"],
+            darkcolor=C["divider"],
+            rowheight=max(24, round(18 * scaling)),
+        )
+        self._style.map(
+            self.TREE_STYLE,
+            background=[("selected", C["bg_selected"])],
+            foreground=[("selected", C["fg_main"])],
+        )
+        self._style.configure(
+            f"{self.TREE_STYLE}.Heading",
+            background=C["bg_side"],
+            foreground=C["fg_main"],
+            bordercolor=C["divider"],
+            relief=tk.FLAT,
+            font=FONT_BOLD,
+        )
+        self._style.map(
+            f"{self.TREE_STYLE}.Heading",
+            background=[("active", C["bg_selected"])],
+            foreground=[("active", C["fg_main"])],
+        )
+        self._style.configure(
+            self.SCROLLBAR_STYLE,
+            background=C["bg_input"],
+            troughcolor=C["bg_side"],
+            bordercolor=C["divider"],
+            arrowcolor=C["fg_main"],
+            darkcolor=C["bg_input"],
+            lightcolor=C["bg_input"],
+        )
+        self._style.map(
+            self.SCROLLBAR_STYLE,
+            background=[
+                ("pressed", C["bg_selected"]),
+                ("active", C["bg_selected"]),
+            ],
+        )
+
+    def _on_theme_changed(self, _event=None) -> None:
+        self._configure_styles()
+
+    def _refresh(self) -> None:
+        self._start_operation(
+            self._load_snapshot,
+            action="load",
+        )
+
+    def _set_busy(self, busy: bool) -> None:
+        state = tk.DISABLED if busy else tk.NORMAL
+        self._delete_button.configure(state=state)
+        self._delete_all_button.configure(state=state)
+        self._close_button.configure(state=state)
+        if busy:
+            self._summary_var.set("保存済み添付ファイル: 処理中…")
+
+    def _start_operation(
+        self,
+        operation,
+        *,
+        action: str,
+        single: bool | None = None,
+        check_modification: bool = False,
+    ) -> bool:
+        if self._operation_busy.is_set():
+            return False
+        context = dict(self._current_context())
+        self._operation_busy.set()
+        self._operation_serial += 1
+        serial = self._operation_serial
+        self._set_busy(True)
+
+        busy_event = self._operation_busy
+        post_ui = self._post_ui
+        block_reason = self._modification_block_reason
+
+        def finish(outcome):
+            self._finish_operation(
+                serial, context, outcome, action=action, single=single)
+
+        def worker() -> None:
+            try:
+                reason = block_reason() if check_modification else None
+                if reason:
+                    outcome = ("blocked", reason)
+                else:
+                    outcome = ("success", operation(context))
+            except Exception as exc:
+                outcome = ("error", exc)
+            try:
+                posted = post_ui(lambda: finish(outcome))
+            except Exception as exc:
+                print(f"[SavedAttachments] UI notification failed: {exc}")
+                posted = False
+            if not posted:
+                busy_event.clear()
+
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception as exc:
+            busy_event.clear()
+            self._set_busy(False)
+            messagebox.showerror(
+                "保存済み添付ファイル",
+                f"処理を開始できませんでした。\n{exc}",
+                parent=self,
+            )
+            return False
+        return True
+
+    def _finish_operation(
+        self,
+        serial: int,
+        context: dict,
+        outcome: tuple,
+        *,
+        action: str,
+        single: bool | None,
+    ) -> None:
+        self._operation_busy.clear()
+        if (
+            not self._alive
+            or serial != self._operation_serial
+            or not self.winfo_exists()
+        ):
+            return
+        self._set_busy(False)
+        status, payload = outcome
+        if status == "blocked":
+            messagebox.showwarning(
+                "保存済み添付ファイル", payload, parent=self)
+            return
+        if status == "error":
+            messagebox.showerror(
+                "保存済み添付ファイル",
+                f"処理を完了できませんでした。\n{payload}",
+                parent=self,
+            )
+            return
+        snapshot = payload
+        self._apply_snapshot(snapshot)
+        applied = self._apply_current_snapshot(snapshot, context)
+        if action in ("delete_one", "delete_all"):
+            self._show_result(snapshot.get("result", {}), single=bool(single))
+        if applied and snapshot.get("current_warnings"):
+            messagebox.showwarning(
+                "保存済み添付ファイル",
+                "利用できない保存済み添付はLLMへ渡しません。\n\n"
+                + "\n".join(
+                    f"・{item}"
+                    for item in snapshot["current_warnings"][:10]
+                ),
+                parent=self,
+            )
+
+    def _apply_snapshot(self, snapshot: dict) -> None:
+        items = list(snapshot.get("items", []))
+        self._tree.delete(*self._tree.get_children())
+        self._rows.clear()
+        for index, item in enumerate(items):
+            key = f"row-{index}"
+            self._rows[key] = item
+            size = max(0, int(item.get("size", 0)))
+            self._tree.insert(
+                "", tk.END, iid=key,
+                values=(
+                    item.get("display_name") or item.get("name", ""),
+                    item.get("kind_label") or item.get("mime_type", ""),
+                    _format_attachment_size(size),
+                    item.get("chat_title", ""),
+                    item.get("status", "利用可能"),
+                ),
+            )
+        self._summary_var.set(
+            f"保存済み添付ファイル: {len(items)}件 / "
+            f"{_format_attachment_size(snapshot.get('total_size', 0))}"
+        )
+
+    def _selected_item(self) -> dict | None:
+        selected = self._tree.selection()
+        return self._rows.get(selected[0]) if selected else None
+
+    def _delete_selected(self) -> None:
+        reason = self._modification_block_reason()
+        if reason:
+            messagebox.showwarning(
+                "保存済み添付ファイル", reason, parent=self)
+            return
+        item = self._selected_item()
+        if item is None:
+            messagebox.showinfo(
+                "保存済み添付ファイル",
+                "削除する添付ファイルを選択してください。",
+                parent=self,
+            )
+            return
+        if not messagebox.askyesno(
+            "保存済み添付ファイルの削除",
+            f"「{item.get('display_name') or item.get('name', '')}」を削除しますか？\n\n"
+            "会話履歴は削除されません。\n"
+            "削除後は、この添付を過去チャットから参照できません。",
+            icon="warning", parent=self,
+        ):
+            return
+        callback = self._delete_one
+        selected = dict(item)
+        self._start_operation(
+            lambda context: callback(selected, context),
+            action="delete_one",
+            single=True,
+            check_modification=True,
+        )
+
+    def _delete_everything(self) -> None:
+        reason = self._modification_block_reason()
+        if reason:
+            messagebox.showwarning(
+                "保存済み添付ファイル", reason, parent=self)
+            return
+        if not self._rows:
+            messagebox.showinfo(
+                "保存済み添付ファイル",
+                "削除する保存済み添付ファイルはありません。",
+                parent=self,
+            )
+            return
+        if not messagebox.askyesno(
+            "保存済み添付ファイルをすべて削除",
+            "すべてのチャットに保存されている添付ファイルを削除します。\n\n"
+            "会話履歴は削除されません。\n"
+            "削除した添付ファイルは過去のチャットから参照できなくなります。\n\n"
+            "本アプリはユーザー単位の添付分離・権限管理を提供しません。\n"
+            "同じアプリデータ保存領域を複数人で共有している場合、\n"
+            "その保存領域内の他利用者を含む全チャット添付が対象です。\n\n"
+            "削除しますか？",
+            icon="warning", parent=self,
+        ):
+            return
+        callback = self._delete_all
+        self._start_operation(
+            callback,
+            action="delete_all",
+            single=False,
+            check_modification=True,
+        )
+
+    def _close(self) -> None:
+        if self._operation_busy.is_set():
+            messagebox.showwarning(
+                "保存済み添付ファイル",
+                "処理が完了するまで、この画面を閉じることはできません。",
+                parent=self,
+            )
+            return
+        self._alive = False
+        self._operation_serial += 1
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        self.destroy()
+
+    def _show_result(self, result: dict, *, single: bool) -> None:
+        succeeded = int(result.get("succeeded", 0))
+        failed = int(result.get("failed", 0))
+        skipped = int(result.get("skipped", 0))
+        pending = int(result.get("cleanup_pending", 0))
+        details = (
+            f"削除成功: {succeeded}件\n"
+            f"失敗: {failed}件\n"
+            f"スキップ: {skipped}件\n"
+            f"物理削除の再試行待ち: {pending}件"
+        )
+        if failed or skipped or pending:
+            messagebox.showwarning(
+                "添付削除の結果",
+                "削除できなかった添付があります。\n"
+                "メタデータだけを消して孤児化させる処理は行っていません。\n\n"
+                + details,
+                parent=self,
+            )
+        else:
+            messagebox.showinfo(
+                "添付削除の結果",
+                ("選択した添付を削除しました。\n\n" if single else
+                 "保存済み添付ファイルを削除しました。\n\n")
+                + details,
+                parent=self,
+            )
+
+
+# ═══════════════════════════════════════════════════════
 #  ■ 設定ダイアログ
 # ═══════════════════════════════════════════════════════
 class SettingsDialog(tk.Toplevel):
@@ -1277,13 +1775,15 @@ class SettingsDialog(tk.Toplevel):
         parent: tk.Tk,
         cfg: dict,
         offload_state: dict | None = None,
+        manage_attachments=None,
     ):
         super().__init__(parent)
         self.title("生成設定")
         self.configure(bg=C["bg_main"])
-        self.resizable(False, False)
+        self.resizable(True, False)
         self.result = None
         P = dict(padx=16, pady=8)
+        self.grid_columnconfigure(1, weight=1)
 
         def lbl(row: int, text: str) -> None:
             tk.Label(self, text=text, bg=C["bg_main"], fg=C["fg_main"]
@@ -1326,10 +1826,10 @@ class SettingsDialog(tk.Toplevel):
         )
         offload_menu.config(
             bg=C["bg_input"], fg=C["fg_main"],
-            activebackground=C["accent"], bd=0, width=18,
+            activebackground=C["accent"], bd=0,
         )
         offload_menu["menu"].config(bg=C["bg_input"], fg=C["fg_main"])
-        offload_menu.grid(row=1, column=1, sticky="w", **P)
+        offload_menu.grid(row=1, column=1, sticky="ew", **P)
 
         lbl(2, "現在の実行状態:")
         tk.Label(
@@ -1388,10 +1888,11 @@ class SettingsDialog(tk.Toplevel):
             self, self.v_whisper_mode, *WHISPER_MODE_LABELS.values())
         whisper_menu.config(
             bg=C["bg_input"], fg=C["fg_main"],
-            activebackground=C["accent"], bd=0, width=25,
+            activebackground=C["accent"], bd=0,
         )
         whisper_menu["menu"].config(bg=C["bg_input"], fg=C["fg_main"])
-        whisper_menu.grid(row=9, column=1, sticky="w", **P)
+        whisper_menu.grid(row=9, column=1, sticky="ew", **P)
+        self._whisper_menu = whisper_menu
         tk.Label(
             self, text="変更は次回起動時に反映",
             bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
@@ -1414,10 +1915,10 @@ class SettingsDialog(tk.Toplevel):
             self, self.v_retention, *retention_labels.values())
         retention_menu.config(
             bg=C["bg_input"], fg=C["fg_main"],
-            activebackground=C["accent"], bd=0, width=18,
+            activebackground=C["accent"], bd=0,
         )
         retention_menu["menu"].config(bg=C["bg_input"], fg=C["fg_main"])
-        retention_menu.grid(row=10, column=1, sticky="w", **P)
+        retention_menu.grid(row=10, column=1, sticky="ew", **P)
         self._retention_labels = retention_labels
 
         # 起動時マイクON/OFF
@@ -1444,26 +1945,52 @@ class SettingsDialog(tk.Toplevel):
             bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
         ).grid(row=13, column=0, columnspan=3, sticky="w", padx=16, pady=(2, 4))
 
+        # 保存済み添付管理
+        if manage_attachments is not None:
+            self._manage_attachments_button = tk.Button(
+                self,
+                text="添付ファイルを管理",
+                bg=C["bg_input"], fg=C["fg_main"], bd=0, padx=10,
+                command=lambda: self._open_attachment_manager(
+                    manage_attachments),
+            )
+            self._manage_attachments_button.grid(
+                row=14, column=0, columnspan=3, pady=(8, 0))
+
         # ボタン
         bf = tk.Frame(self, bg=C["bg_main"])
-        bf.grid(row=14, column=0, columnspan=3, pady=16)
+        bf.grid(row=15, column=0, columnspan=3, pady=16)
         tk.Button(
             bf, text="保存して適用",
-            bg=C["accent"], fg="white", width=14, bd=0,
+            bg=C["accent"], fg="white", bd=0, padx=16,
             command=self._save,
         ).pack(side=tk.LEFT, padx=8)
         tk.Button(
             bf, text="GPU配置を再評価",
-            bg=C["bg_input"], fg=C["fg_main"], width=14, bd=0,
+            bg=C["bg_input"], fg=C["fg_main"], bd=0, padx=16,
             command=lambda: self._save(reassess=True),
         ).pack(side=tk.LEFT, padx=8)
         tk.Button(
             bf, text="キャンセル",
-            bg=C["bg_input"], fg=C["fg_main"], width=10, bd=0,
+            bg=C["bg_input"], fg=C["fg_main"], bd=0, padx=16,
             command=self.destroy,
         ).pack(side=tk.LEFT, padx=8)
 
+        # 実フォントとDPIを反映した要求幅を最小幅にする。
+        self.update_idletasks()
+        self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
         self.grab_set()
+
+    def _open_attachment_manager(self, callback) -> None:
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        try:
+            callback(self)
+        finally:
+            if self.winfo_exists():
+                self.grab_set()
 
     def _browse(self) -> None:
         p = filedialog.askopenfilename(
@@ -1920,6 +2447,7 @@ class ChatApp:
         self._llm_load_active         = threading.Event()
         self._active_reload_job: dict | None = None
         self._portable_pending        = threading.Event()
+        self._attachment_manager_busy = threading.Event()
         self._files: list[str]        = []
         self._attachments: list[Attachment] = []
         self._current_session: dict   = {}
@@ -2932,21 +3460,52 @@ class ChatApp:
         if not paths:
             return
         errors = []
-        existing_names = {attachment.name.casefold() for attachment in self._attachments}
+        existing_fingerprints = {
+            attachment_fingerprint(attachment)
+            for attachment in self._attachments
+        }
+        selected = []
         for path in paths:
-            if len(self._attachments) >= MAX_ATTACHMENTS:
+            if len(self._attachments) + len(selected) >= MAX_ATTACHMENTS:
                 errors.append(f"添付できるファイルは最大{MAX_ATTACHMENTS}件です。")
                 break
             try:
                 attachment = load_attachment(path)
-                if attachment.name.casefold() in existing_names:
+                fingerprint = attachment_fingerprint(attachment)
+                if fingerprint in existing_fingerprints:
+                    errors.append(
+                        f"同じ内容の添付は既に追加されています: {attachment.name}")
                     continue
-                validate_attachment_set([*self._attachments, attachment])
+                validate_attachment_set(
+                    [*self._attachments, *selected, attachment])
             except PromptInputError as exc:
                 errors.append(str(exc))
                 continue
-            self._attachments.append(attachment)
-            existing_names.add(attachment.name.casefold())
+            selected.append(attachment)
+            existing_fingerprints.add(fingerprint)
+
+        if selected:
+            if self._is_guest:
+                self._attachments.extend(selected)
+            else:
+                try:
+                    saved_path, added, store_warnings = (
+                        self._session_store.add_attachments(
+                            self._current_session,
+                            self._current_path,
+                            selected,
+                        )
+                    )
+                    self._current_path = saved_path
+                    added_ids = {item["id"] for item in added}
+                    self._attachments.extend(
+                        attachment for attachment in selected
+                        if attachment.attachment_id in added_ids
+                    )
+                    errors.extend(store_warnings)
+                    self._refresh_chat_list()
+                except Exception as exc:
+                    errors.append(f"添付を保存できませんでした: {exc}")
         self._update_attachment_display()
         if errors:
             messagebox.showwarning(
@@ -2958,9 +3517,23 @@ class ChatApp:
     def _update_attachment_display(self) -> None:
         if not hasattr(self, "_attachment_var"):
             return
-        if self._attachments:
+        metadata = self._current_session.get("attachments", [])
+        if getattr(self, "_is_guest", False):
+            display_names = attachment_display_names(self._attachments)
+        elif metadata:
+            counts = {}
+            display_names = []
+            for item in metadata:
+                name = item.get("name", "添付ファイル")
+                key = name.casefold()
+                counts[key] = counts.get(key, 0) + 1
+                display_names.append(
+                    name if counts[key] == 1 else f"{name} ({counts[key]})")
+        else:
+            display_names = []
+        if display_names:
             self._attachment_var.set(
-                " / ".join(attachment.name for attachment in self._attachments))
+                "チャット添付: " + " / ".join(display_names))
         else:
             self._attachment_var.set("添付なし")
         enabled = not (
@@ -2971,15 +3544,89 @@ class ChatApp:
         self._set_attachment_controls(enabled)
 
     def _clear_attachments(self, expected=None) -> None:
-        if expected is None:
-            self._attachments.clear()
-        else:
-            expected_ids = {id(attachment) for attachment in expected}
-            self._attachments = [
-                attachment for attachment in self._attachments
-                if id(attachment) not in expected_ids
+        if getattr(self, "_is_guest", False) or not self._current_path:
+            if expected is None:
+                self._attachments.clear()
+            else:
+                expected_ids = {id(attachment) for attachment in expected}
+                self._attachments = [
+                    attachment for attachment in self._attachments
+                    if id(attachment) not in expected_ids
+                ]
+            self._update_attachment_display()
+            return
+        targets = self._attachments if expected is None else list(expected)
+        if not targets:
+            return
+        if not messagebox.askyesno(
+            "添付解除の確認",
+            "現在のチャットに保存されている添付ファイルを解除します。\n\n"
+            "添付の保存実体と関連情報は削除され、元に戻せません。\n"
+            "会話本文とAI回答は削除されません。\n\n"
+            "解除しますか？",
+            parent=self.root,
+        ):
+            return
+        attachment_ids = None
+        if expected is not None:
+            attachment_ids = [
+                attachment.attachment_id for attachment in expected
+                if attachment.attachment_id
             ]
+        try:
+            data, result = self._session_store.delete_saved_attachments(
+                self._current_path, attachment_ids)
+            self._current_session = data
+            self._restore_current_attachments(show_warning=False)
+        except Exception as exc:
+            messagebox.showerror(
+                "添付解除エラー",
+                f"保存済み添付を解除できませんでした。\n{exc}",
+                parent=self.root,
+            )
+            return
+        if (
+            result.get("failed")
+            or result.get("skipped")
+            or result.get("cleanup_pending")
+        ):
+            messagebox.showwarning(
+                "添付解除",
+                "解除できなかった保存済み添付があります。\n"
+                f"成功: {result.get('succeeded', 0)}件 / "
+                f"失敗: {result.get('failed', 0)}件 / "
+                f"スキップ: {result.get('skipped', 0)}件 / "
+                f"再試行待ち: {result.get('cleanup_pending', 0)}件",
+                parent=self.root,
+            )
         self._update_attachment_display()
+
+    def _restore_current_attachments(self, *, show_warning: bool = True) -> None:
+        self._attachments = []
+        if (
+            getattr(self, "_is_guest", False)
+            or not self._current_session.get("attachments")
+        ):
+            self._update_attachment_display()
+            return
+        try:
+            loaded, warnings = self._session_store.load_attachments(
+                self._current_session)
+            for metadata, data in loaded:
+                self._attachments.append(load_attachment_bytes(
+                    metadata["name"], data,
+                    attachment_id=metadata["id"],
+                ))
+        except Exception as exc:
+            warnings = [str(exc)]
+        self._update_attachment_display()
+        if show_warning and warnings:
+            messagebox.showwarning(
+                "保存済み添付ファイル",
+                "利用できない保存済み添付はLLMへ渡しません。\n\n"
+                + "\n".join(f"・{item}" for item in warnings[:10]),
+                parent=self.root,
+            )
 
     def _snapshot_attachments(self) -> tuple[Attachment, ...]:
         return tuple(self._attachments)
@@ -3005,7 +3652,11 @@ class ChatApp:
             clear_button.config(
                 state=(
                     tk.NORMAL
-                    if enabled and getattr(self, "_attachments", ())
+                    if enabled and (
+                        getattr(self, "_attachments", ())
+                        or getattr(self, "_current_session", {}).get(
+                            "attachments", [])
+                    )
                     else tk.DISABLED
                 )
             )
@@ -3063,10 +3714,23 @@ class ChatApp:
         ):
             return
         try:
-            self._session_store.delete(target)
+            cleanup = self._session_store.delete(target)
         except Exception as e:
             messagebox.showerror("削除エラー", f"削除できませんでした。\n{e}")
             return
+
+        if cleanup.get("failed") or cleanup.get("skipped") or cleanup.get(
+            "cleanup_pending"
+        ):
+            messagebox.showwarning(
+                "チャット添付の削除",
+                "チャットは削除しましたが、添付実体の削除に未完了項目があります。\n"
+                "次回起動時または次回の履歴操作時に再試行します。\n\n"
+                f"成功: {cleanup.get('succeeded', 0)}件 / "
+                f"失敗: {cleanup.get('failed', 0)}件 / "
+                f"スキップ: {cleanup.get('skipped', 0)}件",
+                parent=self.root,
+            )
 
         if self._current_path == target:
             self._new_session()
@@ -3382,7 +4046,8 @@ class ChatApp:
             messagebox.showwarning(
                 "警告", "AIの処理中です。しばらくお待ちください。")
             return
-        self._clear_attachments()
+        # チャット切替は添付削除操作ではない。表示中の参照だけを外す。
+        self._attachments = []
         self._current_session = self._session_store.new_session()
         self._current_path = None
         self._title_var.set("新しいチャット")
@@ -3699,7 +4364,8 @@ class ChatApp:
             messagebox.showerror("読込エラー", str(e))
             return
 
-        self._clear_attachments()
+        # 元チャットの保存済み添付は削除せず、選択したチャットを復元する。
+        self._attachments = []
         self._current_session = data
         self._current_path    = fp
         self._title_var.set(data.get("title", "不明"))
@@ -3720,6 +4386,7 @@ class ChatApp:
             self._chat_text.insert(tk.END, "─" * 50 + "\n\n", "divider")
         self._chat_text.config(state=tk.DISABLED)
         self._chat_text.yview(tk.END)
+        self._restore_current_attachments()
 
         # ─────────────────────────────────────────
         #  ★ バグ修正箇所 ⑦:
@@ -3786,6 +4453,9 @@ class ChatApp:
             "暗号化され、人間が直接読めるテキストではありません。\n\n"
             "エクスポート対象はDPAPIで保存済みの会話だけです。"
             "ゲスト会話、未保存会話、保存後の未保存部分は出力されません。\n\n"
+            ".shiro-exportには添付実体・添付メタデータを含みません。"
+            "インポート後の会話へ添付は復元されないため、"
+            "添付ファイルのバックアップとしては使用できません。\n\n"
             "パスフレーズは保存されません。紛失すると復元できません。"
             "暗号化ファイルとパスフレーズを同じ場所へ保管しないでください。\n\n"
             "インポートした履歴は、このPCの現在のWindowsユーザー用DPAPIで"
@@ -3846,6 +4516,7 @@ class ChatApp:
                 tts_enabled   = self.tts.enabled,
             ),
             offload_state=deepcopy(self._llm_offload_state),
+            manage_attachments=self._open_saved_attachments,
         )
         self.root.wait_window(dlg)
         if dlg.result is None:
@@ -3963,6 +4634,118 @@ class ChatApp:
         else:
             self._update_status()
 
+    def _open_saved_attachments(self, parent) -> None:
+        if self._attachment_manager_busy.is_set():
+            messagebox.showwarning(
+                "保存済み添付ファイル",
+                "保存済み添付ファイルの処理が完了するまでお待ちください。",
+                parent=parent,
+            )
+            return
+
+        def load_snapshot(context):
+            return self._session_store.saved_attachment_manager_snapshot(
+                context.get("path"))
+
+        def delete_one(item, context):
+            return self._session_store.delete_saved_attachment_snapshot(
+                item, context.get("path"))
+
+        def delete_all(context):
+            return self._session_store.delete_all_saved_attachments_snapshot(
+                context.get("path"))
+
+        dialog = SavedAttachmentsDialog(
+            parent,
+            load_snapshot,
+            delete_one,
+            delete_all,
+            self._post_ui,
+            self._attachment_manager_context,
+            self._apply_attachment_manager_snapshot,
+            self._attachment_modification_block_reason,
+            self._attachment_manager_busy,
+        )
+        parent.wait_window(dialog)
+
+    def _attachment_manager_context(self) -> dict:
+        return {
+            "path": self._current_path,
+            "session_id": self._current_session.get("session_id"),
+            "guest": bool(self._is_guest),
+        }
+
+    def _attachment_modification_block_reason(self) -> str | None:
+        if getattr(self, "_closing", False):
+            return "アプリの終了処理中は保存済み添付を削除できません。"
+        portable_pending = getattr(self, "_portable_pending", None)
+        if portable_pending is not None and portable_pending.is_set():
+            return (
+                "暗号化インポートまたはエクスポートの処理中は、"
+                "保存済み添付を削除できません。"
+            )
+        load_active = getattr(self, "_llm_load_active", None)
+        if (
+            getattr(self, "_llm_loading", False)
+            or (load_active is not None and load_active.is_set())
+        ):
+            return "モデルの読込・再配置中は保存済み添付を削除できません。"
+        controller = getattr(self, "_ctrl", None)
+        if controller is not None and controller.is_busy():
+            return "AIの処理中は保存済み添付を削除できません。"
+        return None
+
+    @staticmethod
+    def _same_managed_path(first, second) -> bool:
+        if first is None or second is None:
+            return first is second
+        if not isinstance(first, str) or not isinstance(second, str):
+            return False
+        return os.path.normcase(os.path.abspath(first)) == os.path.normcase(
+            os.path.abspath(second))
+
+    def _apply_attachment_manager_snapshot(
+        self, snapshot: dict, context: dict
+    ) -> bool:
+        if getattr(self, "_closing", False):
+            return False
+        if bool(getattr(self, "_is_guest", False)) != bool(
+            context.get("guest")):
+            return False
+        if not self._same_managed_path(
+            self._current_path, context.get("path")):
+            return False
+        expected_session_id = context.get("session_id")
+        if (
+            expected_session_id is not None
+            and self._current_session.get("session_id")
+            != expected_session_id
+        ):
+            return False
+        if context.get("path") is None:
+            self._update_attachment_display()
+            return True
+        if not self._same_managed_path(
+            snapshot.get("current_path"), context.get("path")):
+            return True
+        current_session = snapshot.get("current_session")
+        if not isinstance(current_session, dict):
+            return True
+        try:
+            restored = []
+            for metadata, data in snapshot.get("current_attachments", []):
+                restored.append(load_attachment_bytes(
+                    metadata["name"], data,
+                    attachment_id=metadata["id"],
+                ))
+            self._current_session = current_session
+            self._attachments = restored
+            self._update_attachment_display()
+        except Exception as exc:
+            snapshot.setdefault("current_warnings", []).append(
+                f"現在のチャット表示を更新できませんでした: {exc}")
+        return True
+
     # ══════════════════════════════════════════════
     #  コピー
     # ══════════════════════════════════════════════
@@ -4017,6 +4800,14 @@ class ChatApp:
     def _on_close(self) -> None:
         if self._closing:
             return
+        attachment_busy = getattr(self, "_attachment_manager_busy", None)
+        if attachment_busy is not None and attachment_busy.is_set():
+            messagebox.showwarning(
+                "終了できません",
+                "保存済み添付ファイルの処理完了後に終了してください。",
+                parent=self.root,
+            )
+            return
         portable_pending = getattr(self, "_portable_pending", None)
         if portable_pending is not None and portable_pending.is_set():
             messagebox.showwarning(
@@ -4035,6 +4826,8 @@ class ChatApp:
             ):
                 return
         self._closing = True
+        # 添付実体はチャットに属する永続データ。終了時はメモリ参照だけ破棄する。
+        self._attachments = []
         closing_event = getattr(self, "_closing_event", None)
         if closing_event is None:
             closing_event = threading.Event()

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 from dataclasses import dataclass
 from io import BytesIO
+from uuid import uuid4
 
 from PIL import Image, UnidentifiedImageError
 
@@ -21,6 +23,16 @@ MAX_EXTERNAL_PROMPT_BYTES = 1024 * 1024
 # MTMDへ渡す画像トークン上限と、PromptBuilderが事前に確保する同一予算。
 IMAGE_CONTEXT_TOKEN_RESERVE = 4096
 
+_ATTACHMENT_SPECS = {
+    ".txt": ("text", "text/plain", MAX_TEXT_ATTACHMENT_BYTES),
+    ".md": ("text", "text/markdown", MAX_TEXT_ATTACHMENT_BYTES),
+    ".json": ("text", "application/json", MAX_TEXT_ATTACHMENT_BYTES),
+    ".csv": ("text", "text/csv", MAX_TEXT_ATTACHMENT_BYTES),
+    ".png": ("image", "image/png", MAX_IMAGE_ATTACHMENT_BYTES),
+    ".jpg": ("image", "image/jpeg", MAX_IMAGE_ATTACHMENT_BYTES),
+    ".jpeg": ("image", "image/jpeg", MAX_IMAGE_ATTACHMENT_BYTES),
+}
+
 
 class PromptInputError(ValueError):
     """ユーザーへ表示できるローカル入力エラー。"""
@@ -33,6 +45,10 @@ class Attachment:
     mime_type: str
     text: str | None = None
     data: bytes | None = None
+    attachment_id: str | None = None
+    extension: str | None = None
+    size: int | None = None
+    sha256: str | None = None
 
 
 def _safe_name(path: str) -> str:
@@ -58,56 +74,148 @@ def _read_limited(path: str, limit: int, name: str) -> bytes:
     return data
 
 
-def load_attachment(path: str) -> Attachment:
-    """添付を上限内でメモリへ読み込む。実パスは返り値へ保持しない。"""
-    name = _safe_name(path)
+def _attachment_spec(name: str) -> tuple[str, str, int, str]:
     extension = os.path.splitext(name)[1].lower()
-    if extension in TEXT_ATTACHMENT_EXTENSIONS:
-        data = _read_limited(path, MAX_TEXT_ATTACHMENT_BYTES, name)
+    spec = _ATTACHMENT_SPECS.get(extension)
+    if spec is None:
+        raise PromptInputError(f"対応していないファイル形式です: {name}")
+    kind, mime_type, limit = spec
+    return kind, mime_type, limit, extension
+
+
+def _validated_attachment_id(attachment_id: str | None) -> str:
+    if attachment_id is None:
+        return uuid4().hex
+    if not isinstance(attachment_id, str) or not attachment_id:
+        raise PromptInputError("添付IDの形式が正しくありません。")
+    return attachment_id
+
+
+def load_attachment_bytes(
+    name: str,
+    data: bytes,
+    *,
+    attachment_id: str | None = None,
+) -> Attachment:
+    """検証済みsidecar等の生bytesから、実パスを持たない添付を復元する。"""
+    safe_name = _safe_name(name)
+    kind, mime_type, limit, extension = _attachment_spec(safe_name)
+    if not isinstance(data, bytes):
+        raise PromptInputError(f"ファイルを読み込めません: {safe_name}")
+    if len(data) > limit:
+        raise PromptInputError(f"ファイルサイズが上限を超えています: {safe_name}")
+    content_hash = hashlib.sha256(data).hexdigest()
+
+    if kind == "text":
         try:
             text = data.decode("utf-8-sig")
         except UnicodeDecodeError as exc:
             raise PromptInputError(
-                f"UTF-8のテキストとして読み込めません: {name}"
+                f"UTF-8のテキストとして読み込めません: {safe_name}"
             ) from exc
         if not text:
-            raise PromptInputError(f"ファイルが空です: {name}")
+            raise PromptInputError(f"ファイルが空です: {safe_name}")
         return Attachment(
-            name=name,
+            name=safe_name,
             kind="text",
-            mime_type="text/plain",
+            mime_type=mime_type,
             text=text,
-        )
-
-    if extension in IMAGE_ATTACHMENT_EXTENSIONS:
-        data = _read_limited(path, MAX_IMAGE_ATTACHMENT_BYTES, name)
-        try:
-            with Image.open(BytesIO(data)) as image:
-                width, height = image.size
-                image_format = (image.format or "").upper()
-                if image_format not in ("PNG", "JPEG"):
-                    raise PromptInputError(
-                        f"PNGまたはJPEG画像ではありません: {name}"
-                    )
-                if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
-                    raise PromptInputError(
-                        f"画像の画素数が上限を超えています: {name}"
-                    )
-                image.verify()
-        except PromptInputError:
-            raise
-        except (UnidentifiedImageError, OSError, SyntaxError) as exc:
-            raise PromptInputError(f"画像を読み込めません: {name}") from exc
-        return Attachment(
-            name=name,
-            kind="image",
-            mime_type="image/png" if image_format == "PNG" else "image/jpeg",
             data=data,
+            attachment_id=_validated_attachment_id(attachment_id),
+            extension=extension,
+            size=len(data),
+            sha256=content_hash,
         )
 
-    raise PromptInputError(
-        f"対応していないファイル形式です: {name}"
+    try:
+        with Image.open(BytesIO(data)) as image:
+            width, height = image.size
+            image_format = (image.format or "").upper()
+            expected_format = "PNG" if extension == ".png" else "JPEG"
+            if image_format != expected_format:
+                raise PromptInputError(
+                    f"拡張子と画像形式が一致しません: {safe_name}"
+                )
+            if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
+                raise PromptInputError(
+                    f"画像の画素数が上限を超えています: {safe_name}"
+                )
+            image.verify()
+    except PromptInputError:
+        raise
+    except (UnidentifiedImageError, OSError, SyntaxError) as exc:
+        raise PromptInputError(f"画像を読み込めません: {safe_name}") from exc
+    return Attachment(
+        name=safe_name,
+        kind="image",
+        mime_type=mime_type,
+        data=data,
+        attachment_id=_validated_attachment_id(attachment_id),
+        extension=extension,
+        size=len(data),
+        sha256=content_hash,
     )
+
+
+def load_attachment(path: str) -> Attachment:
+    """添付を上限内でメモリへ読み込む。実パスは返り値へ保持しない。"""
+    name = _safe_name(path)
+    _kind, _mime_type, limit, _extension = _attachment_spec(name)
+    return load_attachment_bytes(name, _read_limited(path, limit, name))
+
+
+def attachment_fingerprint(attachment: Attachment) -> str:
+    """実パスを使わず、同じpayloadだけを重複判定できる値を返す。"""
+    content_hash = attachment.sha256
+    if not content_hash:
+        if attachment.data is not None:
+            content_hash = hashlib.sha256(attachment.data).hexdigest()
+        else:
+            content_hash = hashlib.sha256(
+                (attachment.text or "").encode("utf-8")
+            ).hexdigest()
+    extension = attachment.extension or os.path.splitext(attachment.name)[1].lower()
+    size = attachment.size
+    if size is None:
+        size = len(attachment.data) if attachment.data is not None else len(
+            (attachment.text or "").encode("utf-8")
+        )
+    return f"{attachment.kind}:{extension}:{size}:{content_hash.lower()}"
+
+
+def attachment_display_names(
+    attachments: tuple[Attachment, ...] | list[Attachment],
+) -> list[str]:
+    """同名添付を入力順に data.csv / data.csv (2) と区別する。"""
+    totals: dict[str, int] = {}
+    for attachment in attachments:
+        key = attachment.name.casefold()
+        totals[key] = totals.get(key, 0) + 1
+    seen: dict[str, int] = {}
+    names = []
+    for attachment in attachments:
+        key = attachment.name.casefold()
+        index = seen.get(key, 0) + 1
+        seen[key] = index
+        names.append(
+            attachment.name if totals[key] == 1 or index == 1
+            else f"{attachment.name} ({index})"
+        )
+    return names
+
+
+def _unique_attachments(
+    attachments: tuple[Attachment, ...] | list[Attachment],
+) -> list[Attachment]:
+    unique = []
+    seen = set()
+    for attachment in attachments:
+        fingerprint = attachment_fingerprint(attachment)
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        unique.append(attachment)
+    return unique
 
 
 def validate_attachment_set(attachments: tuple[Attachment, ...] | list[Attachment]) -> None:
@@ -124,12 +232,15 @@ def format_text_attachment_input(
     user_text: str, attachments: tuple[Attachment, ...] | list[Attachment]
 ) -> str:
     blocks = []
-    for attachment in attachments:
+    unique_attachments = _unique_attachments(attachments)
+    for attachment, display_name in zip(
+        unique_attachments, attachment_display_names(unique_attachments)
+    ):
         if attachment.kind != "text":
             continue
         blocks.append(
             "[添付ファイル]\n"
-            f"ファイル名: {attachment.name}\n\n"
+            f"ファイル名: {display_name}\n\n"
             "--- ファイル内容 ---\n"
             f"{attachment.text or ''}\n"
             "--- ファイル内容ここまで ---"
@@ -142,7 +253,10 @@ def format_text_attachment_input(
 def build_multimodal_user_content(
     text: str, attachments: tuple[Attachment, ...] | list[Attachment]
 ) -> str | list[dict]:
-    images = [attachment for attachment in attachments if attachment.kind == "image"]
+    images = [
+        attachment for attachment in _unique_attachments(attachments)
+        if attachment.kind == "image"
+    ]
     if not images:
         return text
     content: list[dict] = [{"type": "text", "text": text}]
@@ -238,21 +352,15 @@ def resolve_system_prompt(
                 result.append(text)
         return result
 
-    external_system = external_parts("system_prompt")
     inline_system = _inline_text(settings, "system_prompt", errors)
-    system_parts = external_system or [inline_system or default_prompt]
-
-    external_personalization = external_parts("user_personalization")
     inline_personalization = _inline_text(
         settings, "user_personalization", errors)
-    personalization_parts = (
-        external_personalization
-        if external_personalization
-        else ([inline_personalization] if inline_personalization else [])
-    )
 
-    parts = list(system_parts)
-    parts.extend(personalization_parts)
+    parts = [inline_system or default_prompt]
+    parts.extend(external_parts("system_prompt"))
+    if inline_personalization:
+        parts.append(inline_personalization)
+    parts.extend(external_parts("user_personalization"))
     for key in ("response_language", "reasoning_visibility_instruction"):
         value = _inline_text(settings, key, errors)
         if value:

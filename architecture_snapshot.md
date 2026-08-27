@@ -10,12 +10,12 @@ This document captures the current architecture of LLM Local Chat before the nex
 
 ## 2. Version Baseline
 
-- Baseline: 公開版 `v1.7.3`（`CHANGELOG.md` の最新エントリ `1.7.3 - 2026-08-26`）
-- Snapshot target: 公開版v1.7.3の現行実装
+- Baseline: 公開版 `v1.8.0`（`CHANGELOG.md` の最新エントリ `1.8.0 - 2026-08-27`）
+- Snapshot target: 公開版v1.8.0の現行実装
 - Main entrypoint: `LLM_Local_Chat.py`
 - Runtime platform: Windows native desktop app
 
-本書は2026-08-26にv1.7.3のコードと公開文書を再確認したスナップショットです。パーソナライズ、1送信限りの添付、Vision handlerを現行baselineへ含めます。
+本書は2026-08-27にv1.8.0のコードと公開文書を再確認したスナップショットです。パーソナライズ、チャット単位の永続添付、Vision handlerを現行baselineへ含めます。
 
 ## 3. Recent Architectural Changes
 
@@ -24,10 +24,11 @@ This document captures the current architecture of LLM Local Chat before the nex
 - `controller.py`: 送信、停止、LLM完了処理のオーケストレーション。
 - `prompt_builder.py`: 通常会話、家計簿、健康記録のプロンプト生成と履歴予算管理。
 - `prompt_inputs.py`: 外部prompt解決、添付形式・サイズ検証、テキスト区切り、画像data URI構築。
+- `attachment_store.py`: セッションID/添付ID namespace、sidecarのサイズ/SHA-256検証、保留追加・削除、path境界。
 - `llm_service.py`: llama.cpp のストリーミング推論実行。
 - `resource_manager.py`: 推論直前の VRAM 状態に応じた `max_tokens` 決定。
 - `history_crypto.py`: WindowsユーザースコープDPAPIによる履歴暗号化、復号、エンベロープ検証。
-- `session_store.py`: `chat_logs/` の暗号化保存、復号、平文移行、一覧、検索、保存期間削除、名前変更。
+- `session_store.py`: `chat_logs/` の暗号化保存、復号、平文移行、一覧、検索、保存期間削除、名前変更、添付メタデータとsidecarのtransaction統合。
 - `audio_workers.py`: SAPI5 TTS と PyAudio/RMS-VAD/Whisper 音声認識。
 - `app_composition.py`: 起動時依存生成。
 - `integrations.py`: 家計簿/Biolog 連携のサニタイズ、ローカルURL制限、確認、POST処理。
@@ -38,6 +39,8 @@ This document captures the current architecture of LLM Local Chat before the nex
 `1.7.2`では、日付を省略したBiolog登録について送信直前にJST登録日を確定し、POST recordへ保持するようになりました。完了表示は有効なAPI応答日付を優先し、応答に日付がなければ実際にPOSTした確定日付を使用します。
 
 `1.7.3`では、設定からsystem prompt・persona・応答言語等を合成し、UTF-8の外部TXT / MDを読み込む経路を追加しました。通常チャットではテキスト/画像添付を一時入力として扱い、履歴には添付内容を保存しません。Vision有効時だけMTMD chat handlerをLLMへ接続し、非対応モデルでは画像送信を拒否します。
+
+`1.8.0`では、inlineとexternal promptを併用可能にし、添付を検証済み内部IDでチャットへ紐づくsidecarとして永続化しました。履歴JSONはpayloadを含まないメタデータだけを保持し、再起動復元、同名別内容、添付のみ送信、設定画面の個別/一括削除に対応します。
 
 ## 4. Current Module Responsibilities
 
@@ -55,7 +58,7 @@ This document captures the current architecture of LLM Local Chat before the nex
 - `Controller` は薄いオーケストレーター。
 - テキスト送信時に入力・セッション・モード・操作/モデル世代をrequest contextとして確定し、VRAM安全確認後に表示・履歴・TTS・連携処理を一度だけ開始する。
 - Autoの推論直前hard limitでは、入力を保持したまま`ChatApp`へ下位offloadへのhot reloadを要求し、成功時だけ同じ入力を最大1回再試行する。
-- 通常チャットの添付を送信時requestだけへ保持し、生成受理後にUIから解除する。履歴へ保存するuser値は入力欄の本文だけ。
+- 現在チャットの検証済み添付snapshotをrequestへ保持し、送信後も解除しない。履歴へ保存するuser値は入力欄の本文だけで、添付本文・画像本体・添付のみ送信の内部補完文は保存しない。
 - プロンプト構築は `PromptBuilder`、推論は `LLMService`、VRAM判定は `ResourceManager` に委譲する。
 
 `prompt_builder.py`
@@ -67,7 +70,7 @@ This document captures the current architecture of LLM Local Chat before the nex
 
 `prompt_inputs.py`
 
-- `chat_settings.json`のinline値と外部TXT / MDからsystem promptを解決し、正常に読めた外部system/personaを対応するinline値より優先する。
+- `chat_settings.json`のinline値と外部TXT / MDを順序どおり結合し、同一内容だけを重複排除する。
 - TXT / MD / JSON / CSVとPNG / JPEGを検証し、実パスを保持しない`Attachment`へ読み込む。
 - テキスト添付を区切り付き入力へ、画像をローカルdata URIへ変換する。どちらも自動実行しない。
 
@@ -137,12 +140,12 @@ This document captures the current architecture of LLM Local Chat before the nex
 
 通常チャットの流れ:
 
-1. ユーザーが本文を入力し、必要ならファイルを添付する。または `VoiceRecognizer` が音声をテキスト化する。
+1. ユーザーが本文を入力し、必要ならファイルを添付する。非ゲストでは選択時点のコピーとメタデータを現在チャットへcommitする。または `VoiceRecognizer` が音声をテキスト化する。
 2. `Controller.handle_text()` が入力を受け取り、現在モードとVision可否を判定する。
 3. `prompt_inputs.py`が添付を本文と区別して整形し、`PromptBuilder`がcontext上限を事前確認して`messages`を構築する。
 4. `Controller` がrequest contextを保持し、`ResourceManager.decide()` がVRAM状態から`max_tokens`と実行可否を決める。
 5. AutoのGPU配置でhard limitなら、旧LLMを解放して現在より低い配置へhot reloadし、同じrequest contextを最大1回だけ4へ戻す。
-6. 安全確認後にユーザー表示・TTS stream・モード別pending stateを一度だけ開始し、受理済み添付をUIから解除する。
+6. 安全確認後にユーザー表示・TTS stream・モード別pending stateを一度だけ開始する。受理済み添付は現在チャットに残す。
 7. `LLMService.generate()` がストリーミング推論を別スレッドで実行する。
 8. token は `ChatApp._append_stream_token()` へ渡され、チャット欄に逐次表示される。
 9. 完了後、`Controller._on_llm_done()` が履歴、要約更新、TTS、保存、連携処理を進める。添付内容は履歴へ保存しない。
@@ -230,6 +233,8 @@ Preserve:
 
 Risks:
 
+- 添付sidecarはアプリ自身では暗号化せず、ユーザー単位の保存領域分離もない。共有保存領域の一括削除は他利用者を含む全チャット添付へ影響し得る。
+- `.shiro-export`はローカル添付メタデータと実体を含まず、添付バックアップにはならない。
 - `ChatApp` はまだ大きく、UI状態とアプリ制御が密結合している。
 - `Controller` は薄くなっているが、`app` への直接参照が多く、完全な独立サービスではない。
 - `WhisperPool` の内部属性 `_ctrl` を `Controller` 側が参照しているため、境界がやや脆い。

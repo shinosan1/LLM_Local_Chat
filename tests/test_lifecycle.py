@@ -1,10 +1,12 @@
 import ctypes
+import os
 import sys
+import tempfile
 import threading
 import time
 import unittest
 from ctypes import wintypes
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import tkinter as tk
 
@@ -14,11 +16,25 @@ from LLM_Local_Chat import (
     APP_VERSION,
     FONT_CHAT,
     ChatApp,
+    SavedAttachmentsDialog,
+    SettingsDialog,
     _LOGFONTW,
     _set_windows_ime_composition_font,
     main,
 )
 from llm_service import LLMService
+from prompt_inputs import load_attachment_bytes
+from session_store import SessionStore
+
+
+class _FakeProtector:
+    def protect(self, data):
+        return b"protected:" + data[::-1]
+
+    def unprotect(self, data):
+        if not data.startswith(b"protected:"):
+            raise HistoryCryptoError("invalid ciphertext")
+        return data[len(b"protected:"):][::-1]
 
 
 class _Model:
@@ -207,6 +223,510 @@ class IntegrationLifecycleTests(unittest.TestCase):
         self.assertEqual(writes, [])
 
 
+class SessionAttachmentLifetimeTests(unittest.TestCase):
+    def _session_app(self):
+        app = ChatApp.__new__(ChatApp)
+        app._attachments = [object()]
+        app._ctrl = Mock()
+        app._ctrl.is_busy.return_value = False
+        app._session_store = Mock()
+        app._session_store.new_session.return_value = {
+            "title": "新しいチャット",
+            "history": [],
+        }
+        app._title_var = Mock()
+        app._summary_var = Mock()
+        app._chat_text = Mock()
+        app._entry = Mock()
+        app._update_status = Mock()
+        return app
+
+    def test_new_session_discards_session_attachments(self):
+        app = self._session_app()
+        app._new_session()
+        self.assertEqual(app._attachments, [])
+
+    def test_busy_new_session_does_not_discard_attachments(self):
+        app = self._session_app()
+        app._ctrl.is_busy.return_value = True
+        with patch("LLM_Local_Chat.messagebox.showwarning"):
+            app._new_session()
+        self.assertEqual(len(app._attachments), 1)
+
+    def test_loading_another_session_discards_attachments(self):
+        app = self._session_app()
+        app._chat_list = Mock()
+        app._chat_list.curselection.return_value = (0,)
+        app._files = ["session-path"]
+        app._session_store.load.return_value = {
+            "title": "保存済みチャット",
+            "summary": "",
+            "history": [],
+        }
+        app._load_selected()
+        self.assertEqual(app._attachments, [])
+
+    def test_current_chat_attachment_clear_requires_confirmation(self):
+        attachment = Mock()
+        attachment.attachment_id = "a" * 32
+        app = ChatApp.__new__(ChatApp)
+        app.root = object()
+        app._is_guest = False
+        app._current_path = "chat.json"
+        app._attachments = [attachment]
+        app._session_store = Mock()
+        app._update_attachment_display = Mock()
+
+        with patch("LLM_Local_Chat.messagebox.askyesno", return_value=False):
+            app._clear_attachments()
+
+        app._session_store.delete_saved_attachments.assert_not_called()
+        self.assertEqual(app._attachments, [attachment])
+
+
+class SavedAttachmentDialogTests(unittest.TestCase):
+    def test_bulk_delete_cancel_changes_nothing(self):
+        dialog = Mock()
+        dialog._rows = {"row": {"attachment_id": "id"}}
+        dialog._delete_all = Mock()
+        dialog._modification_block_reason.return_value = None
+        with patch("LLM_Local_Chat.messagebox.askyesno", return_value=False):
+            SavedAttachmentsDialog._delete_everything(dialog)
+        dialog._delete_all.assert_not_called()
+
+    def test_individual_delete_cancel_changes_nothing(self):
+        dialog = Mock()
+        dialog._selected_item.return_value = {
+            "display_name": "data.csv",
+            "attachment_id": "id",
+        }
+        dialog._delete_one = Mock()
+        dialog._modification_block_reason.return_value = None
+        with patch("LLM_Local_Chat.messagebox.askyesno", return_value=False):
+            SavedAttachmentsDialog._delete_selected(dialog)
+        dialog._delete_one.assert_not_called()
+
+    def test_single_worker_rejects_overlapping_operation(self):
+        dialog = Mock()
+        dialog._operation_busy = threading.Event()
+        dialog._operation_serial = 0
+        dialog._current_context.return_value = {
+            "path": "chat.json", "session_id": "s", "guest": False}
+        dialog._set_busy = Mock()
+        dialog._modification_block_reason.return_value = None
+        callbacks = []
+        dialog._post_ui.side_effect = lambda callback: (
+            callbacks.append(callback) or True)
+        entered = threading.Event()
+        release = threading.Event()
+
+        def operation(_context):
+            entered.set()
+            release.wait(1)
+            return {"items": [], "total_size": 0}
+
+        self.assertTrue(SavedAttachmentsDialog._start_operation(
+            dialog, operation, action="load"))
+        self.assertTrue(entered.wait(1))
+        self.assertFalse(SavedAttachmentsDialog._start_operation(
+            dialog, operation, action="load"))
+        release.set()
+        deadline = time.monotonic() + 1
+        while not callbacks and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(len(callbacks), 1)
+
+    def test_failed_ui_post_clears_logical_busy_state(self):
+        dialog = Mock()
+        dialog._operation_busy = threading.Event()
+        dialog._operation_serial = 0
+        dialog._current_context.return_value = {}
+        dialog._set_busy = Mock()
+        dialog._modification_block_reason.return_value = None
+        dialog._post_ui.return_value = False
+        self.assertTrue(SavedAttachmentsDialog._start_operation(
+            dialog,
+            lambda _context: {"items": [], "total_size": 0},
+            action="load",
+        ))
+        deadline = time.monotonic() + 1
+        while dialog._operation_busy.is_set() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertFalse(dialog._operation_busy.is_set())
+
+    def test_worker_error_restores_ui_state_without_destroying_dialog(self):
+        dialog = Mock()
+        dialog._operation_busy = threading.Event()
+        dialog._operation_busy.set()
+        dialog._alive = True
+        dialog._operation_serial = 3
+        dialog.winfo_exists.return_value = True
+        dialog._set_busy = Mock()
+        with patch("LLM_Local_Chat.messagebox.showerror") as showerror:
+            SavedAttachmentsDialog._finish_operation(
+                dialog,
+                3,
+                {},
+                ("error", RuntimeError("failed")),
+                action="delete_one",
+                single=True,
+            )
+        self.assertFalse(dialog._operation_busy.is_set())
+        dialog._set_busy.assert_called_once_with(False)
+        showerror.assert_called_once()
+
+    def test_closed_dialog_discards_late_worker_result(self):
+        dialog = Mock()
+        dialog._operation_busy = threading.Event()
+        dialog._operation_busy.set()
+        dialog._alive = False
+        dialog._operation_serial = 2
+        dialog._set_busy = Mock()
+        SavedAttachmentsDialog._finish_operation(
+            dialog,
+            1,
+            {},
+            ("success", {"items": [], "total_size": 0}),
+            action="load",
+            single=None,
+        )
+        self.assertFalse(dialog._operation_busy.is_set())
+        dialog._set_busy.assert_not_called()
+
+    def test_busy_dialog_rejects_close_until_worker_finishes(self):
+        dialog = Mock()
+        dialog._operation_busy = threading.Event()
+        dialog._operation_busy.set()
+        dialog.destroy = Mock()
+        with patch("LLM_Local_Chat.messagebox.showwarning") as warning:
+            SavedAttachmentsDialog._close(dialog)
+        warning.assert_called_once()
+        dialog.destroy.assert_not_called()
+
+
+class SavedAttachmentAppCoordinationTests(unittest.TestCase):
+    def _app(self):
+        app = ChatApp.__new__(ChatApp)
+        app._closing = False
+        app._llm_loading = False
+        app._llm_load_active = threading.Event()
+        app._portable_pending = threading.Event()
+        app._ctrl = Mock()
+        app._ctrl.is_busy.return_value = False
+        return app
+
+    def test_delete_is_blocked_by_generation_reload_portable_and_close(self):
+        app = self._app()
+        app._ctrl.is_busy.return_value = True
+        self.assertIn("AI", app._attachment_modification_block_reason())
+        app._ctrl.is_busy.return_value = False
+        app._llm_loading = True
+        self.assertIn("モデル", app._attachment_modification_block_reason())
+        app._llm_loading = False
+        app._portable_pending.set()
+        self.assertIn("インポート", app._attachment_modification_block_reason())
+        app._portable_pending.clear()
+        app._closing = True
+        self.assertIn("終了", app._attachment_modification_block_reason())
+
+    def test_stale_chat_snapshot_is_not_applied(self):
+        app = self._app()
+        app._is_guest = False
+        app._current_path = "chat-b.json"
+        app._current_session = {"session_id": "b"}
+        app._attachments = []
+        app._update_attachment_display = Mock()
+        applied = app._apply_attachment_manager_snapshot(
+            {
+                "current_path": "chat-a.json",
+                "current_session": {"session_id": "a"},
+                "current_attachments": [],
+                "current_warnings": [],
+            },
+            {"path": "chat-a.json", "session_id": "a", "guest": False},
+        )
+        self.assertFalse(applied)
+        self.assertEqual(app._current_session, {"session_id": "b"})
+        app._update_attachment_display.assert_not_called()
+
+
+class SavedAttachmentTkSmokeTests(unittest.TestCase):
+    @staticmethod
+    def _settings_config():
+        return {
+            "model_path": "model.gguf",
+            "n_ctx": 8192,
+            "max_tokens": 512,
+            "temperature": 0.7,
+            "vad_threshold": 150,
+            "tts_rate": 0,
+            "whisper_mode": "gpu_medium",
+            "llm_gpu_offload_mode": "auto",
+            "history_retention_days": 0,
+            "mic_enabled": False,
+            "tts_enabled": False,
+        }
+
+    @staticmethod
+    def _drain(root, predicate, callbacks=None, timeout=3.0):
+        callbacks = callbacks if callbacks is not None else []
+        deadline = time.monotonic() + timeout
+        while not predicate() and time.monotonic() < deadline:
+            while callbacks:
+                callbacks.pop(0)()
+            root.update()
+            time.sleep(0.01)
+        while callbacks:
+            callbacks.pop(0)()
+        root.update()
+        return bool(predicate())
+
+    def _saved_chat(self, store, names):
+        session = store.new_session()
+        session["history"] = [{"user": "keep", "assistant": "kept"}]
+        path = store.save(session, None)
+        attachments = [
+            load_attachment_bytes(name, name.encode("utf-8"))
+            for name in names
+        ]
+        path, _added, _warnings = store.add_attachments(
+            session, path, attachments)
+        return session, path
+
+    def _dialog(self, parent, root, store, session, path, busy):
+        context = {
+            "path": path,
+            "session_id": session["session_id"],
+            "guest": False,
+        }
+
+        callbacks = []
+
+        def post_ui(callback):
+            callbacks.append(callback)
+            return True
+
+        dialog = SavedAttachmentsDialog(
+            parent,
+            lambda current: store.saved_attachment_manager_snapshot(
+                current.get("path")),
+            lambda item, current: store.delete_saved_attachment_snapshot(
+                item, current.get("path")),
+            lambda current: store.delete_all_saved_attachments_snapshot(
+                current.get("path")),
+            post_ui,
+            lambda: dict(context),
+            lambda _snapshot, _context: True,
+            lambda: None,
+            busy,
+        )
+        dialog._test_ui_callbacks = callbacks
+        return dialog
+
+    def test_settings_manager_cancel_delete_refresh_and_close(self):
+        with tempfile.TemporaryDirectory(
+            prefix="test_saved_attachment_tk_"
+        ) as temp_dir:
+            store = SessionStore(temp_dir, protector=_FakeProtector())
+            session, path = self._saved_chat(store, ["one.txt"])
+            root = tk.Tk()
+            root.withdraw()
+            settings = SettingsDialog(root, self._settings_config())
+            settings.grab_release()
+            busy = threading.Event()
+            dialog = self._dialog(
+                settings, root, store, session, path, busy)
+            try:
+                self.assertTrue(self._drain(
+                    root, lambda: not busy.is_set(),
+                    dialog._test_ui_callbacks))
+                row = dialog._tree.get_children()[0]
+                dialog._tree.selection_set(row)
+                with patch(
+                    "LLM_Local_Chat.messagebox.askyesno",
+                    return_value=False,
+                ):
+                    dialog._delete_selected()
+                self.assertEqual(len(store.list_saved_attachments()), 1)
+
+                dialog._tree.selection_set(row)
+                with (
+                    patch(
+                        "LLM_Local_Chat.messagebox.askyesno",
+                        return_value=True,
+                    ),
+                    patch("LLM_Local_Chat.messagebox.showinfo"),
+                    patch("LLM_Local_Chat.messagebox.showwarning"),
+                ):
+                    dialog._delete_selected()
+                    self.assertTrue(self._drain(
+                        root, lambda: not busy.is_set(),
+                        dialog._test_ui_callbacks))
+                self.assertEqual(dialog._tree.get_children(), ())
+                self.assertEqual(store.load(path)["attachments"], [])
+                self.assertEqual(
+                    store.load(path)["history"][0]["assistant"], "kept")
+                self.assertTrue(root.winfo_exists())
+            finally:
+                if dialog.winfo_exists():
+                    dialog._close()
+                if settings.winfo_exists():
+                    settings.destroy()
+                root.destroy()
+
+    def test_bulk_delete_refresh_and_close_keeps_tk_alive(self):
+        with tempfile.TemporaryDirectory(
+            prefix="test_saved_attachment_bulk_tk_"
+        ) as temp_dir:
+            store = SessionStore(temp_dir, protector=_FakeProtector())
+            session, path = self._saved_chat(
+                store, ["one.txt", "two.txt"])
+            root = tk.Tk()
+            root.withdraw()
+            busy = threading.Event()
+            dialog = self._dialog(
+                root, root, store, session, path, busy)
+            try:
+                self.assertTrue(self._drain(
+                    root, lambda: not busy.is_set(),
+                    dialog._test_ui_callbacks))
+                with (
+                    patch(
+                        "LLM_Local_Chat.messagebox.askyesno",
+                        return_value=True,
+                    ),
+                    patch("LLM_Local_Chat.messagebox.showinfo"),
+                    patch("LLM_Local_Chat.messagebox.showwarning"),
+                ):
+                    dialog._delete_everything()
+                    self.assertTrue(self._drain(
+                        root, lambda: not busy.is_set(),
+                        dialog._test_ui_callbacks))
+                self.assertEqual(dialog._tree.get_children(), ())
+                self.assertEqual(store.load(path)["attachments"], [])
+                self.assertTrue(root.winfo_exists())
+            finally:
+                if dialog.winfo_exists():
+                    dialog._close()
+                root.destroy()
+
+    def test_real_mainloop_cancel_individual_and_bulk_delete(self):
+        with tempfile.TemporaryDirectory(
+            prefix="test_saved_attachment_mainloop_"
+        ) as temp_dir:
+            store = SessionStore(temp_dir, protector=_FakeProtector())
+            first, first_path = self._saved_chat(store, ["first.txt"])
+            second, second_path = self._saved_chat(
+                store, ["second.txt", "third.txt"])
+            root = tk.Tk()
+            root.withdraw()
+            settings = SettingsDialog(root, self._settings_config())
+            settings.grab_release()
+            app = ChatApp.__new__(ChatApp)
+            app.root = root
+            app._closing = False
+            busy = threading.Event()
+            errors = []
+            state = {"phase": "first_load", "dialog": None}
+
+            def make_dialog(session, path):
+                context = {
+                    "path": path,
+                    "session_id": session["session_id"],
+                    "guest": False,
+                }
+                return SavedAttachmentsDialog(
+                    settings,
+                    lambda current: store.saved_attachment_manager_snapshot(
+                        current.get("path")),
+                    lambda item, current: (
+                        store.delete_saved_attachment_snapshot(
+                            item, current.get("path"))),
+                    lambda current: (
+                        store.delete_all_saved_attachments_snapshot(
+                            current.get("path"))),
+                    app._post_ui,
+                    lambda: dict(context),
+                    lambda _snapshot, _context: True,
+                    lambda: None,
+                    busy,
+                )
+
+            state["dialog"] = make_dialog(first, first_path)
+
+            def fail_timeout():
+                errors.append("Tk mainloop smoke timed out")
+                root.quit()
+
+            def drive():
+                try:
+                    if busy.is_set():
+                        root.after(10, drive)
+                        return
+                    dialog = state["dialog"]
+                    phase = state["phase"]
+                    if phase == "first_load":
+                        row = next(
+                            key for key, item in dialog._rows.items()
+                            if item["session_path"] == first_path)
+                        dialog._tree.selection_set(row)
+                        dialog._delete_selected()  # cancel
+                        self.assertEqual(
+                            len(store.load(first_path)["attachments"]), 1)
+                        dialog._tree.selection_set(row)
+                        dialog._delete_selected()  # execute
+                        state["phase"] = "first_deleted"
+                    elif phase == "first_deleted":
+                        self.assertEqual(
+                            store.load(first_path)["attachments"], [])
+                        dialog._close()
+                        state["dialog"] = make_dialog(second, second_path)
+                        state["phase"] = "bulk_load"
+                    elif phase == "bulk_load":
+                        dialog._delete_everything()
+                        state["phase"] = "bulk_deleted"
+                    else:
+                        self.assertEqual(
+                            store.load(second_path)["attachments"], [])
+                        self.assertEqual(dialog._tree.get_children(), ())
+                        self.assertTrue(root.winfo_exists())
+                        dialog._close()
+                        settings.destroy()
+                        root.quit()
+                        return
+                except Exception as exc:
+                    errors.append(repr(exc))
+                    root.quit()
+                    return
+                root.after(10, drive)
+
+            root.after(10, drive)
+            root.after(8000, fail_timeout)
+            try:
+                with (
+                    patch(
+                        "LLM_Local_Chat.messagebox.askyesno",
+                        side_effect=[False, True, True],
+                    ),
+                    patch("LLM_Local_Chat.messagebox.showinfo"),
+                    patch("LLM_Local_Chat.messagebox.showwarning"),
+                    patch("LLM_Local_Chat.messagebox.showerror") as showerror,
+                ):
+                    root.mainloop()
+                self.assertEqual(errors, [])
+                showerror.assert_not_called()
+            finally:
+                dialog = state.get("dialog")
+                if dialog is not None and dialog.winfo_exists():
+                    if not busy.is_set():
+                        dialog._close()
+                    else:
+                        dialog.destroy()
+                if settings.winfo_exists():
+                    settings.destroy()
+                root.destroy()
+
+
 class ShutdownTests(unittest.TestCase):
     def test_failed_import_confirmation_post_clears_pending(self):
         app = ChatApp.__new__(ChatApp)
@@ -230,11 +750,39 @@ class ShutdownTests(unittest.TestCase):
         warning.assert_called_once()
         self.assertFalse(app._closing)
 
+    def test_close_is_blocked_while_attachment_manager_worker_is_running(self):
+        app = ChatApp.__new__(ChatApp)
+        app.root = _Root()
+        app._closing = False
+        app._attachment_manager_busy = threading.Event()
+        app._attachment_manager_busy.set()
+        app._portable_pending = threading.Event()
+        app._save_now = Mock()
+        with patch("LLM_Local_Chat.messagebox.showwarning") as warning:
+            app._on_close()
+        warning.assert_called_once()
+        app._save_now.assert_not_called()
+        self.assertFalse(app._closing)
+
+    def test_cancelled_close_keeps_session_attachments(self):
+        app = ChatApp.__new__(ChatApp)
+        app.root = _Root()
+        app._closing = False
+        app._attachments = [object()]
+        app._portable_pending = threading.Event()
+        app._save_now = lambda **_kwargs: False
+        with patch("LLM_Local_Chat.messagebox.askyesno", return_value=False):
+            app._on_close()
+        self.assertFalse(app._closing)
+        self.assertEqual(len(app._attachments), 1)
+
     def test_close_stops_components_and_destroys_when_idle(self):
         root = _Root()
         app = ChatApp.__new__(ChatApp)
         app.root = root
         app._closing = False
+        app._attachments = [object()]
+        app.llm = None
         app._llm_load_generation = 4
         app._llm_load_active = threading.Event()
         prepare_event = threading.Event()
@@ -252,7 +800,10 @@ class ShutdownTests(unittest.TestCase):
             "enabled": True,
             "terminate": lambda self: setattr(self, "terminated", True),
         })()
-        service = type("Service", (), {"is_running": lambda self: False})()
+        service = type("Service", (), {
+            "is_running": lambda self: False,
+            "detach_llm": lambda self: None,
+        })()
         app._ctrl = type("Ctrl", (), {
             "_llm_service": service,
             "begin_shutdown": lambda self: setattr(self, "shutdown", True),
@@ -271,6 +822,7 @@ class ShutdownTests(unittest.TestCase):
         with patch("LLM_Local_Chat.save_settings"):
             app._on_close()
         self.assertTrue(app._closing)
+        self.assertEqual(app._attachments, [])
         self.assertTrue(app._ctrl.shutdown)
         self.assertTrue(app._voice.stopped)
         self.assertTrue(app.tts.terminated)

@@ -28,6 +28,7 @@ from prompt_builder import PromptBuilder, PromptInputTooLargeError
 from prompt_inputs import (
     IMAGE_CONTEXT_TOKEN_RESERVE,
     PromptInputError,
+    attachment_display_names,
     build_multimodal_user_content,
     format_text_attachment_input,
     validate_attachment_set,
@@ -197,6 +198,7 @@ class Controller:
         self._tts_stream = StreamingTTSBuffer()
         self._health_json_filter = LeadingJsonFilter()
         self._active_mode = "default"
+        self._active_attachments = ()
         self._operation_generation = 0
         self._operation_state = "idle"
         self._request_id = 0
@@ -278,6 +280,7 @@ class Controller:
         if callable(set_attachment_controls):
             set_attachment_controls(True)
         self._app._stream_buf = ""
+        self._active_attachments = ()
         self._active_mode = "default"
         self._health_json_filter.reset()
         self._app._update_status()
@@ -302,7 +305,11 @@ class Controller:
             return
 
         text = self._app._entry.get("1.0", "end").strip()
-        if not text:
+
+        snapshot_attachments = getattr(
+            self._app, "_snapshot_attachments", lambda: ())
+        attachments = tuple(snapshot_attachments())
+        if not text and not attachments:
             return
 
         request_started_at = time.perf_counter()
@@ -313,9 +320,6 @@ class Controller:
         else:
             mode = "default"
 
-        snapshot_attachments = getattr(
-            self._app, "_snapshot_attachments", lambda: ())
-        attachments = tuple(snapshot_attachments())
         if attachments and mode != "default":
             messagebox.showwarning(
                 "添付ファイル",
@@ -341,7 +345,8 @@ class Controller:
         elif mode == "health":
             llm_input = self._prompt_builder.build_health_prompt(text)
         else:
-            llm_input = format_text_attachment_input(text, attachments)
+            prompt_text = text or "添付ファイルの内容を確認してください。"
+            llm_input = format_text_attachment_input(prompt_text, attachments)
         try:
             messages = self._prompt_builder.build(
                 llm_input,
@@ -358,11 +363,18 @@ class Controller:
                     IMAGE_CONTEXT_TOKEN_RESERVE if has_image else 0
                 ),
                 enforce_context_limit=True,
+                require_full_history=bool(attachments),
             )
         except PromptInputTooLargeError as exc:
+            guidance = (
+                "保持中の添付を減らすか解除する、本文を短くする、または"
+                "新しいチャットで再度送信してください。"
+                if attachments
+                else "入力内容を減らして再度送信してください。"
+            )
             messagebox.showwarning(
                 "入力が長すぎます",
-                f"{exc}\n\n添付内容を減らして再度送信してください。",
+                f"{exc}\n\n{guidance}",
             )
             return
         if has_image:
@@ -412,10 +424,11 @@ class Controller:
         mode = request["mode"]
         self._app._chat_write("\n", "")
         self._app._chat_write("👤 あなた\n", "user_lbl")
-        self._app._chat_write(f"{text}\n", "user_msg")
+        visible_text = text or "（添付ファイルのみ）"
+        self._app._chat_write(f"{visible_text}\n", "user_msg")
         attachments = request.get("attachments", ())
         if attachments:
-            names = "、".join(attachment.name for attachment in attachments)
+            names = "、".join(attachment_display_names(attachments))
             self._app._chat_write(f"📎 添付: {names}\n", "attachment")
         self._app._chat_write("─" * 50 + "\n", "divider")
         self._app._chat_write("🤖 AI\n", "ai_lbl")
@@ -423,6 +436,7 @@ class Controller:
         self._tts_stream.reset()
         self._app.tts.begin_stream()
         self._active_mode = mode
+        self._active_attachments = attachments
         self._health_json_filter.reset()
         if mode == "kakeibo":
             self._app._kakeibo_pending_text = text
@@ -434,9 +448,6 @@ class Controller:
             self._app._kakeibo_pending_text = None
             self._app._health_pending_text = None
         request["ui_committed"] = True
-        clear_attachments = getattr(self._app, "_clear_attachments", None)
-        if callable(clear_attachments):
-            clear_attachments(attachments)
 
     def _attempt_request(self, request: dict) -> None:
         if not self._request_is_current(request):
@@ -564,7 +575,8 @@ class Controller:
         if has_image and any(marker in lowered for marker in context_markers):
             return (
                 "画像を含む入力がcontext上限を超えました。"
-                "画像や本文を減らし、画像を再添付して送信してください。"
+                "添付を解除してより小さい画像へ変更する、本文を短くする、"
+                "または新しいチャットで再度送信してください。"
             )
         return f"[エラー: {message}]"
 
@@ -819,6 +831,8 @@ class Controller:
 
             if self._app._current_session.get("title") == "新しいチャット":
                 t = user_text.replace("\n", " ").strip()
+                if not t and self._active_attachments:
+                    t = f"添付: {self._active_attachments[0].name}"
                 self._app._current_session["title"] = (
                     t[:20] + ("…" if len(t) > 20 else "")
                 )

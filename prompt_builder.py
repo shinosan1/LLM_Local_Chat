@@ -14,7 +14,7 @@ MAX_KAKEIBO_TRANSACTIONS_PER_INPUT = 10
 
 
 class PromptInputTooLargeError(ValueError):
-    """system promptと現在入力だけでcontext上限を超える。"""
+    """system prompt、入力、必要な履歴と予約量がcontext上限を超える。"""
 
 
 class PromptBuilder:
@@ -40,6 +40,7 @@ class PromptBuilder:
         system_buf_tokens: int = 256,
         extra_reserved_tokens: int = 0,
         enforce_context_limit: bool = False,
+        require_full_history: bool = False,
     ) -> list:
         history = session.get("history", [])
         summary = session.get("summary", "")
@@ -70,14 +71,8 @@ class PromptBuilder:
                     "system prompt、入力、応答予約を合わせると"
                     f"context上限を超えます（{fixed_tokens} > {n_ctx} tokens）。"
                 )
-            budget = int(
-                (n_ctx - fixed_tokens)
-                * history_budget_ratio
-            )
-            budget = max(0, budget)
 
-            selected_history = []
-            for h in reversed(history):
+            def _history_cost(h: dict) -> int:
                 user = h.get("user", "")
                 assistant = h.get("assistant", "")
                 key = (user, assistant)
@@ -89,10 +84,33 @@ class PromptBuilder:
                         + 12
                     )
                     cache[key] = cost
-                if budget - cost < 0:
-                    break
-                selected_history.insert(0, h)
-                budget -= cost
+                return cost
+
+            if require_full_history:
+                full_history_tokens = sum(
+                    _history_cost(h) for h in history)
+                total_tokens = fixed_tokens + full_history_tokens
+                if enforce_context_limit and total_tokens > n_ctx:
+                    raise PromptInputTooLargeError(
+                        "保持中の添付、会話履歴、system prompt、応答予約を"
+                        "合わせるとcontext上限を超えます"
+                        f"（{total_tokens} > {n_ctx} tokens）。"
+                    )
+                selected_history = history
+            else:
+                budget = int(
+                    (n_ctx - fixed_tokens)
+                    * history_budget_ratio
+                )
+                budget = max(0, budget)
+
+                selected_history = []
+                for h in reversed(history):
+                    cost = _history_cost(h)
+                    if budget - cost < 0:
+                        break
+                    selected_history.insert(0, h)
+                    budget -= cost
 
         msgs = [{"role": "system", "content": sys_content}]
 

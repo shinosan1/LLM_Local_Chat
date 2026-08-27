@@ -1,18 +1,23 @@
 import os
 import tempfile
 import unittest
+from hashlib import sha256
 from pathlib import Path
 
 from PIL import Image
 
 from prompt_builder import PromptBuilder, PromptInputTooLargeError
 from prompt_inputs import (
+    Attachment,
     IMAGE_CONTEXT_TOKEN_RESERVE,
     MAX_TEXT_ATTACHMENT_BYTES,
     PromptInputError,
+    attachment_display_names,
+    attachment_fingerprint,
     build_multimodal_user_content,
     format_text_attachment_input,
     load_attachment,
+    load_attachment_bytes,
     resolve_system_prompt,
     validate_attachment_set,
 )
@@ -24,7 +29,7 @@ class PersonalizationPromptTests(unittest.TestCase):
         self.assertEqual(prompt, "default")
         self.assertEqual(errors, [])
 
-    def test_external_system_and_personalization_take_priority_and_deduplicate(self):
+    def test_inline_and_external_prompts_are_combined_in_order_and_deduplicated(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "system.md").write_text("外部system", encoding="utf-8")
@@ -44,12 +49,23 @@ class PersonalizationPromptTests(unittest.TestCase):
                 settings, "default", temp_dir)
 
         self.assertEqual(errors, [])
-        self.assertIn("外部system", prompt)
-        self.assertIn("外部persona", prompt)
-        self.assertIn("日本語で回答", prompt)
-        self.assertNotIn("inline system", prompt)
-        self.assertNotIn("inline persona", prompt)
+        self.assertEqual(
+            prompt,
+            "inline system\n\n外部system\n\ninline persona\n\n"
+            "外部persona\n\n日本語で回答",
+        )
         self.assertEqual(prompt.count("外部persona"), 1)
+
+    def test_identical_inline_and_external_prompt_is_inserted_once(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, "system.md").write_text(
+                "same prompt", encoding="utf-8")
+            prompt, errors = resolve_system_prompt({
+                "system_prompt": "same prompt",
+                "external_prompt_files": {"system_prompt": "system.md"},
+            }, "default", temp_dir)
+        self.assertEqual(errors, [])
+        self.assertEqual(prompt, "same prompt")
 
     def test_missing_external_file_warns_and_falls_back_to_inline(self):
         settings = {
@@ -92,6 +108,117 @@ class AttachmentInputTests(unittest.TestCase):
                 extra_reserved_tokens=IMAGE_CONTEXT_TOKEN_RESERVE,
                 enforce_context_limit=True,
             )
+
+    def test_session_attachment_requires_full_history_at_context_boundary(self):
+        builder = PromptBuilder("system")
+        session = {
+            "summary": "summary",
+            "history": [
+                {"user": "old user 1", "assistant": "old answer 1"},
+                {"user": "old user 2", "assistant": "old answer 2"},
+            ],
+        }
+        user_text = "question with attachment"
+        system_text = "system\n\n[要約]: summary"
+        fixed_tokens = (
+            1
+            + len(system_text)
+            + len(user_text)
+            + IMAGE_CONTEXT_TOKEN_RESERVE
+        )
+        history_tokens = sum(
+            len(item["user"]) + len(item["assistant"]) + 12
+            for item in session["history"]
+        )
+        exact_limit = fixed_tokens + history_tokens
+        kwargs = dict(
+            llm=object(),
+            max_tokens=1,
+            count_tokens_func=lambda _llm, text: len(text),
+            system_buf_tokens=0,
+            extra_reserved_tokens=IMAGE_CONTEXT_TOKEN_RESERVE,
+            enforce_context_limit=True,
+            require_full_history=True,
+        )
+
+        messages = builder.build(
+            user_text, session, n_ctx=exact_limit, **kwargs)
+        self.assertEqual(
+            [message["content"] for message in messages[1:-1]],
+            ["old user 1", "old answer 1", "old user 2", "old answer 2"],
+        )
+
+        with self.assertRaisesRegex(
+            PromptInputTooLargeError, "会話履歴.*context上限"
+        ):
+            builder.build(
+                user_text, session, n_ctx=exact_limit - 1, **kwargs)
+
+    def test_fileless_chat_keeps_existing_history_budget_behavior(self):
+        builder = PromptBuilder("system")
+        messages = builder.build(
+            "question",
+            {"history": [{"user": "old user", "assistant": "old answer"}]},
+            llm=object(),
+            n_ctx=16,
+            max_tokens=1,
+            count_tokens_func=lambda _llm, _text: 1,
+            history_budget_ratio=0.5,
+            system_buf_tokens=0,
+            enforce_context_limit=True,
+        )
+        self.assertEqual(
+            messages,
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "question"},
+            ],
+        )
+
+    def test_single_attachment_is_not_duplicated_in_one_turn(self):
+        attachment = Attachment(
+            name="sample.csv",
+            kind="text",
+            mime_type="text/plain",
+            text="date,meal\n2026-08-27,coffee",
+        )
+        prompt = format_text_attachment_input("続けてください", [attachment])
+        self.assertEqual(prompt.count("[添付ファイル]"), 1)
+        self.assertEqual(prompt.count("2026-08-27,coffee"), 1)
+
+    def test_same_name_different_content_has_distinct_fingerprints_and_display_names(self):
+        first = load_attachment_bytes("data.csv", b"date,value\n1,one\n")
+        second = load_attachment_bytes("data.csv", b"date,value\n2,two\n")
+        self.assertNotEqual(attachment_fingerprint(first), attachment_fingerprint(second))
+        self.assertEqual(
+            attachment_display_names([first, second]),
+            ["data.csv", "data.csv (2)"],
+        )
+        prompt = format_text_attachment_input("質問", [first, second, first])
+        self.assertEqual(prompt.count("[添付ファイル]"), 2)
+        self.assertIn("ファイル名: data.csv\n", prompt)
+        self.assertIn("ファイル名: data.csv (2)", prompt)
+        self.assertEqual(prompt.count("date,value\n1,one"), 1)
+        self.assertEqual(prompt.count("date,value\n2,two"), 1)
+
+    def test_raw_bytes_metadata_and_reconstruction_are_preserved(self):
+        raw = b'\xef\xbb\xbf{"answer": 42}\n'
+        attachment = load_attachment_bytes(
+            "payload.json", raw, attachment_id="saved-attachment")
+        self.assertEqual(attachment.attachment_id, "saved-attachment")
+        self.assertEqual(attachment.extension, ".json")
+        self.assertEqual(attachment.size, len(raw))
+        self.assertEqual(attachment.sha256, sha256(raw).hexdigest())
+        self.assertEqual(attachment.data, raw)
+        self.assertEqual(attachment.text, '{"answer": 42}\n')
+        self.assertEqual(attachment.mime_type, "application/json")
+
+    def test_image_extension_must_match_verified_format(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "image.png"
+            Image.new("RGB", (8, 8), "white").save(path, "JPEG")
+            with self.assertRaisesRegex(PromptInputError, "一致"):
+                load_attachment(str(path))
 
     def test_supported_text_files_are_distinct_from_user_text(self):
         with tempfile.TemporaryDirectory() as temp_dir:

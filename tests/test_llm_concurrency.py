@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 import unittest
@@ -320,7 +321,7 @@ class LeadingJsonFilterTests(unittest.TestCase):
 
 
 class ControllerGenerationTests(unittest.TestCase):
-    def test_image_context_error_is_user_facing_and_requires_reattach(self):
+    def test_image_context_error_is_user_facing_and_keeps_session_guidance(self):
         for error in (
             ValueError("Prompt exceeds n_ctx token limit"),
             ValueError("maximum context length reached"),
@@ -329,7 +330,7 @@ class ControllerGenerationTests(unittest.TestCase):
             with self.subTest(error=error):
                 message = Controller._format_generation_error(error, True)
                 self.assertIn("context上限", message)
-                self.assertIn("再添付", message)
+                self.assertIn("添付を解除", message)
 
     def test_image_context_reserve_rejects_before_consuming_ui(self):
         app = _App()
@@ -353,14 +354,13 @@ class ControllerGenerationTests(unittest.TestCase):
         self.assertEqual(len(app._attachments), 1)
         self.assertEqual(ctrl._operation_state, "idle")
 
-    def test_text_attachment_is_one_shot_and_never_enters_history(self):
+    def test_text_attachment_persists_across_turns_and_never_enters_history(self):
         app = _App()
-        app._entry.text = "この内容を説明して"
         attachment = Attachment(
-            name="sample.txt",
+            name="sample.csv",
             kind="text",
             mime_type="text/plain",
-            text="保存してはいけない添付本文",
+            text="date,meal\n2026-08-27,coffee",
         )
         app._attachments = [attachment]
         ctrl = _controller(app)
@@ -375,19 +375,94 @@ class ControllerGenerationTests(unittest.TestCase):
             return True
 
         ctrl._llm_service.generate = generate
+        questions = ["要約して", "続けてください", "もう少し詳しく"]
+        for question in questions:
+            app._entry.text = question
+            ctrl.handle_text()
+
+        self.assertEqual(len(generated), 3)
+        for messages in generated:
+            serialized = str(messages)
+            self.assertEqual(serialized.count("[添付ファイル]"), 1)
+            self.assertEqual(serialized.count("2026-08-27,coffee"), 1)
+        self.assertEqual(app._attachments, [attachment])
+        self.assertEqual(
+            [item["user"] for item in app._current_session["history"]],
+            questions,
+        )
+        self.assertNotIn("2026-08-27,coffee", str(app._current_session))
+        self.assertNotIn("sample.csv", str(app._current_session))
+
+        app._clear_attachments()
+        app._entry.text = "添付解除後"
+        ctrl.handle_text()
+        self.assertNotIn("[添付ファイル]", str(generated[-1]))
+        self.assertNotIn("2026-08-27,coffee", str(generated[-1]))
+
+    def test_attachment_only_send_uses_neutral_llm_instruction_but_saves_empty_user(self):
+        app = _App()
+        app._entry.text = ""
+        app._attachments = [Attachment(
+            name="only.csv",
+            kind="text",
+            mime_type="text/csv",
+            text="item,value\ncoffee,1",
+        )]
+        ctrl = _controller(app)
+        ctrl._resource_mgr.decide = lambda *_args, **_kwargs: {
+            "ok": True, "max_tokens": 100
+        }
+        generated = []
+
+        def generate(**kwargs):
+            generated.append(kwargs["messages"])
+            kwargs["on_done"]("確認しました")
+            return True
+
+        ctrl._llm_service.generate = generate
         ctrl.handle_text()
 
-        self.assertIn("保存してはいけない添付本文", str(generated[0]))
-        self.assertEqual(app._attachments, [])
-        self.assertEqual(
-            app._current_session["history"][0]["user"],
-            "この内容を説明して",
-        )
+        self.assertEqual(len(generated), 1)
+        serialized = str(generated[0])
+        self.assertIn("添付ファイルの内容を確認してください。", serialized)
+        self.assertIn("item,value", serialized)
+        self.assertEqual(app._current_session["history"][0]["user"], "")
         self.assertNotIn(
-            "保存してはいけない添付本文",
+            "添付ファイルの内容を確認してください。",
             str(app._current_session),
         )
-        self.assertNotIn("sample.txt", str(app._current_session))
+        self.assertIn(
+            "（添付ファイルのみ）\n",
+            [text for text, tag in app.writes if tag == "user_msg"],
+        )
+
+    def test_saved_history_does_not_restore_attachment_after_restart(self):
+        app = _App()
+        app._entry.text = "CSVを確認して"
+        app._attachments = [Attachment(
+            name="private.csv",
+            kind="text",
+            mime_type="text/plain",
+            text="secret attachment body",
+        )]
+        ctrl = _controller(app)
+        ctrl._resource_mgr.decide = lambda *_args, **_kwargs: {
+            "ok": True, "max_tokens": 100
+        }
+
+        def generate(**kwargs):
+            kwargs["on_done"]("添付を確認しました")
+            return True
+
+        ctrl._llm_service.generate = generate
+        ctrl.handle_text()
+        saved_session = json.loads(json.dumps(app._current_session))
+
+        restarted = _App()
+        restarted._current_session = saved_session
+        self.assertEqual(restarted._attachments, [])
+        self.assertNotIn("private.csv", str(saved_session))
+        self.assertNotIn("secret attachment body", str(saved_session))
 
     def test_non_vision_model_rejects_image_without_consuming_ui(self):
         app = _App()
@@ -407,17 +482,17 @@ class ControllerGenerationTests(unittest.TestCase):
         self.assertEqual(len(app._attachments), 1)
         self.assertEqual(ctrl._operation_state, "idle")
 
-    def test_vision_image_is_data_uri_for_one_request_only(self):
+    def test_vision_image_persists_across_session_turns_without_history_leak(self):
         app = _App()
-        app._entry.text = "画像を説明して"
         app._vision_capable = True
         app._n_ctx = 8192
-        app._attachments = [Attachment(
+        attachment = Attachment(
             name="image.jpg",
             kind="image",
             mime_type="image/jpeg",
             data=b"jpeg bytes",
-        )]
+        )
+        app._attachments = [attachment]
         ctrl = _controller(app)
         ctrl._resource_mgr.decide = lambda *_args, **_kwargs: {
             "ok": True, "max_tokens": 100
@@ -430,10 +505,14 @@ class ControllerGenerationTests(unittest.TestCase):
             return True
 
         ctrl._llm_service.generate = generate
-        ctrl.handle_text()
+        for question in ("画像を説明して", "続けてください"):
+            app._entry.text = question
+            ctrl.handle_text()
 
-        self.assertIn("data:image/jpeg;base64,", str(generated[0]))
-        self.assertEqual(app._attachments, [])
+        self.assertEqual(len(generated), 2)
+        for messages in generated:
+            self.assertEqual(str(messages).count("data:image/jpeg;base64,"), 1)
+        self.assertEqual(app._attachments, [attachment])
         self.assertNotIn("base64", str(app._current_session))
         self.assertNotIn("jpeg bytes", str(app._current_session))
 
@@ -455,6 +534,31 @@ class ControllerGenerationTests(unittest.TestCase):
             ctrl.handle_text()
         warning.assert_called_once()
         self.assertEqual(app._entry.text, "質問")
+        self.assertEqual(len(app._attachments), 1)
+        self.assertEqual(ctrl._operation_state, "idle")
+
+    def test_session_attachment_history_overflow_warns_without_truncation(self):
+        app = _App()
+        app._entry.text = "続けてください"
+        app._current_session["history"] = [
+            {"user": "前の質問", "assistant": "前の回答"},
+        ]
+        app._attachments = [Attachment(
+            name="session.csv",
+            kind="text",
+            mime_type="text/plain",
+            text="kept session data",
+        )]
+        app._n_ctx = 16
+        app._max_tokens = 1
+        app._system_buf_tokens = 0
+        app._count_tokens = lambda _llm, _text: 1
+        ctrl = _controller(app)
+        with patch.object(controller_module.messagebox, "showwarning") as warning:
+            ctrl.handle_text()
+        warning.assert_called_once()
+        self.assertIn("会話履歴", warning.call_args.args[1])
+        self.assertEqual(app._entry.text, "続けてください")
         self.assertEqual(len(app._attachments), 1)
         self.assertEqual(ctrl._operation_state, "idle")
 
@@ -480,7 +584,7 @@ class ControllerGenerationTests(unittest.TestCase):
         self.assertEqual(len(app._attachments), 1)
         self.assertEqual(ctrl._operation_state, "idle")
 
-    def test_generation_error_does_not_restore_consumed_attachment(self):
+    def test_generation_error_keeps_session_attachment(self):
         app = _App()
         app._entry.text = "質問"
         app._attachments = [Attachment(
@@ -500,13 +604,20 @@ class ControllerGenerationTests(unittest.TestCase):
 
         ctrl._llm_service.generate = generate
         ctrl.handle_text()
-        self.assertEqual(app._attachments, [])
+        self.assertEqual(len(app._attachments), 1)
         self.assertEqual(app._entry.text, "質問")
         self.assertEqual(app._current_session["history"], [])
 
     def test_hard_limit_auto_downshifts_and_retries_same_input_once(self):
         app = _App()
         app._entry.text = "通常入力"
+        attachment = Attachment(
+            name="retry.csv",
+            kind="text",
+            mime_type="text/plain",
+            text="kept across downshift",
+        )
+        app._attachments = [attachment]
         ctrl = _controller(app)
         decisions = iter((
             {
@@ -558,6 +669,7 @@ class ControllerGenerationTests(unittest.TestCase):
         self.assertEqual(len(app._current_session["history"]), 1)
         self.assertEqual(app._current_session["history"][0]["user"], "通常入力")
         self.assertEqual(app._llm_offload_state["n_gpu_layers"], 21)
+        self.assertEqual(app._attachments, [attachment])
 
     def test_hard_limit_kakeibo_downshift_does_not_duplicate_confirmation(self):
         app = _App()
@@ -1040,6 +1152,20 @@ class ControllerGenerationTests(unittest.TestCase):
         second = ctrl._begin_operation("summarizing")
         third = ctrl._begin_operation("stopping")
         self.assertEqual((first, second, third), (1, 2, 3))
+
+    def test_stop_does_not_clear_session_attachments(self):
+        app = _App()
+        attachment = Attachment(
+            name="keep.md",
+            kind="text",
+            mime_type="text/plain",
+            text="keep after stop",
+        )
+        app._attachments = [attachment]
+        ctrl = _controller(app)
+        ctrl.stop()
+        self.assertTrue(_wait_until(lambda: not ctrl.is_busy()))
+        self.assertEqual(app._attachments, [attachment])
 
     def test_text_and_voice_are_rejected_for_every_busy_state(self):
         for state in ("generating", "extracting_health", "summarizing", "stopping"):

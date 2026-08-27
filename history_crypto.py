@@ -1,6 +1,12 @@
 import base64
 import json
+import uuid
 from typing import Protocol
+
+from attachment_store import (
+    AttachmentStoreError,
+    validate_attachment_metadata_list,
+)
 
 
 ENVELOPE_FORMAT = "llm-local-chat-dpapi"
@@ -49,6 +55,28 @@ class DPAPIProtector:
             ) from exc
 
 
+def _validate_optional_session_attachments(data: dict) -> None:
+    """Validate local attachment references without accepting their payloads."""
+    session_id = data.get("session_id")
+    if session_id is not None:
+        if not isinstance(session_id, str):
+            raise HistoryCryptoError("会話履歴のセッションID形式が不正です。")
+        try:
+            canonical_id = uuid.UUID(session_id).hex
+        except (ValueError, AttributeError) as exc:
+            raise HistoryCryptoError(
+                "会話履歴のセッションID形式が不正です。"
+            ) from exc
+        if session_id != canonical_id:
+            raise HistoryCryptoError("会話履歴のセッションID形式が不正です。")
+
+    attachments = data.get("attachments", [])
+    try:
+        validate_attachment_metadata_list(attachments)
+    except (AttachmentStoreError, TypeError, ValueError) as exc:
+        raise HistoryCryptoError("会話履歴の添付情報形式が不正です。") from exc
+
+
 def validate_session(data) -> dict:
     if not isinstance(data, dict):
         raise HistoryCryptoError("会話履歴の形式が不正です。")
@@ -65,6 +93,7 @@ def validate_session(data) -> dict:
         for field in ("user", "assistant"):
             if field in item and not isinstance(item[field], str):
                 raise HistoryCryptoError("会話履歴の発言形式が不正です。")
+    _validate_optional_session_attachments(data)
     return data
 
 

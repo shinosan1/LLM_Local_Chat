@@ -6,10 +6,16 @@ import json
 import tempfile
 from pathlib import Path
 from unittest.mock import mock_open, patch
+import tkinter as tk
+from tkinter import ttk
 
 import LLM_Local_Chat
 from LLM_Local_Chat import (
+    C,
     ChatApp,
+    SavedAttachmentsDialog,
+    SettingsDialog,
+    WHISPER_MODE_LABELS,
     format_llm_offload_state,
     init_llm,
     load_settings,
@@ -464,9 +470,13 @@ class OffloadStateUiTests(unittest.TestCase):
         class FakeDialog:
             result = None
 
-            def __init__(self, _parent, cfg, offload_state=None):
+            def __init__(
+                self, _parent, cfg, offload_state=None,
+                manage_attachments=None,
+            ):
                 captured["cfg"] = cfg
                 captured["offload_state"] = offload_state
+                captured["manage_attachments"] = manage_attachments
 
         app = ChatApp.__new__(ChatApp)
         app.root = types.SimpleNamespace(wait_window=lambda _dlg: None)
@@ -489,6 +499,7 @@ class OffloadStateUiTests(unittest.TestCase):
         self.assertNotIn("llm_offload_state", captured["cfg"])
         self.assertEqual(captured["cfg"]["llm_gpu_offload_mode"], "auto")
         self.assertEqual(captured["offload_state"]["n_gpu_layers"], 32)
+        self.assertTrue(callable(captured["manage_attachments"]))
         self.assertNotIn("llm_offload_state", app._cfg)
 
     def test_settings_manual_mode_transitions_request_hot_reload_without_restart(self):
@@ -496,7 +507,10 @@ class OffloadStateUiTests(unittest.TestCase):
         results = iter(("cpu", "auto", "75", "50", "cpu"))
 
         class FakeDialog:
-            def __init__(self, _parent, cfg, offload_state=None):
+            def __init__(
+                self, _parent, cfg, offload_state=None,
+                manage_attachments=None,
+            ):
                 mode = next(results)
                 self.result = {
                     **cfg,
@@ -783,6 +797,145 @@ class OffloadRuntimeLifecycleTests(unittest.TestCase):
             app._on_llm_ready(3, model, None)
         self.assertIs(app._llm_offload_state, old_state)
         self.assertEqual(model.closed, 1)
+
+
+class SettingsAndAttachmentThemeTests(unittest.TestCase):
+    @staticmethod
+    def _drain_until(root, predicate, callbacks=None, timeout=2.0):
+        callbacks = callbacks if callbacks is not None else []
+        deadline = time.monotonic() + timeout
+        while not predicate() and time.monotonic() < deadline:
+            while callbacks:
+                callbacks.pop(0)()
+            root.update()
+            time.sleep(0.01)
+        while callbacks:
+            callbacks.pop(0)()
+        root.update()
+        return bool(predicate())
+
+    def test_saved_attachment_dialog_uses_only_dedicated_dark_styles(self):
+        root = tk.Tk()
+        root.withdraw()
+        busy = threading.Event()
+        style = ttk.Style(root)
+        global_treeview = dict(style.configure("Treeview"))
+        callbacks = []
+
+        def post_ui(callback):
+            callbacks.append(callback)
+            return True
+
+        dialog = SavedAttachmentsDialog(
+            root,
+            lambda _context: {
+                "items": [],
+                "total_size": 0,
+                "current_path": None,
+                "current_session": None,
+                "current_attachments": [],
+                "current_warnings": [],
+            },
+            lambda _item, _context: {},
+            lambda _context: {},
+            post_ui,
+            lambda: {"path": None, "session_id": None, "guest": False},
+            lambda _snapshot, _context: True,
+            lambda: None,
+            busy,
+        )
+        try:
+            self.assertTrue(self._drain_until(
+                root, lambda: not busy.is_set(), callbacks))
+            self.assertEqual(
+                dialog._tree.cget("style"),
+                SavedAttachmentsDialog.TREE_STYLE,
+            )
+            self.assertEqual(
+                style.lookup(
+                    SavedAttachmentsDialog.TREE_STYLE, "background"),
+                C["bg_input"],
+            )
+            self.assertEqual(
+                style.lookup(
+                    f"{SavedAttachmentsDialog.TREE_STYLE}.Heading",
+                    "background",
+                ),
+                C["bg_side"],
+            )
+            self.assertEqual(
+                style.layout(SavedAttachmentsDialog.TREE_STYLE)[0][0],
+                SavedAttachmentsDialog.TREE_FIELD_ELEMENT,
+            )
+            self.assertIn(
+                "fieldbackground",
+                style.element_options(
+                    SavedAttachmentsDialog.TREE_FIELD_ELEMENT),
+            )
+            self.assertEqual(
+                style.layout(
+                    f"{SavedAttachmentsDialog.TREE_STYLE}.Heading")[0][0],
+                SavedAttachmentsDialog.HEADING_CELL_ELEMENT,
+            )
+            self.assertEqual(
+                dialog._scrollbar.cget("style"),
+                SavedAttachmentsDialog.SCROLLBAR_STYLE,
+            )
+            self.assertEqual(
+                style.layout(
+                    SavedAttachmentsDialog.SCROLLBAR_STYLE)[0][0],
+                SavedAttachmentsDialog.SCROLLBAR_TROUGH_ELEMENT,
+            )
+            dialog._on_theme_changed()
+            self.assertEqual(
+                dict(style.configure("Treeview")), global_treeview)
+        finally:
+            if dialog.winfo_exists():
+                dialog._close()
+            root.destroy()
+
+    def test_settings_keeps_full_whisper_and_attachment_labels_visible(self):
+        root = tk.Tk()
+        root.withdraw()
+        dialog = SettingsDialog(
+            root,
+            {
+                "model_path": "model.gguf",
+                "n_ctx": 8192,
+                "max_tokens": 512,
+                "temperature": 0.7,
+                "vad_threshold": 150,
+                "tts_rate": 0,
+                "whisper_mode": "gpu_medium",
+                "llm_gpu_offload_mode": "auto",
+                "history_retention_days": 0,
+                "mic_enabled": False,
+                "tts_enabled": False,
+            },
+            manage_attachments=lambda _parent: None,
+        )
+        try:
+            dialog.deiconify()
+            root.update()
+            self.assertEqual(
+                dialog.v_whisper_mode.get(),
+                WHISPER_MODE_LABELS["gpu_medium"],
+            )
+            self.assertGreaterEqual(
+                dialog._whisper_menu.winfo_width(),
+                dialog._whisper_menu.winfo_reqwidth(),
+            )
+            self.assertEqual(
+                dialog._manage_attachments_button.cget("text"),
+                "添付ファイルを管理",
+            )
+        finally:
+            try:
+                dialog.grab_release()
+            except tk.TclError:
+                pass
+            dialog.destroy()
+            root.destroy()
 
 
 if __name__ == "__main__":

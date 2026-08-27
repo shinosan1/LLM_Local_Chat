@@ -1,7 +1,7 @@
 # LLM Local Chat 現行仕様
 
-作成日: 2026-07-11 / 最終更新: 2026-08-26
-基準: 公開版v1.7.3の現行コードの静的読解、回帰テスト、および§13に明記した範囲の実機確認結果。
+作成日: 2026-07-11 / 最終更新: 2026-08-27
+基準: 公開版v1.8.0の現行コードの静的読解、回帰テスト、および§13に明記した範囲の実機確認結果。
 このファイルは「現在実装されている事実」だけを記載する。将来予定・改善案は含まない。
 確認済み事実と推測は区別して記載する(推測には「推測」と明記)。
 
@@ -43,10 +43,18 @@
 - 保存/外部影響: 応答完了ごとにセッションJSONを自動保存(ゲストモード時を除く)。
 
 ### パーソナライズとファイル添付
-- `chat_settings.json`の任意キーからsystem prompt、ユーザー向けpersona、応答言語、内部思考を表示しない指示を組み立てる。外部promptはUTF-8のTXT / MD、相対パスはアプリ配置フォルダ基準。正常に読めた外部system/personaは対応するinline値より優先し、同一ファイル・同一文章は重複挿入しない。読込失敗はUI警告後、利用できるinline値または既定promptで継続する。
+- `chat_settings.json`の任意キーからsystem prompt、ユーザー向けpersona、応答言語、内部思考を表示しない指示を組み立てる。外部promptはUTF-8のTXT / MD、相対パスはアプリ配置フォルダ基準。inline system → external system → inline persona → external persona → response language → reasoning visibility → external profile/instructionsの順に併用し、同一ファイル・同一文章は重複挿入しない。読込失敗はUI警告後、利用できるinline値または既定promptで継続する。
 - 通常チャットでTXT / MD / JSON / CSVとPNG / JPEGを選択できる。最大8件、画像1枚、テキスト1MiB/件、画像10MiB/件・16メガピクセル以下。上限超過は切り捨てず送信しない。
-- 添付は送信1回限り。生成リクエスト受理時にUIから解除し、添付の実パス、画像バイナリ、テキスト本文は履歴・セッションJSONへ保存しない。後続ターンでは再添付が必要。資源判定等で生成開始前に拒否した場合は入力と添付を保持する。
-- 入力本文は必須。添付は家計簿・健康記録モードでは使用せず、同じbasenameの複数選択は重複として除外する。
+- 非ゲスト添付は検証済み`session_id`と添付`id`でチャットへ関連付け、`chat_logs/attachments/<session-id>/<attachment-id>.<ext>`へ添付時点の生bytesをコピーする。元ファイル名は保存パス・削除キーに使わない。`ChatApp._attachments`は現在表示中チャットの検証済みsidecarだけを推論用に復元したメモリ表現。
+- 新規チャット、別履歴読込、モデル切替、終了時は現在表示のメモリ参照だけを外し、元チャットのsidecarとメタデータを削除しない。元チャットへ戻るか再起動後に保存済みチャットを開くと復元する。Vision非対応モデルへの切替でも画像sidecarを削除しない。
+- 通常チャットの各後続ターンで、テキストは区切り付きブロック、画像はVision利用時だけローカルdata URIとして現在入力へ1回だけ組み込む。成功・生成エラー・停止・資源拒否・auto downshift再試行では解除しない。
+- 履歴JSONへ保存する添付情報は`id/name/kind/mime_type/extension/size/sha256`だけ。元ファイル絶対パス、画像bytes/base64/data URI、テキスト本文は保存しない。履歴へ保存するuser値は元の入力本文だけで、添付のみ送信時の内部補完文も保存しない。ただしLLMが添付内容を引用したassistant回答は通常どおり履歴・要約へ残り得る。
+- 添付がある場合、system prompt・要約・全履歴・添付込み現在入力・応答予約・画像予約を同じtoken計算へ含め、`n_ctx`超過時は全履歴を黙って省略せず送信前に警告する。画像は4,096 tokensを予約し、実行時のcontext例外もUIへ表示する。
+- 本文なし＋添付ありは中立な内部指示で送信可能、本文・添付ともになしは送信しない。添付は家計簿・健康記録モードでは使用しない。同名・別内容は別IDとして保持し、UIでは`(2)`等を付けて区別する。同一payloadの重複は除外する。
+- UIの「添付解除」は確認後、現在チャットの全添付メタデータとsidecarを削除する。チャット削除は当該チャット専用namespaceを削除する。設定画面は全保存済み添付の一覧・件数・合計容量、内部ID単位の個別削除、全チャット対象の一括削除を提供し、会話本文は削除しない。
+- 追加・削除は`.pending-add-*` / `.pending-delete-*` / pending session namespaceを用いる。チャット削除では暗号化履歴も`.pending-session-delete-<session-id>-<transaction-id>.bin`へ原子的に移してから削除し、暗号化メタデータのcommit状態から再開する。初回履歴保存前に停止して所有履歴がないstrict UUID namespaceへ残ったpending addも回収する。欠損、読込不能、サイズ不一致、SHA-256不一致、reparse/unsafe pathの添付はLLMへ渡さず警告する。部分削除は成功・失敗・スキップ・再試行待ちを表示する。
+- `.shiro-export`は`session_id`と`attachments`を除外するため、添付実体・メタデータは移行・復元されず、添付バックアップにはならない。
+- ユーザーアカウント単位の認証・権限・添付保存領域分離はない。同じ保存領域を複数人で共有する場合、一括削除は他利用者を含む全チャット添付へ影響し得る。sidecarはアプリ自身では暗号化しない。
 
 ### ストリーミング表示
 - 概要: 生成トークンを逐次チャット欄に表示。
@@ -54,7 +62,7 @@
 - 外部影響: なし。
 
 ### 会話履歴・セッション保存/読込
-- 概要: `{title, history, summary, last_activity_at}` をWindowsの現在ユーザースコープDPAPIで暗号化し、JSONエンベロープとして保存。左サイドバーで一覧・検索・読込・削除・名前変更。
+- 概要: `{session_id, title, history, summary, last_activity_at, attachments}` をWindowsの現在ユーザースコープDPAPIで暗号化し、JSONエンベロープとして保存。`attachments`はpayloadを含まない復元メタデータで、旧履歴では両追加キーを省略可能。左サイドバーで一覧・検索・読込・削除・名前変更。
 - 操作: Ctrl+S / メニュー「保存」、一覧クリックで読込、右クリックで削除・名前変更、検索ボックスでタイトル+要約の部分一致絞り込み。
 - 実装: `session_store.py` `SessionStore`(save/load/list_sessions/delete/rename)、`ChatApp._save_now` `_load_selected` `_delete_chat` `_rename_chat` `_refresh_chat_list`。
 - 保存: アプリ配置フォルダ内の `chat_logs/chat_YYYYMMDD_HHMMSS_ffffff.json`（衝突時は連番）。平文フォールバックなし。
@@ -154,7 +162,7 @@
 | 「送信」ボタン | `_send` → `Controller.handle_text`(生成中は無効化) |
 | ステータスバー | `_update_status`(生成中/待機中、ゲスト表示、モデル名、max_tokens/temp、ターン数、マイク状態) |
 | 免責文言(入力欄上) | `_build_ui` 内の固定Label |
-| 設定画面「生成設定」 | `SettingsDialog`(モデルパス+参照、LLM GPUオフロード希望モード6種、actual GPUオフロード率・配置層数の読み取り専用表示、GPU配置の自動再評価、n_ctx、最大返答トークン、会話の自由度0.0〜2.0、VAD感度、起動時マイク/TTSチェック) |
+| 設定画面「生成設定」 | `SettingsDialog`(モデルパス+参照、LLM GPUオフロード希望モード6種、actual GPUオフロード率・配置層数の読み取り専用表示、GPU配置の自動再評価、n_ctx、最大返答トークン、会話の自由度0.0〜2.0、VAD感度、起動時マイク/TTSチェック、保存済み添付管理) |
 | アバターウィンドウ | `AvatarWindow`(枠なし・最前面・ドラッグ移動・右クリックで表示切替) |
 
 ## 5. モジュール構成
@@ -167,9 +175,10 @@
 | llm_service.py | 通常生成と要約の排他的な別スレッド実行+[Perf]計測ログ | `LLMService`(`generate` `summarize` `abort` `is_running`) | Controller | llama_cpp |
 | prompt_builder.py | messages構築、履歴トークン予算管理、モード別プロンプト | `PromptBuilder`(`build` `build_kakeibo_prompt` `build_health_prompt`) | Controller | — |
 | prompt_inputs.py | 外部prompt解決、添付の検証・上限、テキスト区切り、画像data URI化 | `Attachment` `load_attachment` `resolve_system_prompt` `build_multimodal_user_content` | ChatApp, Controller | Pillow |
+| attachment_store.py | UUID namespace内の添付sidecar、SHA-256検証、保留追加/削除、reparse・path境界 | `AttachmentStore` `CleanupResult` | SessionStore | atomic_io |
 | json_extractors.py | LLM応答からのJSON抽出(正規表現) | `extract_kakeibo_transactions` `extract_kakeibo_json` `extract_health_json` | Controller._on_llm_done | — |
 | kakeibo_split.py | 1入力を複数取引候補へ分割し、source_textの実在・重複・順序・件数上限・原文金額の網羅・断片の文脈・日付の一意性を検証 | `MAX_KAKEIBO_TRANSACTIONS_PER_INPUT` `normalize_transactions` `build_kakeibo_candidates` | Controller._on_llm_done | kakeibo_amount, kakeibo_confirmation, kakeibo_date, prompt_builder |
-| session_store.py | セッションJSONの保存/読込/削除/改名、検索メタデータキャッシュ | `SessionStore` | create_app_deps → ChatApp | — |
+| session_store.py | セッションJSONの保存/読込/削除/改名、検索キャッシュ、添付メタデータとsidecarのtransaction統合 | `SessionStore` | create_app_deps → ChatApp | attachment_store, portable_history |
 | integrations.py | 連携payloadサニタイズ、localhost制限、確認ダイアログ、POST | `IntegrationBridge` `sanitize_kakeibo_record` `sanitize_biolog_record` `is_allowed_local_api_url` | ChatApp(委譲メソッド経由) | urllib |
 | audio_workers.py | SAPI5 TTSワーカー、VAD+Whisper音声認識 | `TTSWorker` `VoiceRecognizer` | ChatApp | win32com, pyaudio, WhisperPool.get_model |
 | resource_manager.py | 推論直前のmax_tokens決定の薄いラッパー | `ResourceManager`(`decide`) | Controller | resource_monitor.adjust_inference |
@@ -254,9 +263,10 @@
 | ログ | 専用ファイルなし(標準出力へのprint。loggingはハンドラ未設定で既定非表示) | — | — | — | — |
 | アバター画像 | avatars/(4ファイル) | PNG | `AvatarWindow._load`(読み取りのみ) | なし | なし(アプリは書き込まない) |
 | Whisperキャッシュ | ~/.cache/whisper | モデルファイル | whisper内部(初回ダウンロード) | whisper内部 | アプリは削除しない |
-| チャット添付 | 永続保存なし | 送信中だけメモリ | ファイル選択時 | 履歴・保存JSONへ書き込まない | 受理した1回の送信後、新規/履歴セッション切替時 |
+| チャット添付実体 | chat_logs/attachments/&lt;session-id&gt;/&lt;attachment-id&gt;.&lt;ext&gt; | 生bytesのsidecar（アプリによる暗号化なし） | `AttachmentStore.read`（サイズ/SHA-256照合） | 添付選択時にpending add→履歴メタデータcommit→finalize | 現在チャットの添付解除、設定の個別/一括削除、所属チャット削除 |
+| チャット添付メタデータ | セッションJSON内 `attachments` | `id/name/kind/mime_type/extension/size/sha256` | `SessionStore.load_attachments` | `SessionStore.add_attachments` | sidecar削除transactionと同時。本文・画像・元絶対パスは保存しない |
 
-- 破損時挙動: 一覧生成では壊れたJSONを黙ってスキップ、個別読込ではエラーダイアログ。
+- 破損時挙動: 一覧生成では壊れたJSONを黙ってスキップ、個別読込ではエラーダイアログ。添付sidecarの欠損・読込不能・サイズ/SHA不一致は当該添付だけをLLM入力から除外し警告する。
 - ゲストモード中はセッション書き込みが行われない。
 
 ## 10. 外部連携
@@ -280,7 +290,7 @@
 
 `ChatApp._on_close`(ウィンドウ×・メニュー「終了」共通)の処理順:
 
-1. closing状態へ移行し、Controllerを停止世代へ進めてLLMをabortする。
+1. 保存可否を確認し、終了が確定した場合だけclosing状態へ移行して現在チャットの添付メモリ参照を外す。保存済みsidecar・メタデータは残し、Controllerを停止世代へ進めてLLMをabortする。
 2. `IntegrationBridge.begin_closing()`で新規API送信とUI通知を拒否する。
 3. `VoiceRecognizer.stop()`、設定・セッション保存、`TTSWorker.terminate()`を実行する。
 4. LLM・モデルロード・連携APIスレッドを`root.after()`で最大6秒監視する。
@@ -308,7 +318,7 @@
 
 - 2026-08-25までに、実機での起動・モデルロード、GPUオフロード設定のGUI smoke、再起動不要のhot reload、Auto runtime downshift、実モデル推論、家計簿候補生成を確認済み。これらの確認範囲を、未確認の音声・TTS・外部連携全般へ拡張して解釈しないこと
 - v1.7.2のBiolog日付表示修正は自動テストで確認済み。重複データを避けるため、修正後の実Biolog APIへの再登録によるend-to-end確認は未実施
-- v1.7.3のパーソナライズ・添付・Vision設定は全回帰597件、同期後runtime対象102件、添付GUI smoke、llama-cpp-python 0.3.34 handler smokeで確認
+- v1.8.0の永続添付は再起動復元、元ファイル独立、同名別ID、添付のみ送信、個別/一括/チャット削除、欠損・改変、portable除外、inline＋external結合を含む全回帰640件を実行し、639件成功・1件skip（symlink作成権限なし）。実Windows GUIでの一連操作と実Visionモデル推論は手動確認事項
 - Vision用projector / mmprojは配布物に含まれないため、実Visionモデルでの画像推論完走は未確認。設定検証、MTMD handler生成引数・解放順、非Vision拒否、data URI、context事前拒否は自動テストで確認
 - 実際のマイク・オーディオドライバを使う音声認識、利用環境のSAPI5音声、別途用意した各連携APIのあらゆる構成での動作
 - 実機での要約待機、停止、TTSフラグ、マイク案内の操作確認
@@ -318,11 +328,11 @@
 
 ## 14. 仕様の根拠
 
-本書の各記載は、以下のファイルの直接読解、2026-08-26までの回帰テスト、および§13に明記した範囲の実機確認による。主な根拠はクラス名・関数名で本文中に併記した。
+本書の各記載は、以下のファイルの直接読解、2026-08-27までの回帰テスト、および§13に明記した範囲の実機確認による。主な根拠はクラス名・関数名で本文中に併記した。
 
 - LLM_Local_Chat.py(`main`, `ChatApp`, `SettingsDialog`, `AvatarWindow`, `load_settings`, `save_settings`, `init_llm`)
 - app_composition.py(`create_app_deps`)/ controller.py(`Controller`)/ llm_service.py(`LLMService`)
-- prompt_builder.py(`PromptBuilder`)/ prompt_inputs.py / json_extractors.py / session_store.py(`SessionStore`)
+- prompt_builder.py(`PromptBuilder`)/ prompt_inputs.py / attachment_store.py(`AttachmentStore`) / json_extractors.py / session_store.py(`SessionStore`)
 - integrations.py(`IntegrationBridge`, `sanitize_*`, `is_allowed_local_api_url`)
 - audio_workers.py(`TTSWorker`, `VoiceRecognizer`)/ resource_manager.py(`ResourceManager`)
 - resource_monitor.py(`ResourceMonitor`, `VRAMGuard`, `adjust_llm`, `adjust_inference`, `WhisperController`, `WhisperPool`)

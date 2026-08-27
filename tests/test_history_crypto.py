@@ -85,6 +85,37 @@ class HistoryCryptoTests(unittest.TestCase):
         with self.assertRaises(HistoryCryptoError):
             decode_document(raw, self.protector)
 
+    def test_attachment_metadata_accepts_references_but_rejects_payload_and_path(self):
+        metadata = {
+            "id": "2" * 32,
+            "name": "data.csv",
+            "kind": "text",
+            "mime_type": "text/csv",
+            "extension": ".csv",
+            "size": 5,
+            "sha256": "3" * 64,
+        }
+        document = {
+            "session_id": "1" * 32,
+            "history": [],
+            "attachments": [metadata],
+        }
+        data, _encrypted, _plaintext = decode_document(
+            json.dumps(document).encode(), self.protector)
+        self.assertEqual(data["attachments"][0]["name"], "data.csv")
+
+        for forbidden in ("path", "data", "text", "base64", "data_uri"):
+            with self.subTest(forbidden=forbidden):
+                invalid = json.loads(json.dumps(document))
+                invalid["attachments"][0][forbidden] = "secret"
+                with self.assertRaises(HistoryCryptoError):
+                    decode_document(json.dumps(invalid).encode(), self.protector)
+
+    def test_invalid_session_id_is_rejected(self):
+        raw = json.dumps({"session_id": "../outside", "history": []}).encode()
+        with self.assertRaises(HistoryCryptoError):
+            decode_document(raw, self.protector)
+
     @unittest.skipUnless(sys.platform == "win32", "Windows DPAPI専用")
     def test_real_windows_dpapi_roundtrip(self):
         protector = DPAPIProtector()

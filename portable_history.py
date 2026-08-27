@@ -1,5 +1,6 @@
 import base64
 import binascii
+import copy
 import datetime
 import hashlib
 import json
@@ -34,6 +35,15 @@ MAX_JSON_DEPTH = 32
 
 class PortableHistoryError(RuntimeError):
     pass
+
+
+def portable_session_snapshot(session: dict) -> dict:
+    """Return an export-safe copy without local-only attachment references."""
+    validate_portable_session(session)
+    snapshot = copy.deepcopy(session)
+    snapshot.pop("session_id", None)
+    snapshot.pop("attachments", None)
+    return snapshot
 
 
 def _canonical(value) -> bytes:
@@ -120,8 +130,7 @@ def validate_portable_session(session) -> dict:
 
 
 def session_digest(session: dict) -> str:
-    validate_portable_session(session)
-    return hashlib.sha256(_canonical(session)).hexdigest()
+    return hashlib.sha256(_canonical(portable_session_snapshot(session))).hexdigest()
 
 
 def _derive_key(passphrase: str, salt: bytes) -> bytes:
@@ -152,10 +161,10 @@ def export_archive(
         raise PortableHistoryError("会話履歴の件数が上限を超えています。")
     records = []
     for session in sessions:
-        validate_portable_session(session)
+        portable_session = portable_session_snapshot(session)
         records.append({
             "record_id": str(uuid.uuid4()),
-            "session": session,
+            "session": portable_session,
         })
     payload = {
         "schema": INNER_SCHEMA,
@@ -289,8 +298,7 @@ def import_archive(raw: bytes, passphrase: str) -> list[dict]:
         if record_id in record_ids:
             raise PortableHistoryError("履歴レコードIDが重複しています。")
         record_ids.add(record_id)
-        validate_portable_session(record["session"])
-        sessions.append(record["session"])
+        sessions.append(portable_session_snapshot(record["session"]))
     if not sessions:
         raise PortableHistoryError("暗号化ファイルに会話履歴がありません。")
     return sessions
