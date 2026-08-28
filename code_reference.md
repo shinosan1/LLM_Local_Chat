@@ -2,7 +2,7 @@
 
 作成日: 2026-08-17 / 全文再確認: 2026-08-27
 
-対象: LLM Local Chat v1.8.0 の現行コード
+対象: LLM Local Chat v1.8.1 の現行コード
 
 この文書は、**現在のコードから確認できる動作を、最近のAI周辺技術から離れていた方にも追いやすい形で説明する資料**です。
 
@@ -152,7 +152,7 @@ controller.py
 
 ### 4-1. Windowsの起動バッチ
 
-同梱の `LLMローカル対話型AI.bat` は、次の処理を行います。
+同梱の `LLM_Local_chat_run.bat` は、次の処理を行います。
 
 ```text
 1. コンソールをUTF-8コードページへ変更
@@ -1055,7 +1055,7 @@ portable除外、inline+external prompt、全履歴込みcontext上限警告を�
 
 ## 最後に
 
-LLM Local Chat v1.8.0 の現行実装は、単一のGUIファイルだけで処理を完結させず、LLM実行、プロンプト構築、VRAM判定、履歴保護、添付sidecar、音声処理、ローカルAPI連携を別モジュールへ分けています。
+LLM Local Chat v1.8.1 の現行実装は、単一のGUIファイルだけで処理を完結させず、LLM実行、プロンプト構築、VRAM判定、履歴保護、添付sidecar、音声処理、ローカルAPI連携を別モジュールへ分けています。
 
 特にコード上で確認できる特徴は、次のとおりです。
 
@@ -1076,4 +1076,4 @@ LLM Local Chat v1.8.0 の現行実装は、単一のGUIファイルだけで処�
 
 ---
 
-*この版は、v1.8.0 の `LLM_Local_Chat.py` と関連モジュール、`chat_settings.json.example`、起動バッチ、回帰テスト、README / CHANGELOG を再確認して作成しました。パーソナライズ・永続添付・Vision設定も現行コードに基づいて記載しています。*
+*この版は、v1.8.1 の `LLM_Local_Chat.py` と関連モジュール、`chat_settings.json.example`、起動バッチ、回帰テスト、README / CHANGELOG を再確認して作成しました。パーソナライズ・永続添付・Vision設定も現行コードに基づいて記載しています。*

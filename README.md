@@ -6,7 +6,7 @@
 ローカル処理を重視した構成です。機密情報を扱う業務環境へ導入する場合は、端末のアクセス制御、Windowsユーザープロファイル、ディスク暗号化、Dockerポート、依存ライブラリ、バックアップ方法を含め、組織の情報セキュリティ担当者による事前評価を行ってください。
 
 ![Python](https://img.shields.io/badge/Python-3.12.10-blue)
-![Version](https://img.shields.io/badge/Version-1.8.0-green)
+![Version](https://img.shields.io/badge/Version-1.8.1-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
@@ -28,6 +28,15 @@
 - **家計簿API連携（オプション）** — ユーザー入力から最大10件の取引候補を生成し、1件ずつ確認したうえで、別途用意したローカルの`kakeibo-bridge` APIへ1件ずつPOSTします。家計簿アプリ、家計簿DB、`kakeibo-bridge`サーバー実装は本リポジトリに含まれません
 - **VRAM安全フィルタ** — LLM・Whisper 同時動作時のVRAM枯渇によるクラッシュを確率的に削減（v1.2.0）
 - **LLM GPUオフロード切替** — 自動・Full GPU・約75%・約50%・約25%・CPUを設定画面から選び、アプリを再起動せずモデルを安全に再読み込みします
+
+---
+## v1.8.1 公開・保守文書の整備
+
+公開準備日: 2026-08-28
+
+利用規約、プライバシーポリシー、免責事項、第三者ソフトウェアおよびライセンス情報を追加し、READMEから参照できるようにしました。公開用のSHA-256一覧には、README、アプリ本体、既存の公開対象および追加文書の実測値を記録しています。
+
+この版では、チャット処理、保存形式、添付管理、ローカルAPI連携、UIの仕様を変更していません。
 
 ---
 ## v1.8.0 チャット単位の保存済み添付
@@ -923,3 +932,13 @@ A. `win32com.client.Dispatch("SAPI.SpVoice")` により、Windows SAPI5をワー
 GGUFモデル、音声モデル、依存ライブラリおよび生成物には、それぞれ別のライセンスや利用条件が適用される場合があります。利用者自身で配布元の条件を確認してください。
 
 本ソフトウェアは現状有姿で提供され、動作・出力内容・AI回答の正確性を保証しません。詳細な保証の否認は`LICENSE`を参照してください。
+
+## 関連文書
+
+- [コード解説](code_reference.md)
+- [利用規約](TERMS_OF_USE.md)
+- [MIT License](LICENSE)
+- [プライバシーポリシー](PRIVACY_POLICY.md)
+- [免責事項](DISCLAIMER.md)
+- [第三者ソフトウェアおよびライセンス情報](THIRD_PARTY_LICENSES.md)
+- [SHA-256 ハッシュ値一覧](SHA256.md)

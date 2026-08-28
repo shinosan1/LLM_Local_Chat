@@ -4,6 +4,19 @@
 バージョン番号は [Semantic Versioning](https://semver.org/lang/ja/) を参考にしています。過去版には保存形式の互換性変更をパッチ版として公開した例があります。
 
 ---
+## [Unreleased]
+
+---
+## [1.8.1] - 2026-08-28
+
+### 変更
+- 公開用の起動バッチを `LLM_Local_chat_run.bat`、コード解説を `code_reference.md`、SHA-256一覧を `SHA256.md` へ改名し、3拠点の関連参照を更新
+- `TERMS_OF_USE.md`、`PRIVACY_POLICY.md`、`DISCLAIMER.md`、`THIRD_PARTY_LICENSES.md` を追加し、READMEから参照可能にした
+- `APP_VERSION` とREADMEの現在版表示をv1.8.1へ更新。チャット処理、保存形式、添付管理、ローカルAPI連携、UIの仕様は変更していない
+- 公開用ルートの実ファイルを基準に `SHA256.md` を更新し、一覧自身を除く公開対象の実測値を記録した
+- GitHub公開用のモデル配置プレースホルダを `models/ここにモデルを追加してください.txt` から `models/PLACE_MODELS_HERE.txt` へ改名
+
+---
 ## [1.8.0] - 2026-08-27
 
 ### 追加・変更

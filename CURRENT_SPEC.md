@@ -19,7 +19,7 @@
 
 - **Pythonエントリーポイント**: `LLM_Local_Chat.py` の `main()`。`if __name__ == "__main__"` ガードあり。
 - **Windowsで通常使用する起動ファイル**:
-  - `LLMローカル対話型AI.bat` — スクリプト位置の `.venv` を activate して `python LLM_Local_Chat.py` を実行(リポジトリ同梱)。
+  - `LLM_Local_chat_run.bat` — スクリプト位置の `.venv` を activate して `python LLM_Local_Chat.py` を実行(リポジトリ同梱)。
   - 連携機能まで使う場合は、別途用意した家計簿/BiologのローカルAPIを起動し、連携APIのURLを環境変数(`KAKEIBO_API_URL`・`KAKEIBO_BRIDGE_PORT`・`BIOLOG_URL`)で指定してから起動する。家計簿アプリ、DB、`kakeibo-bridge`サーバー、そのDocker/Compose定義および一括起動スクリプトはリポジトリに含まれない。
   - `start.sh` は Dockerコンテナ+X11転送前提のLinux用であり、Windows通常経路ではない(推測)。
 - **起動から画面表示までの処理順**(`main` → `ChatApp.__init__`):
@@ -336,5 +336,5 @@
 - integrations.py(`IntegrationBridge`, `sanitize_*`, `is_allowed_local_api_url`)
 - audio_workers.py(`TTSWorker`, `VoiceRecognizer`)/ resource_manager.py(`ResourceManager`)
 - resource_monitor.py(`ResourceMonitor`, `VRAMGuard`, `adjust_llm`, `adjust_inference`, `WhisperController`, `WhisperPool`)
-- 設定・起動: chat_settings.json.example、LLMローカル対話型AI.bat、start.sh
+- 設定・起動: chat_settings.json.example、LLM_Local_chat_run.bat、start.sh
 - 参考ドキュメント(記載と実装の差異は§12参照): CHANGELOG.md、README.md、architecture_snapshot.md
