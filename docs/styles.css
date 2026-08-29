@@ -1,0 +1,194 @@
+/* LLM Local Chat documentation styles.
+   Self-contained: no web fonts, no external images, no network requests.
+   ドキュメントを開いただけで外部へ通信が発生しないよう、外部リソースを一切参照しない。 */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f5f6f8;
+  --card: #ffffff;
+  --ink: #1c2024;
+  --muted: #5b636c;
+  --line: #d9dde2;
+  --accent: #3d5a80;
+  --accent-ink: #ffffff;
+  --alert-bg: #fdf4e7;
+  --alert-line: #e0a458;
+  --code-bg: #eef1f4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171a;
+    --card: #1c2126;
+    --ink: #e7eaee;
+    --muted: #9aa4ae;
+    --line: #2c333a;
+    --accent: #8fb3d9;
+    --accent-ink: #14171a;
+    --alert-bg: #2a2116;
+    --alert-line: #b8823f;
+    --code-bg: #232930;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Yu Gothic UI", "Meiryo", system-ui, -apple-system, sans-serif;
+  line-height: 1.85;
+  font-size: 16px;
+}
+
+.readme-shell {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 24px 20px 72px;
+}
+
+.readme-hero {
+  padding: 28px 0 8px;
+}
+
+.readme-back {
+  display: inline-block;
+  margin-bottom: 20px;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.86rem;
+}
+
+.readme-back:hover { border-color: var(--accent); }
+
+.readme-hero-title h1 {
+  margin: 4px 0 10px;
+  font-size: 1.9rem;
+  letter-spacing: 0.01em;
+}
+
+.readme-hero-title p { margin: 0; color: var(--muted); }
+
+.eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.muted-text {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: 18px;
+}
+
+.readme-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px 24px;
+  margin: 18px 0;
+}
+
+.readme-card h2 {
+  margin: 6px 0 14px;
+  font-size: 1.18rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+
+.readme-card h3 {
+  margin: 20px 0 8px;
+  font-size: 1rem;
+}
+
+.readme-card p { margin: 0 0 12px; }
+.readme-card p:last-child { margin-bottom: 0; }
+
+.readme-alert {
+  background: var(--alert-bg);
+  border-color: var(--alert-line);
+  border-left-width: 5px;
+}
+
+.readme-list { margin: 0 0 12px; padding-left: 1.3em; }
+.readme-list li { margin-bottom: 8px; }
+
+.readme-steps p { margin: 0 0 10px; }
+
+code, kbd {
+  background: var(--code-bg);
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-family: "Consolas", "Cascadia Mono", monospace;
+  font-size: 0.9em;
+  word-break: break-all;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  line-height: 1.6;
+}
+
+pre code { background: none; padding: 0; }
+
+.readme-license-text {
+  white-space: pre-wrap;
+  font-size: 0.86rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 14px;
+  font-size: 0.94rem;
+  display: block;
+  overflow-x: auto;
+}
+
+th, td {
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+
+a { color: var(--accent); }
+
+.doc-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.doc-nav a {
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  text-decoration: none;
+  font-size: 0.86rem;
+}
+
+.doc-nav a:hover { border-color: var(--accent); }
+
+@media (max-width: 540px) {
+  body { font-size: 15px; }
+  .readme-card { padding: 18px 16px; }
+  .readme-hero-title h1 { font-size: 1.55rem; }
+}

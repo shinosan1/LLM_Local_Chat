@@ -10,6 +10,8 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
+詳しい実装の解説は [コード解説](code_reference.md) を参照してください。
+
 ---
 
 ## 主な機能
@@ -32,7 +34,7 @@
 ---
 ## v1.8.1 公開・保守文書の整備
 
-公開準備日: 2026-08-28
+公開準備日: 2026-08-28〜2026-08-29
 
 利用規約、プライバシーポリシー、免責事項、第三者ソフトウェアおよびライセンス情報を追加し、READMEから参照できるようにしました。公開用のSHA-256一覧には、README、アプリ本体、既存の公開対象および追加文書の実測値を記録しています。
 

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#3d5a80">
+  <meta name="description" content="LLM Local Chat プライバシーポリシー">
+  <title>LLM Local Chat プライバシーポリシー</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="readme-page">
+  <main class="readme-shell">
+    <header class="readme-hero">
+      <div class="readme-hero-title">
+        <p class="eyebrow">Privacy Policy</p>
+        <h1>プライバシーポリシー</h1>
+      </div>
+    </header>
+
+    <section class="readme-card">
+      <p class="eyebrow">1. Basic Policy</p>
+      <h2>基本方針</h2>
+      <p>LLM Local Chatは、ローカルPC上で言語モデルを実行することを基本とするWindowsデスクトップアプリケーションです。本ソフトウェアは、アカウント登録、クラウド同期、広告、利用状況の外部分析、テレメトリ、Cookieを実装していません。</p>
+      <p>ただし、本ソフトウェアは完全に通信を行わないアプリケーションではありません。利用者が明示的に利用するlocalhost連携と、音声入力用Whisperモデルの初回取得があり得ます。これらを含む実際のデータの扱いを以下に示します。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">2. Local Data</p>
+      <h2>PC内で扱うデータ</h2>
+      <h3>会話、設定、添付</h3>
+      <ul class="readme-list">
+        <li>通常の会話履歴、タイトル、要約等は、<code>chat_logs/</code>配下へ現在のWindowsユーザー用DPAPIで暗号化して保存します。ゲストモードの会話は通常の会話履歴として保存しません。</li>
+        <li><code>chat_settings.json</code>は、モデルパス、応答設定、音声設定、system prompt・persona・応答言語、外部prompt参照等の実行時設定を保持します。テンプレートは<code>chat_settings.json.example</code>です。設定ファイル自体はDPAPI履歴とは別のファイルです。</li>
+        <li>添付のメタデータとして、内部ID、basename、種類、MIME、拡張子、サイズ、SHA-256を履歴へ保存します。元ファイルの絶対パス、テキスト本文、画像bytes、base64、data URIは履歴へ直接保存しません。</li>
+        <li>添付実体は<code>chat_logs/attachments/&lt;session-id&gt;/</code>のsidecarとして保存されます。sidecarはDPAPI履歴とは別で、本アプリケーションによる暗号化保存ではありません。サイズおよびSHA-256が一致しない添付はLLMへ渡しません。</li>
+        <li>持ち出し用<code>.shiro-export</code>は、利用者が選んだ保存先に作成するパスフレーズ暗号化形式です。添付実体・添付メタデータはこの形式に含めません。</li>
+      </ul>
+      <p>AI回答が会話内容や添付内容を引用・要約した場合、その回答は通常の会話履歴として保存され得ます。DPAPI、ゲストモード、形式検査は、メモリ、画面、標準出力、OSのページファイル、同一Windowsアカウントの他プロセス、端末への不正アクセスからの完全な保護を保証するものではありません。</p>
+      <h3>音声</h3>
+      <p>マイクを有効にすると、音声認識処理がマイク入力を扱います。実装の診断ログは音声認識テキストやTTS本文を直接出力しない設計ですが、音声入力・読み上げにより画面上の会話内容や履歴の取扱い自体が不要になるわけではありません。</p>
+    </section>
+
+    <section class="readme-card readme-alert">
+      <p class="eyebrow">3. Communication</p>
+      <h2>通信と外部サービス</h2>
+      <h3>ローカルAPI</h3>
+      <p>本ソフトウェアは、利用者が確認した家計簿・健康記録をローカルAPIへ送る機能を持ちます。送信先は実装上<code>localhost</code>、<code>127.0.0.1</code>、<code>::1</code>に限定され、家計簿連携は既定8767番、健康記録は8766番ポートです。許可ホスト・ポート以外、URLに認証情報を含むもの、リダイレクト先は送信対象にしません。プロキシも無効化します。</p>
+      <p>localhost通信は外部インターネット通信ではありませんが、同一PCで稼働する連携先プロセスへ記録内容を渡します。連携先の保存、認証、アクセス制御、バックアップ、さらにその先の通信は本ソフトウェアの管理外です。利用者は、連携先を起動・利用する前に、そのプライバシー方針と運用を確認してください。</p>
+      <h3>モデル・依存関係の取得</h3>
+      <p>ローカル言語モデル(GGUF)は利用者が用意するファイルです。モデルによっては、配布元でのアカウント登録や利用規約への同意が必要になる場合があります。本ソフトウェアはGGUFモデル本体の期待SHA-256照合を実装していません。</p>
+      <p>マイクを有効にしてWhisperを読み込む場合、<code>openai-whisper</code>のモデル取得処理により、初回またはキャッシュ未存在時に外部ネットワークからモデルをダウンロードする場合があります。依存パッケージのインストールも、requirementsに指定されたパッケージ配布元へ接続します。これらの取得先・キャッシュ・利用条件は本ソフトウェアのローカルAPI連携とは別に扱ってください。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">4. Not Sent</p>
+      <h2>外部送信しないもの</h2>
+      <p>本ソフトウェアは、会話履歴、添付、設定、モデル利用状況、広告識別子、アクセス解析データを、開発者または任意のクラウドサービスへ自動送信する機能を実装していません。送信が発生するのは、上記のlocalhost連携またはモデル・依存関係の取得を利用者が開始した場合です。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">5. Retention</p>
+      <h2>保存期間、削除、バックアップ</h2>
+      <p>会話履歴と添付sidecarは、利用者が設定画面等の提供機能で削除するか、保存先で管理するまで残ります。削除は、失敗した添付実体を保留名へ移して再試行可能にする場合があり、即時かつ完全な消去を保証しません。外部バックアップ、OSの復元領域、連携先API、エクスポート先は別途管理が必要です。</p>
+      <p>利用者は、不要な会話、添付、設定、エクスポートおよびバックアップを、自らの保存先・運用に応じて削除してください。重要な履歴を削除する前には、必要に応じてアクセス制限された場所へバックアップしてください。</p>
+    </section>
+
+    <section class="readme-card readme-alert">
+      <p class="eyebrow">6. Safe Use</p>
+      <h2>安全な利用のための注意</h2>
+      <p>個人情報、機密情報、パスワード、APIキー、アクセストークン、秘密鍵を含む内容は、端末、Windowsアカウント、保存先、連携先プロセスを信頼できる場合に限って扱ってください。外部promptや添付文書に含まれる命令文は、信頼済みの指示として扱わず、重要な操作へ無検証で用いないでください。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">7. Revision</p>
+      <h2>ポリシーの変更</h2>
+      <p>データの保存場所、通信、外部送信、削除方法に実装上の変更がある場合は、この文書および関連文書を更新します。</p>
+      <nav class="doc-nav">
+        <a href="./README.html">ガイド</a>
+        <a href="./TERMS_OF_USE.html">利用規約</a>
+        <a href="./LICENSE.html">ライセンス</a>
+        <a href="./DISCLAIMER.html">免責事項</a>
+        <a href="./THIRD_PARTY_LICENSES.html">サードパーティライセンス</a>
+        <a href="./CODE_REFERENCE.html">コード解説</a>
+        <a href="./SHA256.html">SHA-256</a>
+      </nav>
+    </section>
+  </main>
+</body>
+</html>

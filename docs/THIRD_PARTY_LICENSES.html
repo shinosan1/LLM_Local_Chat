@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#3d5a80">
+  <meta name="description" content="LLM Local Chat サードパーティライセンス">
+  <title>LLM Local Chat サードパーティライセンス</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="readme-page">
+  <main class="readme-shell">
+    <header class="readme-hero">
+      <div class="readme-hero-title">
+        <p class="eyebrow">Third-Party Licenses</p>
+        <h1>第三者ソフトウェアおよびライセンス情報</h1>
+      </div>
+    </header>
+
+    <section class="readme-card readme-alert">
+      <p class="eyebrow">1. Method</p>
+      <h2>確認方法と対象</h2>
+      <p>本書は、<code>requirements.txt</code>、<code>requirements-cpu.txt</code>、製品コードのimport、ならびに開発正本の既存仮想環境にある配布メタデータを確認して作成した。新規パッケージのインストール、更新またはダウンロードは行っていない。</p>
+      <p>表のバージョンは、GPU向けrequirementsと確認時の開発仮想環境の情報である。CPU向けrequirementsでは、<code>llama-cpp-python==0.3.34</code>、<code>torch==2.6.0+cpu</code>、<code>torchvision==0.21.0+cpu</code>、<code>torchaudio==2.6.0+cpu</code>を指定する。配布時は、実際に同梱・使用する版とライセンス文書を改めて確認する必要がある。</p>
+      <p>本ソフトウェア本体のライセンスはルートの<code>LICENSE</code>にあるMIT Licenseであり、以下の第三者ソフトウェア、GGUFモデル、Whisperモデル、CUDA、Windowsコンポーネントまたは利用者が追加したソフトウェアの権利を許諾するものではない。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Direct Dependencies</p>
+      <h2>直接依存パッケージ</h2>
+      <table>
+        <tr><th>名称</th><th>用途</th><th>確認版</th><th>メタデータのライセンス表記</th><th>同梱ライセンス等の所在</th></tr>
+        <tr><td>llama-cpp-python</td><td>GGUF形式のローカルLLM実行</td><td>0.3.34</td><td>MIT</td><td><code>llama_cpp_python-0.3.34.dist-info/licenses/LICENSE.md</code></td></tr>
+        <tr><td>torch</td><td>PyTorchテンソル処理・GPU/CPU実行</td><td>2.6.0+cu124</td><td>BSD-3-Clause</td><td><code>torch-2.6.0+cu124.dist-info/LICENSE</code>、<code>NOTICE</code></td></tr>
+        <tr><td>torchvision</td><td>画像処理・Vision関連</td><td>0.21.0+cu124</td><td>BSD</td><td><code>torchvision-0.21.0+cu124.dist-info/LICENSE</code></td></tr>
+        <tr><td>torchaudio</td><td>音声処理関連</td><td>2.6.0+cu124</td><td>ライセンス名の記載なし</td><td><code>torchaudio-2.6.0+cu124.dist-info/LICENSE</code></td></tr>
+        <tr><td>Pillow</td><td>添付画像の検証・処理</td><td>12.2.0</td><td>MIT-CMU</td><td><code>pillow-12.2.0.dist-info/licenses/LICENSE</code></td></tr>
+        <tr><td>PyAudio</td><td>マイク入力</td><td>0.2.14</td><td>MIT</td><td><code>PyAudio-0.2.14.dist-info/LICENSE.txt</code></td></tr>
+        <tr><td>numpy</td><td>数値処理</td><td>2.4.3</td><td>BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0</td><td><code>numpy-2.4.3.dist-info/licenses/LICENSE.txt</code>および同梱の個別LICENSE群</td></tr>
+        <tr><td>openai-whisper</td><td>音声認識モデルの読込み・推論</td><td>20250625</td><td>MIT</td><td><code>openai_whisper-20250625.dist-info/licenses/LICENSE</code></td></tr>
+        <tr><td>pywin32</td><td>Windows DPAPI、SAPI5等のWindows連携</td><td>309</td><td>PSF</td><td>配布メタデータの<code>License: PSF</code>欄。確認時のdist-infoには個別ライセンスファイルを確認できなかった。</td></tr>
+        <tr><td>nvidia-ml-py</td><td>GPUメモリ監視</td><td>13.610.43</td><td>BSD</td><td>配布メタデータの<code>License: BSD</code>欄。確認時のdist-infoには個別ライセンスファイルを確認できなかった。</td></tr>
+        <tr><td>cryptography</td><td>持ち出し用暗号化形式等</td><td>49.0.0</td><td>Apache-2.0 OR BSD-3-Clause</td><td><code>cryptography-49.0.0.dist-info/licenses/LICENSE</code>、<code>LICENSE.APACHE</code>、<code>LICENSE.BSD</code></td></tr>
+      </table>
+      <p><code>llama-cpp-python</code>のネイティブ部分、PyTorch関連パッケージのバイナリ、CUDA関連要素には、配布物の構成に応じて追加のNOTICEや条件が含まれる場合がある。ここでは、確認できたPython配布メタデータを超えてライセンスを推測しない。実行ファイル化または依存パッケージの再配布を行う場合は、各配布物に含まれるLICENSE・NOTICE・依存関係を確認し、必要な文書を同梱すること。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Runtime &amp; Models</p>
+      <h2>実行環境とモデル</h2>
+      <table>
+        <tr><th>要素</th><th>本プロジェクトでの位置付け</th><th>確認できる情報</th></tr>
+        <tr><td>CPython</td><td>アプリケーション実行環境</td><td>開発仮想環境はCPython 3.12.10を参照する。Pythonランタイムは本リポジトリに同梱されていないため、配布時は使用するランタイムのライセンス文書を確認すること。</td></tr>
+        <tr><td>Windows / Win32 API</td><td>DPAPI、SAPI5、ウィンドウ・音声デバイス等のOS機能</td><td>本リポジトリはWindowsやSDKを再配布するものではない。利用条件は各提供元の条件に従う。</td></tr>
+        <tr><td>GGUFモデル</td><td>利用者が別途用意するローカルLLMモデル</td><td>モデルごとに配布元・版・利用条件が異なる。本リポジトリからモデルのライセンスを断定しない。</td></tr>
+        <tr><td>Whisperモデル</td><td><code>openai-whisper</code>が必要時に取得・利用するモデル</td><td>モデル重みの取得先・キャッシュ・利用条件はPythonパッケージ本体とは別に確認すること。</td></tr>
+        <tr><td>CUDA / NVIDIAドライバー</td><td>GPU向けrequirementsで利用し得る実行環境</td><td>本リポジトリはこれらを同梱しない。利用・再配布時は提供元の条件に従う。</td></tr>
+      </table>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Distribution</p>
+      <h2>配布時の注意</h2>
+      <p>この文書はライセンス本文の代替ではない。依存パッケージ、Pythonランタイム、モデル、実行ファイル等を配布する場合は、実際の同梱物について必要なライセンス本文、NOTICE、著作権表示および配布条件を確認してください。<code>LICENSE</code>のMIT Licenseと第三者ソフトウェアのライセンスは、別々に適用されます。</p>
+      <nav class="doc-nav">
+        <a href="./README.html">ガイド</a>
+        <a href="./TERMS_OF_USE.html">利用規約</a>
+        <a href="./PRIVACY_POLICY.html">プライバシーポリシー</a>
+        <a href="./LICENSE.html">ライセンス</a>
+        <a href="./DISCLAIMER.html">免責事項</a>
+        <a href="./CODE_REFERENCE.html">コード解説</a>
+        <a href="./SHA256.html">SHA-256</a>
+      </nav>
+    </section>
+  </main>
+</body>
+</html>

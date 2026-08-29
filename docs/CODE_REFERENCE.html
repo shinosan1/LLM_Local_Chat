@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#3d5a80">
+  <meta name="description" content="LLM Local Chat コード解説">
+  <title>LLM Local Chat コード解説</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="readme-page">
+  <main class="readme-shell">
+    <header class="readme-hero">
+      <div class="readme-hero-title">
+        <p class="eyebrow">Code Reference</p>
+        <h1>LLM Local Chat ― コード解説(やさしい版)</h1>
+      </div>
+      <nav class="doc-nav">
+        <a href="./README.html">ガイド</a>
+        <a href="./TERMS_OF_USE.html">利用規約</a>
+        <a href="./PRIVACY_POLICY.html">プライバシーポリシー</a>
+        <a href="./LICENSE.html">ライセンス</a>
+        <a href="./DISCLAIMER.html">免責事項</a>
+        <a href="./THIRD_PARTY_LICENSES.html">サードパーティライセンス</a>
+        <a href="./SHA256.html">SHA-256</a>
+      </nav>
+    </header>
+
+    <section class="readme-card readme-alert">
+      <p>作成日: 2026-08-17 / 全文再確認: 2026-08-27</p>
+      <p>対象: LLM Local Chat v1.8.1 の現行コード</p>
+      <p>この文書は、<strong>現在のコードから確認できる動作を、最近のAI周辺技術から離れていた方にも追いやすい形で説明する資料</strong>です。</p>
+      <p>記述にあたっては、次の順序で根拠を扱います。</p>
+      <ol class="readme-list"><li>Pythonコード、設定テンプレート、起動バッチ</li><li>回帰テスト</li><li>README / CHANGELOG などの公開文書</li></ol>
+      <p>コードと文書の記載が食い違う場合は、現行コードを優先します。行番号・総行数・テスト件数など、更新で変わりやすい値は原則として本文へ固定しません。</p>
+      <p><strong>重要</strong> リポジトリをクローンしただけでは実行準備は完了しません。GGUFモデル、Python仮想環境、<code>chat_settings.json</code> は各自で用意します。音声入力を起動時から有効にする場合は、Whisperモデルの取得が発生することがあります。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Contents</p>
+      <h2>目次</h2>
+      <ol class="readme-list"><li><a href="#1-このアプリは何をするものか">このアプリは何をするものか</a></li><li><a href="#2-実行前に別途必要なもの">実行前に別途必要なもの</a></li><li><a href="#3-全体構成">全体構成</a></li><li><a href="#4-起動から返答までの流れ">起動から返答までの流れ</a></li><li><a href="#5-主要ファイルの役割">主要ファイルの役割</a></li><li><a href="#6-llmの読み込み履歴排他制御">LLMの読み込み・履歴・排他制御</a></li><li><a href="#7-vram監視とwhisper">VRAM監視とWhisper</a></li><li><a href="#8-音声入力読み上げアバター">音声入力・読み上げ・アバター</a></li><li><a href="#9-会話履歴の保存と暗号化">会話履歴の保存と暗号化</a></li><li><a href="#10-持ち出し用暗号化エクスポート">持ち出し用暗号化エクスポート</a></li><li><a href="#11-家計簿健康記録の連携">家計簿・健康記録の連携</a></li><li><a href="#12-設定ファイル">設定ファイル</a></li><li><a href="#13-テストと未確認事項">テストと未確認事項</a></li><li><a href="#14-用語集">用語集</a></li></ol>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 1</p>
+      <h2 id="1-このアプリは何をするものか">1. このアプリは何をするものか</h2>
+      <p>LLM Local Chat は、<strong>GGUF形式のLLMをPC上で読み込み、日本語で対話するWindows向けデスクトップアプリ</strong>です。GUIはTkinter、LLM実行は <code>llama-cpp-python</code> を使用します。</p>
+      <p>主な機能は次のとおりです。</p>
+      <div style="overflow-x:auto;"><table><thead><tr><th>機能</th><th>実装上の概要</th></tr></thead><tbody><tr><td>テキストチャット</td><td>ローカルのGGUFモデルへ入力を渡し、応答をストリーミング表示</td></tr><tr><td>会話履歴</td><td><code>chat_logs/</code> にセッション単位で保存</td></tr><tr><td>要約メモリ</td><td>一定ターンごとに短い要約を作り、以後のプロンプトへ追加</td></tr><tr><td>音声入力</td><td>PyAudio + Whisper + RMSベースVAD</td></tr><tr><td>読み上げ</td><td>Windows SAPI5</td></tr><tr><td>アバター</td><td>瞬きとTTS連動の口パク</td></tr><tr><td>家計簿API連携</td><td>取引候補を生成・確認後、別プロセスの<code>kakeibo-bridge</code> APIへPOST</td></tr><tr><td>健康記録連携</td><td>ユーザー確認後、localhost上のBiolog APIへPOST</td></tr><tr><td>履歴の持ち出し</td><td>scrypt + AES-256-GCM を使うパスフレーズ方式</td></tr></tbody></table></div>
+      <h3>処理が行われる場所</h3>
+      <p>LLM推論、Whisperによる音声認識、SAPI5による音声合成、通常の会話処理はローカルで実行されます。本体コードには、会話本文をインターネット上の生成AIサービスへ送る処理は確認できません。</p>
+      <p>一方、次の点は区別が必要です。</p>
+      <ul class="readme-list"><li>Whisperモデルは <code>whisper.load_model()</code> で読み込まれるため、ローカルにモデルが無い状態では取得処理が発生することがあります。</li><li>家計簿・健康記録は別プロセスのローカルAPIへデータを渡します。家計簿アプリ、DB、<code>kakeibo-bridge</code>サーバーは本リポジトリに含まれません。</li><li>依存ライブラリやOS全体の通信動作まで、この文書が網羅して保証するものではありません。</li></ul>
+      <h3>会話履歴の暗号化について</h3>
+      <p>通常の保存済み会話はWindows DPAPIで保護されます。ただし、<strong>同じWindowsユーザーの権限で動くプログラムからの復号を防ぐ仕組みではありません</strong>。DPAPIは「そのユーザー環境で扱うデータの保護」に使われており、アプリ独自のパスフレーズを毎回要求する方式ではありません。</p>
+      <p>別PCへ履歴を移す用途には、後述するパスフレーズ付き暗号化エクスポートを使います。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 2</p>
+      <h2 id="2-実行前に別途必要なもの">2. 実行前に別途必要なもの</h2>
+      <h3>リポジトリに含まれないもの</h3>
+      <div style="overflow-x:auto;"><table><thead><tr><th>対象</th><th>説明</th></tr></thead><tbody><tr><td>GGUFモデル本体</td><td><code>.gitignore</code> で <code>models/</code> と <code>*.gguf</code> が除外されているため、各自で取得して配置</td></tr><tr><td><code>.venv/</code></td><td>Python仮想環境。各自で作成</td></tr><tr><td><code>chat_settings.json</code></td><td><code>chat_settings.json.example</code> を基に作成</td></tr><tr><td>Whisperモデル</td><td>音声入力用。必要時にWhisperライブラリが読み込む</td></tr><tr><td>家計簿側サービス</td><td>家計簿アプリ、DB、Web UI、API/<code>kakeibo-bridge</code>サーバーおよびDocker/Compose定義は本リポジトリに非同梱</td></tr><tr><td>Biolog</td><td>健康記録用の別プロジェクト</td></tr></tbody></table></div>
+      <p>リポジトリ内の <code>models/ここにモデルを追加してください.txt</code> は配置場所を示す空ファイルで、GGUFモデル本体ではありません。</p>
+      <h3><code>chat_settings.json.example</code> の意味</h3>
+      <p>テンプレートでは <code>model_path</code> が <code>C:\path\to\your\model.gguf</code> になっています。これは利用者が実際のモデルパスへ書き換えるためのプレースホルダーです。</p>
+      <p>アプリ本体には別に内部既定値 <code>models\gemma-3-4b-it-q4_k_m.gguf</code> が定義されています。<strong>テンプレート上の値と、設定ファイルが無い場合の内部既定値は別物</strong>です。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 3</p>
+      <h2 id="3-全体構成">3. 全体構成</h2>
+      <p>処理の中心は <code>LLM_Local_Chat.py</code> の <code>ChatApp</code> ですが、生成処理・プロンプト構築・VRAM判定・保存処理などは別モジュールへ分離されています。</p>
+      <pre><code>LLM_Local_Chat.py
+  ChatApp / SettingsDialog / AvatarWindow / 各種UI
+          |
+          v
+controller.py
+  入力・モード・生成・停止・要約の流れを調整
+          |
+          +--&gt; prompt_builder.py
+          |      LLMへ渡すmessagesと各モード用プロンプトを構築
+          |
+          +--&gt; prompt_inputs.py
+          |      外部promptと現在チャットの添付を検証・整形
+          |
+          +--&gt; resource_manager.py
+          |      推論前のmax_tokens判定をresource_monitorへ委譲
+          |
+          +--&gt; llm_service.py
+          |      LLM生成・要約・健康データ再抽出を実行
+          |
+          +--&gt; json_extractors.py
+                 LLM応答から構造化JSON候補を抽出
+
+保存系
+  session_store.py
+      +--&gt; history_crypto.py   DPAPI
+      +--&gt; attachment_store.py 添付sidecar / SHA-256 / 保留処理
+      +--&gt; atomic_io.py        一時ファイル経由の置換
+  portable_history.py         パスフレーズ付き持ち出し形式
+
+音声・リソース系
+  audio_workers.py            TTS / マイク / VAD / Whisper呼び出し
+  resource_monitor.py         VRAM観測 / LLM・Whisper配置判断
+
+外部連携
+  integrations.py             localhost API制限・Biolog検証・POST
+  kakeibo_split.py            1入力を複数取引候補へ分割・検証
+  kakeibo_amount.py           ユーザー原文から金額抽出
+  kakeibo_date.py             ユーザー原文から日付抽出
+  kakeibo_confirmation.py     家計簿候補と送信直前検証</code></pre>
+      <p><code>controller.py</code> 自身の冒頭コメントは、Controllerを「判断のみ行い、実行は各サービスに委譲する薄いオーケストレーター」と位置付けています。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 4</p>
+      <h2 id="4-起動から返答までの流れ">4. 起動から返答までの流れ</h2>
+      <h3>4-1. Windowsの起動バッチ</h3>
+      <p>同梱の <code>LLM_Local_chat_run.bat</code> は、次の処理を行います。</p>
+      <pre><code>1. コンソールをUTF-8コードページへ変更
+2. バッチファイル自身のフォルダへ移動
+3. .venv\Scripts\activate.bat を呼ぶ
+4. python LLM_Local_Chat.py を実行
+5. 終了後に pause</code></pre>
+      <p>仮想環境名を変えた場合は、バッチ内のパスも変更する必要があります。</p>
+      <h3>4-2. Python側の起動</h3>
+      <p><code>main()</code> は概ね次の順序です。</p>
+      <ol class="readme-list"><li><code>tk.Tk()</code> を作り、最初はウィンドウを非表示にする</li><li><code>create_app_deps()</code> で <code>ResourceMonitor</code>、<code>WhisperPool</code>、<code>SessionStore</code> を作る</li><li><code>ChatApp</code> を初期化する</li><li>会話履歴の安全確認と、必要なら旧平文履歴の移行を行う</li><li>アバター、TTSワーカー、UI、Controllerを作る</li><li><code>_reload_llm()</code> からLLM読み込みをバックグラウンドスレッドで開始する</li><li><code>ChatApp</code> 初期化後にウィンドウを表示し、<code>mainloop()</code> に入る</li></ol>
+      <p>履歴のスキャンで破損・未対応形式が検出された場合や、必要な移行が完了しなかった場合は、通常起動を中止する経路があります。</p>
+      <h3>4-3. Whisperの起動条件</h3>
+      <p>Whisperの初回ロードは、LLMのロード処理が終わった後に開始されます。</p>
+      <p>さらに <code>should_load_whisper()</code> は、設定の <code>mic_enabled</code> が明示的に <code>true</code> の場合だけWhisperを必要と判定します。したがって、既定値 <code>false</code> のまま起動した場合はWhisperをロードしません。</p>
+      <p>起動時にWhisperを読み込まなかった状態から音声入力を使う場合、UIは再起動が必要である旨を案内する実装になっています。</p>
+      <h3>4-4. メッセージ送信</h3>
+      <p><code>Controller.handle_text()</code> が通常の入口です。</p>
+      <pre><code>入力
+  ↓
+処理中か確認
+  ↓
+LLMが準備済みか確認
+  ↓
+通常 / 家計簿 / 健康記録 のモードを決定
+  ↓
+PromptBuilderでmessagesを構築
+  ↓
+添付があれば本文と区別して追加し、画像用contextを予約
+  ↓
+ResourceManagerで今回のmax_tokensを決定
+  ↓
+LLMService.generate()を開始
+  ↓
+文字列断片が届くたびUIへ反映
+  ↓
+完了後に履歴・連携候補・要約を処理</code></pre>
+      <p>LLMから届く <code>choice["delta"]["content"]</code> は文字列断片であり、1回のコールバックが1文字とは限りません。</p>
+      <h3>モードごとの差</h3>
+      <p><strong>通常モード</strong>では、応答をそのまま表示し、保存対象の会話履歴へ追加します。</p>
+      <p>通常モードのファイル添付は、選択時にサイズ・形式を検証し、検証済みのセッションIDと添付内部IDで<code>chat_logs/attachments/</code>へ添付時点のコピーを保存します。現在表示中チャットでは実パスを持たない<code>Attachment</code>へ復元し、テキストを区切り付きでユーザー入力へ加え、画像はVision対応時だけローカルdata URIとして渡します。送信後、チャット切替、終了後もsidecarを保持し、保存済みチャットを再度開けば後続質問ごとに現在入力へ1回だけ加えます。</p>
+      <p>履歴JSONへは<code>id/name/kind/mime_type/extension/size/sha256</code>だけを保存し、実パス・画像bytes・base64/data URI・テキスト本文は埋め込みません。本文なし＋添付ありでは中立な内部指示で推論しますが、その補完文はuser履歴へ保存しません。AIが添付内容を回答へ引用すれば、その回答は通常履歴として保存されます。</p>
+      <p>添付がある間は、通常の「古い履歴を予算内だけ選ぶ」処理を使わず、system prompt、要約、全履歴、添付、新規入力、応答予約、画像予約を合算します。<code>n_ctx</code>を超える場合は履歴を黙って落とさず、添付解除・新規チャット等を案内します。UIの「添付解除」は確認後に現在チャットの全添付メタデータとsidecarを削除します。設定では内部ID単位の個別削除と全チャット対象の一括削除、件数・容量を管理できます。</p>
+      <p>添付はコードとして自動実行しませんが、文書内の命令文がprompt injectionとして回答へ影響する可能性があります。sidecarはアプリ自身では暗号化せず、ユーザー単位の保存領域分離もありません。共有保存領域の一括削除は他利用者の添付にも影響し得ます。元ファイル変更は保存済みコピーへ自動反映されず、添付と<code>.shiro-export</code>は添付バックアップ用途にはなりません。</p>
+      <p><strong>健康記録モード</strong>では、先頭に出る健康JSONを <code>LeadingJsonFilter</code> で表示対象から外し、後続の自然文を表示します。生成後は健康データを検証し、必要なら健康データ抽出専用の再生成を行います。</p>
+      <p><strong>家計簿モード</strong>では、LLM応答は家計簿候補の抽出に使いますが、通常のAI返答としてストリーミング表示・読み上げを行いません。また、この家計簿モードのやり取りは通常会話履歴へ追加しない実装です。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 5</p>
+      <h2 id="5-主要ファイルの役割">5. 主要ファイルの役割</h2>
+      <div style="overflow-x:auto;"><table><thead><tr><th>ファイル</th><th>現行コードでの主な役割</th></tr></thead><tbody><tr><td><code>LLM_Local_Chat.py</code></td><td>GUI、設定、モデルロード、アバター、履歴UI、暗号化履歴UI</td></tr><tr><td><code>app_composition.py</code></td><td><code>ResourceMonitor</code> / <code>WhisperPool</code> / <code>SessionStore</code> をまとめて生成</td></tr><tr><td><code>controller.py</code></td><td>生成開始・モード・停止・要約・健康再抽出などの処理順を制御</td></tr><tr><td><code>llm_service.py</code></td><td>LLM実行専用。生成・健康抽出・要約を単一実行状態で管理</td></tr><tr><td><code>prompt_builder.py</code></td><td>system/user/historyをmessagesへまとめ、家計簿・健康用プロンプトも作成</td></tr><tr><td><code>prompt_inputs.py</code></td><td>inline+external promptの結合・重複排除、添付形式/サイズ検証、区切り付きテキストと画像data URIの構築</td></tr><tr><td><code>attachment_store.py</code></td><td>UUIDで分離した添付sidecar、サイズ/SHA-256検証、追加・削除の保留状態、path境界</td></tr><tr><td><code>resource_manager.py</code></td><td><code>adjust_inference()</code> を呼び、推論時の生成上限を決定</td></tr><tr><td><code>resource_monitor.py</code></td><td>GPU/VRAM観測、LLMのGPU/CPU判断、Whisperモデル管理</td></tr><tr><td><code>audio_workers.py</code></td><td>SAPI5 TTS、マイク入力、RMS-VAD、Whisper認識品質判定</td></tr><tr><td><code>session_store.py</code></td><td>保存・一覧・読込・削除・改名・移行・保存期限・インポート、添付メタデータとsidecarのtransaction統合</td></tr><tr><td><code>history_crypto.py</code></td><td>DPAPIエンベロープの暗号化・復号</td></tr><tr><td><code>atomic_io.py</code></td><td>同一ディレクトリの一時ファイルを書き終えてから <code>os.replace()</code></td></tr><tr><td><code>portable_history.py</code></td><td>scrypt + AES-256-GCM の持ち出し用履歴形式</td></tr><tr><td><code>json_extractors.py</code></td><td>LLM応答から家計簿JSON候補・健康JSON候補を抽出</td></tr><tr><td><code>kakeibo_split.py</code></td><td>1回の入力を複数取引候補へ分割し、<code>source_text</code> の実在・重複・順序・件数上限に加え、原文金額の網羅・断片の文脈・日付の一意性を検証</td></tr><tr><td><code>kakeibo_amount.py</code></td><td>ユーザー原文から1件の正の整数金額を機械抽出</td></tr><tr><td><code>kakeibo_date.py</code></td><td>ユーザー原文から対応形式の日付を抽出</td></tr><tr><td><code>kakeibo_confirmation.py</code></td><td>家計簿確認候補の構築とAPI送信直前の検証</td></tr><tr><td><code>integrations.py</code></td><td>ローカルAPI送信先制限、Biolog検証、非同期POST</td></tr><tr><td><code>check_audio_devices.py</code></td><td>入力デバイス一覧と短時間RMS測定を行う独立ツール</td></tr></tbody></table></div>
+      <h3><code>json_extractors.py</code> の注意点</h3>
+      <p>健康JSONは <code>_strict_json_loads()</code> を使い、<code>NaN</code> / <code>Infinity</code> のような非標準定数を拒否します。</p>
+      <p>家計簿JSON候補の抽出は通常の <code>json.loads()</code> を使用します。ただし、家計簿の最終 <code>amount</code> と <code>date</code> はLLM出力から確定せず、後段でユーザー原文から機械抽出します。</p>
+      <h3><code>kakeibo_date.py</code> が対応している日付</h3>
+      <p>現行コードで明示的に扱っているのは次の形式です。</p>
+      <ul class="readme-list"><li><code>2026/08/16</code></li><li><code>2026-08-16</code></li><li><code>2026年8月16日</code></li><li><code>7/17</code> のような月/日形式</li><li><code>7月17日</code> のような日本語の月日形式</li></ul>
+      <p>年の無い月/日形式では実行年を補います。数字は全角も正規化します。実在しない日付、 未対応形式、日付表現が無い入力は実行日にフォールバックします。無効な年付き日本語日付の 内部を、年なしの月日として実行年で再解釈することはありません。</p>
+      <p><strong>「おととい」「先週の金曜」などの自然言語相対日付を解析するコードはありません。</strong></p>
+      <h3><code>kakeibo_amount.py</code> が扱う金額</h3>
+      <p>ユーザー原文の数字を半角化した上で、<code>円</code> / <code>千円</code> / <code>万円</code> を伴う正の整数金額を抽出します。</p>
+      <p>例:</p>
+      <ul class="readme-list"><li><code>1500円</code></li><li><code>1,500円</code></li><li><code>2万円</code></li><li><code>5千円</code></li></ul>
+      <p>一方、現行コードは小数、符号付き金額、指数表記、数字途中の空白、複合単位表記などを不正形式として扱います。<code>1万5千円</code> のような複合単位表記も拒否対象です。</p>
+      <p><code>8/20 1603円</code> のように日付と正常金額の間へ空白を置いた入力は許可します。 これは日付末尾の <code>20</code> と金額の <code>1603円</code> を、<code>1 603円</code> のような不正金額として 連結して扱わないためです。金額の数字列自体に空白がある表記は引き続き拒否します。</p>
+      <p><code>2170円8月18日</code> のように金額の直後へ日本語日付が続く場合は、直後から始まる <code>M月D日</code> / <code>YYYY年M月D日</code> が暦日として妥当なときだけ金額の右境界として許可します。 年なし月日は境界判定では構造だけを確認し、最終的な日付は従来どおり実行年で判定します。 <code>100円50</code>や<code>100円2月30日</code>のような表記は許可しません。</p>
+      <p>1つの取引断片の中に有効な金額候補が複数ある場合は <code>multiple_amounts</code> とし、その断片を1取引と断定せずに入力全体を拒否します。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 6</p>
+      <h2 id="6-llmの読み込み履歴排他制御">6. LLMの読み込み・履歴・排他制御</h2>
+      <h3>6-1. モデル読み込みのフォールバック</h3>
+      <p><code>init_llm()</code> はまず <code>adjust_llm()</code> の結果を使って、Full GPU、約75%・50%・25%のpartial GPU offload、CPUのどれを使うか決めます。Fullの既存安全条件は緩めません。</p>
+      <p>GPUを選択した場合、既定構成では次の順で読み込みを試します。</p>
+      <ol class="readme-list"><li>性能設定を含む構成</li><li><code>flash_attn=False</code> にした構成</li><li>基本引数だけの構成</li></ol>
+      <p>GPUメモリ不足と明示できる失敗ではモデルを解放し、一段低いoffload候補へ移ります。一般的なメモリ不足やモデル破損などの非VRAMエラーを、層数変更で隠してretryすることはありません。</p>
+      <p>GPUロード成功後も最低空き容量を再確認し、条件を満たさなければ安全に解放してから <code>gc.collect()</code> と、利用可能な場合の <code>torch.cuda.empty_cache()</code> を呼びます。</p>
+      <p>ロード後安全確認を通った結果はruntime stateとして保持されます。生成設定では、希望するLLM GPUオフロードを<code>自動</code>・<code>Full GPU</code>・<code>約75%</code>・<code>約50%</code>・<code>約25%</code>・<code>CPU</code>から選び、再起動せずhot reloadできます。実際にロード成功したLLMレイヤーの割合・層数・実行方式は別の読み取り専用欄へ表示します。設定ファイルへ保存するのは希望モードだけで、actual runtime stateは保存しません。</p>
+      <p>hot reloadでは、まず新規操作を止め、<code>LLMService</code>から旧モデルをdetachします。重いclose・GC・CUDA cleanupと新モデルのloadはworkerで行うためTkのmain threadを止めません。新しいモデルは旧モデルの解放後にだけロードし、古いreload世代や終了開始後の結果はattachせずworker側で解放します。</p>
+      <p>内部Whisperはreload pauseと転写lockを使い、新規転写を止めたうえで進行中転写の終了を有限時間待ちます。音声認識中のモデルを強制解放する処理ではありません。</p>
+      <p>この仕組みは「必ずロードできる」ことを保証するものではなく、すべて失敗した場合は最後の例外を上位へ返します。</p>
+      <h3>6-2. 会話履歴をコンテキストへ入れる量</h3>
+      <p><code>PromptBuilder.build()</code> は、履歴用の予算を次の考え方で計算します。</p>
+      <pre><code>残り予算 = n_ctx - max_tokens - system分 - 今回の入力分
+履歴へ割り当てる予算 = 残り予算 × HISTORY_BUDGET_RATIO</code></pre>
+      <p>現行の <code>HISTORY_BUDGET_RATIO</code> は <code>0.60</code>、system側には追加で <code>SYSTEM_BUF_TOKENS = 256</code> を見込みます。</p>
+      <p>履歴は新しい会話ペアから逆順に見て、予算へ収まる範囲を採用し、最終的なmessagesでは元の時系列順へ戻します。各会話ペアにはコード上の固定見積もり <code>+12</code> が加算されます。</p>
+      <p>トークン数は原則としてモデルのtokenizerで数えます。<code>LLM_Local_Chat.py</code> の <code>count_tokens()</code> はtokenizer呼び出しが失敗した場合に文字数ベースのフォールバック値を返します。</p>
+      <h3>6-3. 要約メモリ</h3>
+      <p>通常会話と健康記録モードの会話は保存履歴へ追加され、履歴数が <code>SUMMARY_THRESHOLD</code> の条件を満たすと要約処理を開始します。現行値は4ターンです。</p>
+      <p>要約用LLM呼び出しは <code>LLMService.summarize()</code> が担当し、次の値を使います。</p>
+      <pre><code>max_tokens = 80
+temperature = 0.3
+stop = ["\n"]</code></pre>
+      <p>通常生成の既定temperatureより低い値を使い、出力のばらつきを抑えています。完成した要約はセッションの <code>summary</code> へ保存され、次回以降のsystemメッセージへ <code>[要約]: ...</code> として追加されます。</p>
+      <p>家計簿モードは通常会話履歴へ追加されないため、この履歴数にも入りません。</p>
+      <h3>6-4. LLMはキューではなく同時開始を拒否する</h3>
+      <p><code>LLMService</code> は <code>_state_lock</code> と <code>_running</code> を持ちます。</p>
+      <pre><code>with self._state_lock:
+    if self._running:
+        return False
+    self._running = True</code></pre>
+      <p>したがって、すでにLLM処理が走っているとき、新しいLLM処理を待ち行列へ積むのではなく<strong>開始要求を拒否</strong>します。</p>
+      <p>読み上げ側の <code>TTSWorker</code> は <code>queue.Queue</code> を使用するため、LLM側とは設計が異なります。</p>
+      <h3>6-5. 世代番号で古いコールバックを無効化</h3>
+      <p>Controllerは <code>_operation_generation</code> を増やし、ストリーミングや完了コールバックが現在の操作世代と一致するか確認します。</p>
+      <p>停止や新しい処理によって世代が変わった後に古いコールバックが届いた場合、その処理は現在の操作へ反映しません。</p>
+      <h3>6-6. 停止ボタン</h3>
+      <p><code>Controller.stop()</code> は次の処理を行います。</p>
+      <ol class="readme-list"><li>LLM中断フラグを立てる</li><li>TTSキューと再生を停止方向へ切り替える</li><li>アバターの発話状態を戻す</li><li>マイク側のTTS排他状態を解除する</li><li><code>LLMService.abort()</code> を呼ぶ</li><li>別スレッドでLLM実行状態を監視する</li></ol>
+      <p>3秒以内にLLMが停止状態へ移らない場合、UIへ警告を出し、「安全のため新しい推論は開始しない」と案内します。その後も監視は続き、実際にLLMが停止した時点で現在世代と一致すれば操作状態を解除します。</p>
+      <p>ここで行っているのは、停止未確認の状態で次の生成を開始しないための制御です。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 7</p>
+      <h2 id="7-vram監視とwhisper">7. VRAM監視とWhisper</h2>
+      <h3>7-1. <code>ResourceMonitor</code></h3>
+      <p><code>ResourceMonitor</code> は生成時に作られ、デーモンスレッドでGPU・VRAM・CPUの診断値を更新します。ポーリング周期は <code>0.5</code> 秒です。</p>
+      <p>VRAMの即時判定では <code>snapshot()</code> が同期取得を行います。</p>
+      <p>GPU情報の取得は次の順に試します。</p>
+      <ol class="readme-list"><li><code>pynvml</code>（<code>requirements.txt</code> 上のパッケージは <code>nvidia-ml-py</code>）</li><li><code>nvidia-smi</code></li><li>取得できなければGPU情報なしとして扱う</li></ol>
+      <h3>7-2. LLMロード前</h3>
+      <p><code>adjust_llm()</code> は、GPUオフロード対応の有無、空きVRAM、GGUFファイルサイズ、metadataの総レイヤー数を使って <code>n_gpu_layers</code> を決めます。</p>
+      <p>起動時の予約量は次の大きい方です。</p>
+      <pre><code>1024MB
+総VRAMの12%</code></pre>
+      <p>Fullの概算必要量は従来どおり <code>モデルファイルサイズ + 起動予約量</code> です。Full条件に届かない場合だけ、総レイヤー数からhalf-upで約75%・50%・25%を作り、<code>起動予約量 + モデルファイルサイズ × 候補層数 / 総層数</code>（端数切り上げ）を満たす最大候補を選びます。metadataを安全に取得できずFull条件にも届かない場合や、partial候補にも届かない場合はCPUです。</p>
+      <p>この線形計算は事前の保守的な近似です。実際の安全境界は、明示的なGPUメモリ不足時の段階降格と、ロード後の最低予約量再確認でも守ります。</p>
+      <h3>7-3. 推論直前</h3>
+      <p><code>adjust_inference()</code> はLLMがGPU推論中の場合に、空きVRAMを見て <code>max_tokens</code> を調整します。</p>
+      <div style="overflow-x:auto;"><table><thead><tr><th>条件</th><th>現行動作</th></tr></thead><tbody><tr><td>空きが最低予約量より少ない</td><td><code>自動</code>かつGPU配置中なら、現在より低いoffloadへhot reloadして同じ入力を1回だけ継続。安全に再配置できない場合は開始しない</td></tr><tr><td>空きが1024MB未満</td><td><code>max(256, default_max // 4)</code></td></tr><tr><td>空きが1536MB未満</td><td><code>max(256, default_max // 2)</code></td></tr><tr><td>それ以上</td><td>設定値を維持</td></tr></tbody></table></div>
+      <p>最低予約量は <code>512MB</code> と総VRAMの <code>6%</code> の大きい方です。</p>
+      <p>CPU推論時、またはGPUメモリ情報を取得できない場合は、GPU残量を理由にこのブロックを行いません。</p>
+      <p>Auto downshiftの候補は現在位置より下だけです。例えばFullからは約75%→50%→25%→CPU、約50%からは約25%→CPUを検討します。推論ごとの自動upshiftは行わず、起動・通常のモデル再読み込み・設定画面の「GPU配置を再評価」で上位候補を再検討します。入力原文・セッション・モード・操作世代はrequest contextとして保持し、安全確認後にだけユーザー表示、履歴、TTS、家計簿確認/POSTを始めるため、reloadによる二重処理を避けます。</p>
+      <p>Whisper側から渡された直近GPU使用率変化が <code>10</code> ポイントを超える場合は、さらに生成上限を半分へ調整します。</p>
+      <h3>7-4. Whisperのモデル配置</h3>
+      <p><code>WhisperPool.load()</code> はまずCPU版 <code>small</code> をロードします。その後、設定と空きVRAMに応じてGPUモデルのロードも試します。</p>
+      <p><code>auto</code> の選択基準は次のとおりです。</p>
+      <div style="overflow-x:auto;"><table><thead><tr><th>空きVRAM</th><th>GPU側の候補</th></tr></thead><tbody><tr><td>4096MB以上</td><td><code>medium</code></td></tr><tr><td>2048MB以上</td><td><code>small</code></td></tr><tr><td>それ未満</td><td>GPUモデルを追加せずCPU <code>small</code></td></tr></tbody></table></div>
+      <p>手動でGPUモデルを指定していても、必要な空き量に満たない場合はCPU <code>small</code> 側へフォールバックします。GPUモデルのロードに失敗した場合もCPUモデルを残します。</p>
+      <h3>7-5. WhisperのGPU/CPU切替</h3>
+      <p>GPUモデルが利用可能な場合、<code>WhisperController</code> はGPU使用率に対してヒステリシスを持ちます。</p>
+      <ul class="readme-list"><li>GPU利用中に使用率が88%を超える → CPU側へ</li><li>CPU利用中に使用率が70%を下回る → GPU側へ</li></ul>
+      <p>88と70で境界を分けることで、単一のしきい値付近で切替が連続しにくい構造です。</p>
+      <p><code>VRAMGuard</code> クラスも <code>resource_monitor.py</code> 内に定義されていますが、現行の他モジュールからこのクラスを生成・参照するコードは確認できません。実際の生成経路では <code>ResourceMonitor</code>、<code>adjust_llm()</code>、<code>adjust_inference()</code> が使用されています。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 8</p>
+      <h2 id="8-音声入力読み上げアバター">8. 音声入力・読み上げ・アバター</h2>
+      <h3>8-1. 音声入力の既定値</h3>
+      <p><code>chat_settings.json.example</code> と <code>load_settings()</code> の両方で、<code>mic_enabled</code> の既定値は <code>false</code> です。</p>
+      <p>起動時に <code>mic_enabled=false</code> の場合、Whisperのロードをスキップします。</p>
+      <p>起動時にWhisperをロードした場合、<code>VoiceRecognizer</code> はバックグラウンドスレッドを開始します。マイクON/OFFは <code>_enabled</code> イベントで制御され、OFF中は認識処理へ進まず待機します。</p>
+      <p>したがって、「マイクスレッドはONにするたび作成・破棄する」という構造ではありません。</p>
+      <h3>8-2. VAD</h3>
+      <p>音声入力は16kHz、モノラル、1024サンプル単位で読み取ります。</p>
+      <p>発話開始は、RMSが設定しきい値を連続6チャンク超えた場合に確定します。プリロールとして直近0.75秒相当のチャンクを保持します。</p>
+      <p>録音開始後は、連続30チャンクの静音、または最大6秒の到達で録音区間を終えます。</p>
+      <h3>8-3. Whisper認識結果のフィルタ</h3>
+      <p>認識後は、複数の条件で結果を破棄することがあります。</p>
+      <ul class="readme-list"><li><code>no_speech_prob</code></li><li><code>avg_logprob</code></li><li><code>compression_ratio</code></li><li>短いフレーズの反復</li><li>空文字</li><li>2文字未満</li><li>100文字超</li><li>ノイズ語句の完全一致・部分一致</li><li>句読点だけの結果</li><li>10秒以内の同一文字列</li><li>TTSが認識処理と重なった場合</li></ul>
+      <p>100文字という値は、一般的な発話長の上限を示すものではなく、<strong>この実装が誤認識抑制用に置いているヒューリスティック</strong>です。</p>
+      <p><code>compression_ratio</code> も「繰り返し量そのもの」ではなく、Whisperが返す認識区間の指標として扱われています。コードは他の指標と組み合わせて判定します。</p>
+      <h3>8-4. TTSとの相互干渉</h3>
+      <p>TTS開始時はマイク側へTTS中であることを通知します。<code>VoiceRecognizer</code> はTTS中のマイクチャンクを発話判定へ蓄積しません。</p>
+      <p>録音中にTTSが始まった場合は、その録音データを破棄してWhisper処理へ進まない経路があります。またWhisper処理の前後でもTTS世代を確認します。</p>
+      <p>TTS終了後のマイク抑制解除には世代番号を使い、新しいTTSが開始済みなら古い解除処理を適用しません。</p>
+      <h3>8-5. 読み上げ</h3>
+      <p><code>TTSWorker</code> は専用デーモンスレッドと <code>queue.Queue</code> を持ちます。</p>
+      <ul class="readme-list"><li>通常の読み上げは <code>SAPI.SpVoice</code></li><li><code>speaker.Speak(text, 1)</code> で非同期再生を開始</li><li>停止要求時には <code>speaker.Speak("", 3)</code> を呼ぶ</li></ul>
+      <p><code>tts_enabled</code> の既定値は <code>false</code> です。TTSワーカースレッド自体はUI初期化時に作られますが、<code>enabled=false</code> なら <code>speak()</code> は読み上げ要求をキューへ追加しません。</p>
+      <p>ストリーミング応答は <code>StreamingTTSBuffer</code> が <code>。！？!?</code> と改行を境界として文単位へ分割します。コードフェンス内の内容は読み上げ対象から外します。</p>
+      <h3>8-6. アバター</h3>
+      <p><code>AvatarWindow</code> は別のTkウィンドウとして作られます。</p>
+      <ul class="readme-list"><li>瞬き間隔: 2〜6秒のランダム</li><li>瞬き時間: 150ms</li><li>口パク切替: 140ms</li><li>ドラッグ移動</li><li>表示/非表示切替</li></ul>
+      <p>画像読み込みに失敗した場合、<code>_load()</code> は透明な100×100画像を代わりに作ります。瞬き用画像が個別に無い場合は既存画像を使うフォールバックもあります。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 9</p>
+      <h2 id="9-会話履歴の保存と暗号化">9. 会話履歴の保存と暗号化</h2>
+      <h3>9-1. 保存先</h3>
+      <p><code>SessionStore</code> はアプリ配置フォルダ配下の <code>chat_logs/</code> を管理します。初期化時にこのディレクトリが無ければ作成します。</p>
+      <p>会話が空の場合は保存ファイルを作りません。保存ファイル名は概ね次の形式です。</p>
+      <pre><code>chat_YYYYMMDD_HHMMSS_ffffff.json</code></pre>
+      <h3>9-2. DPAPIエンベロープ</h3>
+      <p><code>history_crypto.py</code> の <code>DPAPIProtector</code> はWindowsの現在ユーザースコープで <code>CryptProtectData</code> / <code>CryptUnprotectData</code> を呼びます。</p>
+      <p>保存ファイルは平文セッションそのものではなく、概ね次のエンベロープになります。</p>
+      <pre><code>{
+  "format": "llm-local-chat-dpapi",
+  "version": 1,
+  "ciphertext": "..."
+}</code></pre>
+      <p>保存時の <code>_write_encrypted()</code> は、</p>
+      <ol class="readme-list"><li>セッション形式を検証</li><li>JSON化</li><li>DPAPIで暗号化</li><li>その場で復号</li><li>復号結果が元バイト列と一致することを確認</li><li>ファイルへ書き込む</li></ol>
+      <p>という順序です。</p>
+      <p>一致しない場合は保存処理をエラーにします。DPAPI保存に失敗した場合、<code>ChatApp._save_now()</code> は平文へ自動フォールバックしません。</p>
+      <h3>9-3. 一時ファイル経由の置換</h3>
+      <p><code>atomic_io.atomic_write_bytes()</code> は、対象と同じディレクトリに <code>NamedTemporaryFile</code> を作り、</p>
+      <pre><code>write
+  ↓
+flush
+  ↓
+os.fsync(file descriptor)
+  ↓
+os.replace(temp, target)</code></pre>
+      <p>の順で処理します。</p>
+      <p>これは既存ファイルを先頭から直接上書きするのではなく、<strong>一時ファイルを完成させてから対象パスへ置換する構造</strong>です。</p>
+      <p>このコードはファイルディスクリプタに対する <code>os.fsync()</code> は呼びますが、置換後のディレクトリ自体を <code>fsync</code> する処理はありません。このため、この文書では電源断時の永続性まで保証する表現は使用しません。</p>
+      <h3>9-4. 旧平文履歴の移行</h3>
+      <p>起動時に <code>scan_legacy()</code> で <code>chat_logs/*.json</code> を確認します。</p>
+      <ul class="readme-list"><li>未対応・破損ファイルがある場合は通常起動を中止</li><li>平文履歴がある場合はユーザーへ確認</li><li>DPAPIの事前往復テストを行う</li><li>移行用ロックファイルを作る</li><li>移行直前にも対象を再確認</li><li>読み込んだ元ファイルが処理中に変化していないことを時刻・サイズ・内容で確認</li><li>暗号化結果を復号して照合してから置換</li><li>移行後に再スキャン</li></ul>
+      <p>という手順があります。</p>
+      <h3>9-5. 履歴一覧キャッシュ</h3>
+      <p><code>SessionStore._file_signature()</code> は、次の4要素を署名として使います。</p>
+      <pre><code>mtime_ns
+size
+ctime_ns
+SHA-256(ファイル全内容)</code></pre>
+      <p>SHA-256はファイルを1MBずつ読んで毎回計算します。その署名が前回と同じ場合、後段のDPAPI復号とJSONパースを省略します。</p>
+      <p>つまりこのキャッシュは「ファイルを読まなくするキャッシュ」ではありません。<strong>内容ハッシュの計算は行い、復号・パース結果の再取得を省略する仕組み</strong>です。</p>
+      <h3>9-6. 保存期間</h3>
+      <p><code>history_retention_days</code> は <code>0 / 30 / 90 / 180 / 365</code> のみを受け付け、既定値0は無期限です。</p>
+      <p>有限値の場合、<code>last_activity_at</code> を基準に期限候補を判定します。現在開いているセッションや、読み取りに失敗するファイルを無条件に削除する処理にはなっていません。</p>
+      <h3>9-7. ゲストモード</h3>
+      <p>ゲストモードでは <code>ChatApp._save_now()</code> が保存処理へ進まず戻ります。したがって<strong>ゲスト会話の会話履歴ファイルは保存しません</strong>。</p>
+      <p>ただし、<code>SessionStore</code> 初期化時の <code>chat_logs/</code> 作成など、アプリ全体が一切ファイルを作らないという意味ではありません。</p>
+      <h3>9-8. 平文テキスト保存</h3>
+      <p>現行の <code>LLM_Local_Chat.py</code> の「ファイル」メニューには、</p>
+      <ul class="readme-list"><li>新規チャット</li><li>保存</li><li>暗号化エクスポート</li><li>暗号化インポート</li><li>設定</li><li>終了</li></ul>
+      <p>があり、<strong>旧版にあった平文の「テキストとして保存」は現行コードにはありません</strong>。CHANGELOGでもv1.5.0で暗号化エクスポートへ置き換えたことが記録されています。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 10</p>
+      <h2 id="10-持ち出し用暗号化エクスポート">10. 持ち出し用暗号化エクスポート</h2>
+      <p>通常の保存履歴はDPAPIで保護されるため、別PCへの持ち出しには <code>portable_history.py</code> の形式を使います。</p>
+      <h3>10-1. 暗号化方式</h3>
+      <pre><code>12文字以上のパスフレーズ
+      ↓
+scrypt
+  N=32768
+  r=8
+  p=1
+      ↓
+32バイト鍵
+      ↓
+AES-256-GCM
+      ↓
+.shiro-export</code></pre>
+      <p>saltは16バイト、nonceは12バイトです。</p>
+      <p>KDF・暗号方式・salt・nonceなどのヘッダーはcanonical JSONへ変換され、AES-GCMの関連データとして暗号化・復号の両方で使用されます。</p>
+      <h3>10-2. インポート時の検証</h3>
+      <p><code>import_archive()</code> は、外側のキー集合、format/version、KDF設定、暗号設定、salt/nonce長などを検証します。</p>
+      <p>AES-GCM復号で <code>InvalidTag</code> が発生した場合は、</p>
+      <pre><code>パスフレーズが違うか、暗号化ファイルが破損しています。</code></pre>
+      <p>という共通エラーに変換します。<code>InvalidTag</code> だけから原因を個別に確定する処理はありません。</p>
+      <p>復号後もschema/version、日時形式、record UUID、セッション形式を確認します。</p>
+      <h3>10-3. リソース上限</h3>
+      <p>現行コードには次の上限があります。</p>
+      <div style="overflow-x:auto;"><table><thead><tr><th>対象</th><th>上限</th></tr></thead><tbody><tr><td>暗号化ファイル</td><td>64MB</td></tr><tr><td>復号後データ</td><td>128MB</td></tr><tr><td>セッション数</td><td>10,000</td></tr><tr><td>全ターン数</td><td>100,000</td></tr><tr><td>1文字列</td><td>4,000,000文字</td></tr><tr><td>JSON入れ子</td><td>深さ32</td></tr></tbody></table></div>
+      <p>この形式はZIP等の圧縮アーカイブではありません。これらは入力サイズ・件数・文字列長・入れ子深さを制限するための値です。</p>
+      <h3>10-4. 重複判定</h3>
+      <p><code>session_digest()</code> はセッションをcanonical JSONへ変換し、SHA-256を計算します。インポート時の重複判定はこのダイジェストを使います。</p>
+      <p>ローカル専用の<code>session_id</code>と<code>attachments</code>は、ダイジェスト計算と<code>.shiro-export</code>出力の前に除外します。そのため添付実体・添付メタデータはエクスポートされず、インポート後に復元されません。<code>.shiro-export</code>は添付ファイルのバックアップではありません。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 11</p>
+      <h2 id="11-家計簿健康記録の連携">11. 家計簿・健康記録の連携</h2>
+      <p>この2機能は、<strong>通常チャットとは別に、構造化データを別プロセスのlocalhost APIへ送る連携クライアント機能</strong>です。どちらも起動直後から自動送信を行うのではなく、ユーザーが該当モードを選択した入力を処理します。</p>
+      <h3>11-1. 送信先URLの制限</h3>
+      <p><code>is_allowed_local_api_url()</code> は次を確認します。</p>
+      <pre><code>scheme == http
+URL内の username が無い
+URL内の password が無い
+host が localhost / 127.0.0.1 / ::1 のいずれか
+port が LOCAL_API_PORTS に含まれる</code></pre>
+      <p><code>LOCAL_API_PORTS</code> は、</p>
+      <ul class="readme-list"><li><code>KAKEIBO_BRIDGE_PORT</code>（既定8767、環境変数で変更可能）</li><li>8766</li></ul>
+      <p>から構成されます。</p>
+      <p>HTTPSを許可していないこと自体が「外部送信防止」を意味するわけではありません。送信先の範囲を決めているのはhost・port等の条件です。</p>
+      <p>HTTP通信を開く <code>_open_local_api()</code> は、</p>
+      <ul class="readme-list"><li><code>ProxyHandler({})</code></li><li>リダイレクトを許可しない <code>_NoRedirectHandler</code></li><li>5秒タイムアウト</li></ul>
+      <p>を使用します。JSON応答は最大1MBまで読みます。</p>
+      <h3>11-2. 家計簿モード</h3>
+      <p>家計簿モードでは <code>PromptBuilder.build_kakeibo_prompt()</code> が、LLMへ取引ごとの原文断片を <code>transactions</code> 配列で返すよう指示します。<strong>1回の入力から最大10件の取引候補を生成でき</strong>（<code>MAX_KAKEIBO_TRANSACTIONS_PER_INPUT</code>）、各取引は1件ずつ確認し、1件ずつPOSTします。</p>
+      <p>候補生成・検証・確認UIとPOSTクライアントはLLM Local Chat側にあります。実際の台帳登録には別途用意した<code>kakeibo-bridge</code> APIが必要で、家計簿アプリ、DB、Web UI、API/bridgeサーバーおよびそのDocker/Compose定義は本リポジトリに含まれません。連携先がPOST後に行う処理は、このリポジトリのコードからは断定しません。</p>
+      <p><strong>一括登録ではありません。</strong> 「1取引 = 1確認 = 1 POST」という境界は従来のままです。</p>
+      <pre><code>1回の入力
+  ↓
+複数の取引候補へ分割（最大10件。11件以上は入力全体を拒否）
+  ↓
+取引1を確認 → 取引1だけPOST
+  ↓
+取引2を確認 → 取引2だけPOST
+  ↓
+…</code></pre>
+      <p>LLMが出したJSONをそのまま登録しない点も従来どおりです。</p>
+      <p><strong>分割と source_text の検証</strong></p>
+      <p><code>kakeibo_split.py</code> は、LLMが返した <code>source_text</code> を信用せず次を確認します。1つでも満たさない場合は、先頭だけ処理する部分成功を行わず<strong>入力全体を拒否</strong>します。</p>
+      <ul class="readme-list"><li>空文字ではない</li><li>元のユーザー入力に実在する文字列である</li><li>原文上で範囲が重複していない</li><li>原文順に並べられる（並びが逆でも、各断片が原文中にちょうど1回だけ現れるなら出現位置で並べ直す。一意に決められない場合は推測せず拒否）</li><li><code>source_text</code> / <code>store</code> / <code>category</code> / <code>type</code> / <code>memo</code> 以外のキーを含まない</li></ul>
+      <p>まず文字単位の完全一致を試します。完全一致しない場合でも、違いが半角スペース(U+0020)と 全角スペース(U+3000)だけで、空白を除いた一致位置が原文上で1か所に決まり、他の断片と 重ならないときは、対応する <code>user_text[start:end]</code> の実スライスへ戻します。 LLMが整形した文字列を候補へ採用するわけではありません。</p>
+      <p>句読点、金額カンマ、数字、日付、店名、改行などは正規化しません。空白を除くと同じ候補が 複数位置に現れる場合も推測せず拒否します。原文に存在しない文言をLLMが生成した場合は 候補になりません。11件を超える場合も、確認画面0件・POST 0件で全体を拒否します。</p>
+      <p><strong>取りこぼし・曖昧な分割の拒否</strong></p>
+      <p>断片が原文に実在するだけでは独立した取引として認めません。次も確認し、1つでも満たさない場合は<strong>入力全体を拒否</strong>します。</p>
+      <ul class="readme-list"><li><strong>原文の金額をすべての断片が覆っていること。</strong> どの断片にも含まれない金額表現が原文に残っている場合（LLMが取引を取りこぼした場合）は拒否します。件数上限の判定だけでは検出できないため、<code>kakeibo_amount.find_amount_spans()</code> で原文側の金額位置と突き合わせます。原文に11取引あるのにLLMが10件しか返さなかった場合も、これで拒否されます。</li><li><strong>金額だけの断片を単独取引として受理しないこと。</strong> 「スーパーで2000円と500円」をLLMが「スーパーで2000円」「500円」へ切り分けても、後者は金額以外の内容を持たないため拒否します。「スーパーで2000円、コンビニで500円」のように各断片が店名などの文脈を持つ場合は正常に2件へ分割します。</li></ul>
+      <p><strong>金額</strong></p>
+      <p>最終 <code>amount</code> は <code>kakeibo_amount.extract_amount_result()</code> が<strong>各取引の原文断片から</strong>決めます。LLM JSON内のamountは最終値として使用しません（そもそも雛形に <code>amount</code> を含めていません）。</p>
+      <p>1つの断片に有効な金額候補が複数ある場合、その断片が1取引なのか内訳なのかを推測せず、<strong>入力全体を拒否</strong>します。不正形式の金額表現が検出された場合も確認画面へ進みません。</p>
+      <p><strong>日付</strong></p>
+      <p>最終 <code>date</code> もLLM値ではなく <code>kakeibo_date</code> が決めます。各断片から抽出し、断片自身に日付表現が無い場合は、<strong>原文全体の明示日付がちょうど1種類のときだけ</strong>その日付へフォールバックします。</p>
+      <pre><code>8/16 スーパーで2000円、コンビニで500円
+  → 両方 8/16（原文の日付が1種類なので適用できる）
+
+8/16 スーパーで2000円、8/17 コンビニで500円、薬局で1200円
+  → 入力全体を拒否（薬局がどちらの日付か確定できない）</code></pre>
+      <p>日付が1つも無ければ従来どおり実行日を使います。対応形式は前述の <code>YYYY/MM/DD</code>、<code>YYYY-MM-DD</code>、<code>M/D</code>、<code>YYYY年M月D日</code>、<code>M月D日</code> です。 「昨日」「一昨日」「先週」などの自然言語相対日付は解析しません。</p>
+      <p><strong>店舗・メモ</strong></p>
+      <p>LLMが候補として出した <code>store</code> / <code>memo</code> は、空白除去後の文字列が<strong>その取引の原文断片へ</strong>そのまま含まれる場合だけ候補へ残します。</p>
+      <p><strong>種別・カテゴリ</strong></p>
+      <p><code>type</code> は <code>支出</code> / <code>収入</code> 以外を未確定扱いにします。categoryはtypeごとの定義済み一覧に合わせます。</p>
+      <p><strong>確認と最終検証</strong></p>
+      <p>候補は <code>KakeiboConfirmDialog</code> で1件ずつ表示し、ユーザーが確認・編集します。**このシーケンスが進行中の間は <code>Controller.is_busy()</code> が真になり、キーボード入力・音声入力とも新しい送信を開始できません。** 完了・スキップ・中止・エラーのいずれでもフラグは解除され、予期しない例外が起きた場合も解除されます。この間は送信ボタンも無効のままで、ステータスは「🏠 家計簿確認・登録中…」を表示します。なお1件だけの入力では、確認画面の「認識・入力内容」に入力全文を表示します。複数候補のときはタイトルへ <code>(2 / 3)</code> のように現在位置を表示し、「この取引をスキップ」と「残りを中止」を分けています。ウィンドウを閉じる操作は「残りを中止」と同じ扱いです。</p>
+      <p>登録ボタンの判定とは別に、API送信直前にも <code>validate_kakeibo_payload()</code> が日付・金額・type・category等を検証します。</p>
+      <p><strong>送信の直列化と失敗時</strong></p>
+      <p>複数POSTを並列化しません。<code>send_kakeibo()</code> の完了通知を受けてから次の確認画面を開くため、送信は常に直列です。</p>
+      <p>途中のPOSTが失敗した場合は、成功したかどうかが不明な状態で次を送らないよう、<strong>残りの候補を処理せず停止</strong>します。このクライアントからPOST済みの取引は取り消しません。</p>
+      <h3>11-3. 健康記録モード</h3>
+      <p>健康記録モードでは、LLMへ健康JSONを先頭に出すよう指示します。</p>
+      <p>対象フィールドは次です。</p>
+      <pre><code>date
+weight
+body_fat
+muscle_mass
+bmr
+temperature
+pulse
+systolic_bp
+diastolic_bp
+meal_detail
+activity_log
+memo</code></pre>
+      <h3>11-4. ユーザー原文を優先する欄</h3>
+      <p><code>integrations.extract_explicit_health_fields()</code> は、ユーザー原文に明示された次のラベルを機械的に探します。</p>
+      <ul class="readme-list"><li><code>食事ログ</code> / <code>食事ログ追加</code></li><li><code>行動ログ</code> / <code>行動ログ追加</code></li><li><code>メモ</code> / <code>メモ追加</code></li></ul>
+      <p>見つかった値は同じフィールドのLLM候補より優先してマージします。</p>
+      <h3>11-5. Biolog値の検証</h3>
+      <p>数値範囲は次のとおりです。</p>
+      <div style="overflow-x:auto;"><table><thead><tr><th>項目</th><th>範囲</th></tr></thead><tbody><tr><td>体温</td><td>34.0〜42.0（両端を含む）</td></tr><tr><td>体重</td><td>0より大きく300未満</td></tr><tr><td>体脂肪率</td><td>0〜100（両端を含む）</td></tr><tr><td>筋肉量</td><td>0より大きく200未満</td></tr><tr><td>脈拍</td><td>30〜200（整数、両端を含む）</td></tr><tr><td>収縮期血圧</td><td>50〜250（整数、両端を含む）</td></tr><tr><td>拡張期血圧</td><td>30〜150（整数、両端を含む）</td></tr><tr><td>基礎代謝</td><td>0より大きく5000未満（整数）</td></tr></tbody></table></div>
+      <p>文字列の <code>meal_detail</code> / <code>activity_log</code> / <code>memo</code> は各2000文字までです。</p>
+      <p><code>bool</code>、非数値型、有限でない数値、範囲外の数値などは <code>BiologValidationError</code> になります。</p>
+      <p>測定値だけから成る <code>activity_log</code> や <code>memo</code> を、明示入力でない場合に除去する判定もあります。</p>
+      <h3>11-6. Biologの確認</h3>
+      <p>検証後、画面へ登録内容を表示し、<code>messagebox.askyesno()</code> で確認します。承認時だけPOSTします。</p>
+      <p><code>user_id</code> はLLM出力から取得せず、送信時に固定文字列 <code>"self"</code> を付けます。</p>
+      <p>日付を省略した場合は、送信直前にJSTの当日を登録日として確定し、実際にPOSTするrecordの<code>date</code>へ保持します。明示済みの有効日付は変更しません。</p>
+      <p>登録成功時の完了表示は、API応答に有効な<code>date</code>があればその値を優先し、なければ実際にPOSTした確定recordの<code>date</code>を使用します。表示層で現在日付を作り直したり、日付取得のために再POSTしたりはしません。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 12</p>
+      <h2 id="12-設定ファイル">12. 設定ファイル</h2>
+      <p><code>chat_settings.json.example</code> の公開テンプレートと、<code>load_settings()</code> の内部既定値を確認すると、主な設定は次のとおりです。</p>
+      <div style="overflow-x:auto;"><table><thead><tr><th>キー</th><th>テンプレート値</th><th>意味</th></tr></thead><tbody><tr><td><code>model_path</code></td><td><code>C:\path\to\your\model.gguf</code></td><td>使用するGGUF。利用者が変更するプレースホルダー</td></tr><tr><td><code>n_ctx</code></td><td>8192</td><td>コンテキスト長</td></tr><tr><td><code>llm_gpu_offload_mode</code></td><td>テンプレート未記載（コード既定<code>auto</code>）</td><td>LLM GPUオフロードの希望モード。actual stateは保存しない</td></tr><tr><td><code>max_tokens</code></td><td>1024</td><td>通常生成の上限</td></tr><tr><td><code>temperature</code></td><td>0.7</td><td>通常生成へ渡すtemperature</td></tr><tr><td><code>history_retention_days</code></td><td>0</td><td>保存期間。0は無期限</td></tr><tr><td><code>n_threads_batch</code></td><td>12</td><td>llama.cpp性能設定</td></tr><tr><td><code>n_batch</code></td><td>1024</td><td>llama.cpp性能設定</td></tr><tr><td><code>n_ubatch</code></td><td>512</td><td>llama.cpp性能設定</td></tr><tr><td><code>flash_attn</code></td><td>true</td><td>llama.cpp性能設定</td></tr><tr><td><code>offload_kqv</code></td><td>true</td><td>llama.cpp性能設定</td></tr><tr><td><code>use_mmap</code></td><td>true</td><td>llama.cpp性能設定</td></tr><tr><td><code>tts_enabled</code></td><td>false</td><td>起動時TTS</td></tr><tr><td><code>tts_rate</code></td><td>0</td><td>SAPI5読み上げ速度</td></tr><tr><td><code>mic_enabled</code></td><td>false</td><td>起動時音声入力</td></tr><tr><td><code>whisper_mode</code></td><td><code>auto</code></td><td>Whisper配置モード</td></tr><tr><td><code>vad_threshold</code></td><td>150</td><td>RMS-VADしきい値</td></tr><tr><td><code>system_prompt</code></td><td>空</td><td>inline system prompt。未指定時は従来のコード既定値</td></tr><tr><td><code>user_personalization</code></td><td>空</td><td>persona文章</td></tr><tr><td><code>response_language</code></td><td>日本語指示</td><td>応答言語の指示</td></tr><tr><td><code>reasoning_visibility_instruction</code></td><td>内部思考を表示しない指示</td><td>表示方針の指示</td></tr><tr><td><code>external_prompt_files</code></td><td>各項目は空</td><td>UTF-8のTXT / MD。相対パスはアプリ配置フォルダ基準</td></tr><tr><td><code>vision_enabled</code></td><td>false</td><td>Vision入力を有効にするか</td></tr><tr><td><code>vision_handler</code></td><td><code>gemma4</code></td><td><code>gemma4</code> / <code>llava15</code></td></tr><tr><td><code>vision_projector_path</code></td><td>空</td><td>対応projector / mmproj GGUF</td></tr></tbody></table></div>
+      <p><code>chat_settings.json</code> が無い、またはJSON読み込みに失敗した場合、<code>load_settings()</code> は内部既定値を使って処理を続けます。</p>
+      <p>ただし、すべての設定値を同じ方法で厳密検証しているわけではありません。ロード時に明示的な正規化処理があるのは、性能系整数・bool、TTS速度、VAD値、Whisperモード、保存日数などです。設定画面側にも別の入力検証があります。</p>
+      <p>設定保存は <code>atomic_write_json()</code> を使います。</p>
+      <p>inline system、external system、inline persona、external persona、応答言語、思考表示方針、external profile/instructionsを順に併用し、同一ファイル・同一文章は重複挿入しません。読込エラーはUIへまとめて警告し、inlineを含む利用可能な設定で継続します。Vision有効時はprojectorの存在とhandler名をモデル読込前に検証します。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 13</p>
+      <h2 id="13-テストと未確認事項">13. テストと未確認事項</h2>
+      <h3>13-1. テスト</h3>
+      <p><code>tests/</code> は標準ライブラリの <code>unittest</code> を使っています。現在のテスト結果を確認する場合は、リポジトリルートで次を実行します。</p>
+      <pre><code>python -m unittest discover -s tests -t . -p "test*.py"</code></pre>
+      <p>公開CHANGELOGでは、v1.6.1で全回帰テストが通過し、v1.6.2 / v1.6.3 はコードロジックを変更していないため再実行していない、v1.7.0では家計簿の複数取引対応にあたって全回帰テストを実行し全件成功した、と記録されています。 v1.7.1では、日本語日付形式、日付直後・金額直後の日付隣接入力、複数取引の <code>source_text</code> における限定的な水平スペース差の復元に関する回帰テストを追加し、 全回帰を再実行しています。 v1.7.2では、Biologの日付省略時にJST登録日をPOST recordへ保持する処理、 API応答日付の優先、POST日付へのfallback、API失敗時の非表示、二重POST防止を 回帰テストで確認し、全回帰を再実行しています。 v1.7.3では、外部promptの優先・重複排除・読込失敗、対応添付形式と上限、 添付の一回限り利用と履歴非永続、Vision拒否、MTMD handlerの生成・解放、 画像用context予約を回帰テストで確認しています。 v1.8.0では、添付の再起動復元、元ファイル独立、後続ターン参照、同名別ID、 添付のみ送信、個別/一括/チャット削除、欠損・サイズ・SHA-256不一致、保留処理、 portable除外、inline+external prompt、全履歴込みcontext上限警告を回帰テストへ 追加しました。既存回帰を含む全640件を実行し、639件成功・1件skipです （symlink作成権限なし）。</p>
+      <p>テストには、少なくとも次の領域があります。</p>
+      <ul class="readme-list"><li>LLMの同時実行・停止・世代管理</li><li>ストリーミングTTS</li><li>音声ログの本文非出力</li><li>VRAM判定</li><li>DPAPI履歴</li><li>履歴保存・移行</li><li>暗号化エクスポート/インポート</li><li>家計簿の金額・日付・確認</li><li>Biologサニタイズ</li><li>ローカルAPI送信先判定</li><li>JSON抽出</li><li>外部prompt・テキスト/画像添付・Vision handler</li></ul>
+      <h3>13-2. テストがあることと実機確認は別</h3>
+      <p>自動テストではモックや疑似オブジェクトを使う領域があります。そのため、テスト通過だけから次を保証することはできません。</p>
+      <ul class="readme-list"><li>利用者のGPUで任意のGGUFが読み込めること</li><li>実際のマイク・オーディオドライバで音声認識できること</li><li>利用環境のSAPI5音声が期待どおり再生されること</li><li>別途用意した家計簿API/Biologサービスが正しく構成されていること</li><li>すべてのGPU/CPU/ドライバ構成で同じ性能になること</li></ul>
+      <h3>13-3. モデルファイルの完全性</h3>
+      <p>本アプリは会話履歴キャッシュや持ち出し履歴の重複判定にSHA-256を使用しますが、<strong>GGUFモデル本体について期待SHA-256を照合するコードはありません</strong>。</p>
+      <p>モデル読み込み時に例外になる破損もありますが、あらゆる取り違え・改変・破損をアプリが検出する仕組みではありません。配布元がチェックサムを提示している場合は、利用者側での照合が別途可能です。</p>
+      <h3>13-4. 標準出力ログ</h3>
+      <p>アプリは各所で標準出力へ診断ログを出します。専用ログファイルへ自動保存する実装は確認できません。</p>
+      <p><code>test_audio_log_privacy.py</code> はTTS本文とWhisper認識本文がそれぞれの診断ログへ直接含まれないことを確認しています。一方、これはアプリ内のあらゆるログ出力について機密情報非出力を保証するテストではありません。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Section 14</p>
+      <h2 id="14-用語集">14. 用語集</h2>
+      <div style="overflow-x:auto;"><table><thead><tr><th>用語</th><th>この文書での意味</th></tr></thead><tbody><tr><td><strong>LLM</strong></td><td>このアプリでは、<code>llama-cpp-python</code> から読み込んで対話生成に使う言語モデル</td></tr><tr><td><strong>GGUF</strong></td><td>llama.cpp系で読み込むモデルファイル形式</td></tr><tr><td><strong>llama-cpp-python</strong></td><td>Pythonからllama.cppを利用するためのライブラリ</td></tr><tr><td>**コンテキスト長 (<code>n_ctx</code>)**</td><td>1回の生成でモデルへ渡せる文脈量の設定</td></tr><tr><td><strong>トークン</strong></td><td>モデルのtokenizerが文章を分割して扱う単位</td></tr><tr><td><strong>temperature</strong></td><td>LLM呼び出しへ渡す生成パラメータの1つ</td></tr><tr><td><strong>ストリーミング</strong></td><td>生成完了まで待たず、届いた文字列断片を順次処理する方式</td></tr><tr><td><strong>VRAM</strong></td><td>GPUが利用するメモリ</td></tr><tr><td><strong>OOM</strong></td><td>Out Of Memory。メモリ不足を表す状態</td></tr><tr><td><strong>VAD</strong></td><td>Voice Activity Detection。ここではRMSを使った発話区間判定</td></tr><tr><td><strong>RMS</strong></td><td>音声振幅から計算する値。VADしきい値判定に使用</td></tr><tr><td><strong>Whisper</strong></td><td>音声認識モデル。現行コードでは <code>whisper</code> パッケージを使用</td></tr><tr><td><strong>TTS</strong></td><td>Text To Speech。テキスト読み上げ</td></tr><tr><td><strong>SAPI5</strong></td><td>現行Windows TTSで利用している音声API</td></tr><tr><td><strong>Tkinter</strong></td><td>PythonのGUIインターフェース</td></tr><tr><td><strong>スレッド</strong></td><td>同一プロセス内で別の処理を並行して進める実行単位</td></tr><tr><td><strong>デーモンスレッド</strong></td><td>Pythonプロセス終了時の待機対象にならないよう <code>daemon=True</code> で作られたスレッド</td></tr><tr><td><strong>キュー</strong></td><td>順番待ち用のデータ構造。TTSで <code>queue.Queue</code> を使用</td></tr><tr><td><strong>LRU</strong></td><td>最近使われていない要素を先に外すキャッシュ方針。<code>TokenCostCache</code> で使用</td></tr><tr><td><strong>ヒステリシス</strong></td><td>切替開始と復帰に異なるしきい値を持たせる方式</td></tr><tr><td><strong>DPAPI</strong></td><td>Windows Data Protection API。通常履歴の保護に使用</td></tr><tr><td><strong>AES-GCM</strong></td><td>持ち出し履歴の暗号化と認証に使用</td></tr><tr><td><strong>scrypt</strong></td><td>パスフレーズから暗号鍵を導出するKDF</td></tr><tr><td><strong>SHA-256</strong></td><td>履歴キャッシュ署名や重複判定で使用するハッシュ関数</td></tr><tr><td><strong>サニタイズ / 検証</strong></td><td>APIへ送る前にキー、型、範囲などを制限する処理</td></tr><tr><td><strong>localhost / loopback</strong></td><td>同じPC自身を指すネットワーク宛先</td></tr></tbody></table></div>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">Closing</p>
+      <h2>最後に</h2>
+      <p>LLM Local Chat v1.8.1 の現行実装は、単一のGUIファイルだけで処理を完結させず、LLM実行、プロンプト構築、VRAM判定、履歴保護、添付sidecar、音声処理、ローカルAPI連携を別モジュールへ分けています。</p>
+      <p>特にコード上で確認できる特徴は、次のとおりです。</p>
+      <ul class="readme-list"><li>LLM処理は同時開始を拒否し、待ち行列化しない</li><li>LLMロードはGPU/CPUと引数構成を変えながらフォールバックを試す</li><li>推論前にVRAMを再取得し、GPU推論時は生成上限を調整する</li><li>WhisperはCPU <code>small</code> を基礎に、条件を満たす場合はGPUモデルも利用する</li><li>TTSとマイクの相互干渉を世代番号と抑制フラグで扱う</li><li>通常履歴はDPAPIで保存し、保存前に暗号化結果を復号照合する</li><li>添付実体は検証済みUUID namespaceのsidecarへ保存し、サイズとSHA-256を利用時に照合する</li><li>旧平文履歴の移行は、置換前後に複数の確認を行う</li><li>持ち出し履歴はDPAPIではなくパスフレーズ + scrypt + AES-256-GCMを使う</li><li>家計簿の金額と日付はLLM値を最終値にせず、ユーザー原文から決定する</li><li>健康記録はキー・型・範囲を検証し、明示ラベルの原文を優先する</li><li>連携APIの送信先はloopbackホストと許可ポートへ制限する</li></ul>
+      <p>これらは<strong>現在のコードに実装されている処理の説明</strong>であり、「あらゆる環境で障害が起きない」「セキュリティ上の問題が存在しない」といった保証を意味しません。実運用では、利用するGGUF、Windowsユーザー環境、Python依存関係、GPU/音声デバイス、連携先サービスの構成も合わせて確認する必要があります。</p>
+      <p>*この版は、v1.8.1 の <code>LLM_Local_Chat.py</code> と関連モジュール、<code>chat_settings.json.example</code>、起動バッチ、回帰テスト、README / CHANGELOG を再確認して作成しました。パーソナライズ・永続添付・Vision設定も現行コードに基づいて記載しています。*</p>
+    </section>
+
+    <section class="readme-card">
+      <p>Copyright &copy; 2026 shinosan1</p>
+      <nav class="doc-nav">
+        <a href="./README.html">ガイド</a>
+        <a href="./TERMS_OF_USE.html">利用規約</a>
+        <a href="./PRIVACY_POLICY.html">プライバシーポリシー</a>
+        <a href="./LICENSE.html">ライセンス</a>
+        <a href="./DISCLAIMER.html">免責事項</a>
+        <a href="./THIRD_PARTY_LICENSES.html">サードパーティライセンス</a>
+        <a href="./SHA256.html">SHA-256</a>
+      </nav>
+    </section>
+  </main>
+</body>
+</html>

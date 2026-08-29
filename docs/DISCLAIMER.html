@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#3d5a80">
+  <meta name="description" content="LLM Local Chat 免責事項">
+  <title>LLM Local Chat 免責事項</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="readme-page">
+  <main class="readme-shell">
+    <header class="readme-hero">
+      <div class="readme-hero-title">
+        <p class="eyebrow">Disclaimer</p>
+        <h1>免責事項</h1>
+      </div>
+    </header>
+
+    <section class="readme-card readme-alert">
+      <p class="eyebrow">1. Output</p>
+      <h2>生成結果と専門的判断</h2>
+      <p>LLM Local Chatが生成、要約、抽出、翻訳、音声認識または読み上げる内容には、誤り、欠落、偏り、不適切な表現、古い情報、第三者権利に関する問題が含まれる可能性があります。出力は事実確認、医療・健康上の判断、法務、税務、会計、投資、雇用、契約その他の専門的判断を代替しません。</p>
+      <p>家計簿・健康記録の候補抽出とlocalhost連携は入力補助です。送信前に利用者が内容を確認することを前提とし、記録の正確性、完全性、連携先への保存、法令・制度への適合を保証しません。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">2. Models &amp; Attachments</p>
+      <h2>ローカルモデル、音声、添付</h2>
+      <p>本ソフトウェアは、利用者が用意したGGUFモデル、Whisperモデル、外部prompt、添付ファイルおよびWindowsの音声機能を使用します。これらの取得元、品質、利用可能性、モデル出力の独自性・非侵害・商用利用可能性、音声認識精度、読み上げの完全性を本ソフトウェアは保証しません。</p>
+      <p>添付の形式・サイズ・SHA-256検査は異常入力や偶発改変の影響を抑える境界であり、マルウェア検査、内容の安全性、第三者権利の確認、prompt injectionの完全な防止を行うものではありません。</p>
+    </section>
+
+    <section class="readme-card readme-alert">
+      <p class="eyebrow">3. Data Loss</p>
+      <h2>保存とデータ損失</h2>
+      <p>DPAPIで暗号化された会話履歴は、Windowsユーザー、ユーザープロファイル、端末および資格情報の状態に依存します。環境移行、OS再インストール、プロファイル喪失、破損、削除その他により復号できなくなる場合があります。添付sidecarはアプリ内暗号化されず、保存先・バックアップ先のアクセス制御は利用者の責任です。</p>
+      <p>本ソフトウェアは、会話、設定、添付、エクスポート、ログ、モデルまたは連携先データの消失、破損、漏えい、不整合、復旧を保証しません。重要な情報は、利用者が適切な保存先とバックアップを用意してください。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">4. Environment</p>
+      <h2>通信と動作環境</h2>
+      <p>localhost連携は、利用者の確認後に同一PC上の許可済みホスト・ポートへ送信するものです。同一PC上の連携先サービス、ポート競合、OS、ドライバー、Python環境、GPU、CUDA、モデル、音声デバイス、外部ネットワークからのモデル取得、依存パッケージの状態による動作差や障害は、本ソフトウェアの保証範囲外です。</p>
+      <p>Windows以外のOS、GPU非搭載環境、CPU向け依存構成、利用者が独自に変更した設定や依存関係では、READMEおよびrequirementsに示す環境と異なる動作になる可能性があります。</p>
+    </section>
+
+    <section class="readme-card">
+      <p class="eyebrow">5. No Warranty</p>
+      <h2>無保証と責任範囲</h2>
+      <p>本ソフトウェアは、ルートのMIT Licenseに定める条件に従い、現状有姿で提供されます。法令上許される範囲で、著作権者または提供者は、本ソフトウェアの利用または利用不能、出力、データ損失、連携先障害、第三者の行為により生じた直接・間接・偶発・特別・結果的損害について責任を負いません。</p>
+      <p>この文書はMIT Licenseの許諾、無保証条項または責任制限を変更するものではありません。</p>
+      <nav class="doc-nav">
+        <a href="./README.html">ガイド</a>
+        <a href="./TERMS_OF_USE.html">利用規約</a>
+        <a href="./PRIVACY_POLICY.html">プライバシーポリシー</a>
+        <a href="./LICENSE.html">ライセンス</a>
+        <a href="./THIRD_PARTY_LICENSES.html">サードパーティライセンス</a>
+        <a href="./CODE_REFERENCE.html">コード解説</a>
+        <a href="./SHA256.html">SHA-256</a>
+      </nav>
+    </section>
+  </main>
+</body>
+</html>

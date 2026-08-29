@@ -32,10 +32,6 @@ tk_chat_local.py(*)
 /skills.md
 /start.sh
 /docs/incidents/
-/docs/LLMver*_prompt.txt
-/docs/plan_LLM_ver2.0.md
-docs/
-
 # ── Pythonキャッシュ ──────────────────────────
 __pycache__/
 *.pyc
