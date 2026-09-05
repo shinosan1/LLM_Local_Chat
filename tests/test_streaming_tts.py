@@ -113,6 +113,40 @@ class TTSInterferenceTests(unittest.TestCase):
         self.assertFalse(self.voice._tts_active)
 
 
+class VoiceRecognitionCancellationTests(unittest.TestCase):
+    def setUp(self):
+        self.voice = VoiceRecognizer.__new__(VoiceRecognizer)
+        self.voice._active = True
+        self.voice._enabled = threading.Event()
+        self.voice._enabled.set()
+        self.voice._recognition_generation = 0
+        self.voice._flush_request = False
+
+    def test_disable_invalidates_current_recognition(self):
+        generation = self.voice._recognition_generation
+
+        self.voice.enabled = False
+
+        self.assertFalse(self.voice.is_recognition_current(generation))
+
+    def test_disable_enable_does_not_revalidate_old_recognition(self):
+        generation = self.voice._recognition_generation
+        self.voice.enabled = False
+        self.voice.enabled = True
+
+        self.assertFalse(self.voice.is_recognition_current(generation))
+        self.assertTrue(
+            self.voice.is_recognition_current(
+                self.voice._recognition_generation))
+
+    def test_stop_invalidates_current_recognition(self):
+        generation = self.voice._recognition_generation
+
+        self.voice.stop()
+
+        self.assertFalse(self.voice.is_recognition_current(generation))
+
+
 class MicrophoneReadLoggingTests(unittest.TestCase):
     def setUp(self):
         self.voice = VoiceRecognizer.__new__(VoiceRecognizer)

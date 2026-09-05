@@ -6,7 +6,7 @@
 ローカル処理を重視した構成です。機密情報を扱う業務環境へ導入する場合は、端末のアクセス制御、Windowsユーザープロファイル、ディスク暗号化、Dockerポート、依存ライブラリ、バックアップ方法を含め、組織の情報セキュリティ担当者による事前評価を行ってください。
 
 ![Python](https://img.shields.io/badge/Python-3.12.10-blue)
-![Version](https://img.shields.io/badge/Version-1.8.1-green)
+![Version](https://img.shields.io/badge/Version-1.8.2-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
@@ -30,6 +30,17 @@
 - **家計簿API連携（オプション）** — ユーザー入力から最大10件の取引候補を生成し、1件ずつ確認したうえで、別途用意したローカルの`kakeibo-bridge` APIへ1件ずつPOSTします。家計簿アプリ、家計簿DB、`kakeibo-bridge`サーバー実装は本リポジトリに含まれません
 - **VRAM安全フィルタ** — LLM・Whisper 同時動作時のVRAM枯渇によるクラッシュを確率的に削減（v1.2.0）
 - **LLM GPUオフロード切替** — 自動・Full GPU・約75%・約50%・約25%・CPUを設定画面から選び、アプリを再起動せずモデルを安全に再読み込みします
+
+---
+## v1.8.2 安全性修正
+
+リリース日: 2026-09-05
+
+- 会話履歴の保存に失敗した場合は、新規チャット・履歴切替・通常モードからゲストモードへの切替を中断し、現在の未保存会話を維持します。チャット削除直後の新規作成では、削除済み履歴を再保存しません。
+- マイクOFF／停止時に音声認識世代を無効化し、録音中・Whisper文字起こし後・送信直前・UIキュー処理時の古い認識結果を破棄します。OFF→ON後にOFF前の発話が送信される競合を防ぎます。
+- VRAM状況で `max_tokens` を自動縮小する場合も、実効値が利用者の設定上限を超えないようにしました。
+
+実装時の検証は、関連テスト153件成功、全テスト677件成功・1件skip、`git diff --check`成功です。実モデル・実マイク・外部APIを使う実機確認はこの検証には含まれません。
 
 ---
 ## v1.8.1 公開・保守文書の整備

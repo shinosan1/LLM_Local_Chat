@@ -6,9 +6,7 @@
 
 ## 脆弱性の報告
 
-脆弱性の詳細、再現手順、攻撃方法などを公開Issueへ投稿しないでください。次のメールアドレスへ非公開で報告してください。
-
-`shino.project.support@gmail.com`
+脆弱性の詳細、再現手順、攻撃方法などを公開Issueへ投稿しないでください。GitHubリポジトリの[Securityページ](https://github.com/shinosan1/LLM_Local_Chat/security)で「Report a vulnerability」が利用できる場合は、そこから非公開で報告してください。利用できない場合は、機密情報や再現手順を記載せずに[GitHub Issues](https://github.com/shinosan1/LLM_Local_Chat/issues)で連絡方法だけを確認してください。
 
 報告時は、影響を受けるバージョン、問題の概要、再現に必要な最小限の情報、想定される影響を記載してください。認証情報、個人情報、実データなどの機密情報は送信しないでください。
 

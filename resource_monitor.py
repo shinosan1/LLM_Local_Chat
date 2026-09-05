@@ -423,6 +423,7 @@ class ResourceMonitor:
                 ["nvidia-smi", "--query-gpu=memory.total",
                  "--format=csv,noheader,nounits"],
                 timeout=3, encoding="utf-8",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             self.vram_total_mb = int(out.strip().split("\n")[0])
             logger.debug(f"[Monitor] nvidia-smi total={self.vram_total_mb}MB")
@@ -446,6 +447,7 @@ class ResourceMonitor:
                  "--query-gpu=memory.used,utilization.gpu",
                  "--format=csv,noheader,nounits"],
                 timeout=3, encoding="utf-8",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             used_str, gpu_str = out.strip().split("\n")[0].split(",")
             return int(used_str.strip()), float(gpu_str.strip())
@@ -464,6 +466,7 @@ class ResourceMonitor:
                     ["nvidia-smi", "--query-gpu=memory.total,memory.used",
                      "--format=csv,noheader,nounits"],
                     timeout=3, encoding="utf-8",
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 total_str, used_str = out.strip().split("\n")[0].split(",")
                 total = int(total_str.strip())
@@ -692,6 +695,8 @@ def adjust_inference(
             f"[Guard][infer] delta_gpu={delta_gpu_pct:.1f}% spike → max_tokens halved: {max_t}"
         )
 
+    # 資源保護のための縮小が、利用者が指定した上限を超えてはならない。
+    max_t = min(default_max, max_t)
     fallback = max_t < default_max
     print(
         f"[VRAM] inference allowed: used={snap['used_mb']}MB "

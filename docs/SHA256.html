@@ -1,191 +1,1067 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#3d5a80">
-  <meta name="description" content="LLM Local Chat SHA-256ハッシュ値一覧">
-  <title>LLM Local Chat SHA-256ハッシュ値一覧</title>
-  <link rel="stylesheet" href="./styles.css">
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<meta content="#3d5a80" name="theme-color"/>
+<meta content="LLM Local Chat SHA-256一覧" name="description"/>
+<title>SHA-256 ハッシュ値一覧</title>
+<link href="./styles.css" rel="stylesheet"/>
 </head>
 <body class="readme-page">
-  <main class="readme-shell">
-    <header class="readme-hero">
-      <div class="readme-hero-title">
-        <p class="eyebrow">SHA-256 Checksums</p>
-        <h1>SHA-256 ハッシュ値一覧</h1>
-        <p>最終更新: 2026-08-29 / 対象バージョン: v1.8.1 / 対象: 公開リポジトリのルート以下</p>
-      </div>
-      <nav class="doc-nav">
-        <a href="./README.html">ガイド</a>
-        <a href="./TERMS_OF_USE.html">利用規約</a>
-        <a href="./PRIVACY_POLICY.html">プライバシーポリシー</a>
-        <a href="./LICENSE.html">ライセンス</a>
-        <a href="./DISCLAIMER.html">免責事項</a>
-        <a href="./THIRD_PARTY_LICENSES.html">サードパーティライセンス</a>
-        <a href="./CODE_REFERENCE.html">コード解説</a>
-      </nav>
-    </header>
-
-    <section class="readme-card">
-      <p>最終更新: 2026-08-29 対象バージョン: v1.8.1 対象: 公開リポジトリのルート以下 範囲: <strong>Git管理対象予定 70 ファイルのうち 69 ファイル</strong></p>
-      <p>このファイルは<strong>リポジトリの現行状態に追随して随時更新する一覧</strong>です。日付をファイル名に持たせると「ファイル名の日付と中身の時点がずれる」問題が起きるため、<strong>ファイル名は固定し、時点とバージョンは上の2行で管理</strong>します。特定日のスナップショットを残す運用はしていません。</p>
-      <p>配布ファイルの完全性を利用者が確認できるようにするための一覧です。パスはすべて<strong>リポジトリルートからの相対パス</strong>で記載しています。</p>
-      <p>Git管理対象予定は70ファイルです。このSHA-256一覧ファイル自身は自己参照を避けるため検証対象から除外し、残る69ファイルについてSHA-256を記録・検証しています。</p>
-    </section>
-
-    <section class="readme-card">
-      <p class="eyebrow">Section 1</p>
-      <h2>1. 前提</h2>
-      <h3>対象に含まれないもの</h3>
-      <p>以下は git 追跡外のため一覧に含まれません。いずれもリポジトリには同梱されず、各自で用意するものです。</p>
-      <ul class="readme-list"><li><code>models/</code> のGGUFモデル本体（<code>.gitignore</code> が <code>models/</code> と <code>*.gguf</code> を除外。配置用の <code>PLACE_MODELS_HERE.txt</code> だけは公開対象として明示管理）</li><li>Whisperモデル（初回起動時に自動ダウンロード）</li><li><code>.venv/</code>（Python実行環境）</li><li><code>chat_logs/</code>（会話履歴。個人データ）</li><li><code>chat_settings.json</code>（実行時設定。<code>.example</code> のみ追跡対象）</li><li><code>.git/</code> / <code>__pycache__/</code> / <code>.pytest_cache/</code></li><li><code>docs/</code>（<code>.gitignore</code> がディレクトリ丸ごと除外）</li><li>ローカル環境固有の運用メモと起動スクリプト、過去バージョンのソース</li></ul>
-      <h3>この一覧自身について</h3>
-      <p><strong>この一覧ファイル自身は検証対象69件に含まれません。</strong> 自分のSHA-256を自分の中に書くと自己参照になり、内容を更新するたびに記載値と実際の値がずれて確定できないためです。</p>
-      <p>この一覧ファイルもGit管理対象であり公開されますが、ハッシュ検証の対象からのみ除外します。検証スクリプト（§4-1）も同じ除外を行うため、<strong>Git管理対象が70件になっても検証対象は69件で安定します。</strong></p>
-      <h3>基準となる状態</h3>
-      <div style="overflow-x:auto;"><table><thead><tr><th>項目</th><th>値</th></tr></thead><tbody><tr><td>対応リリース</td><td>v1.8.1</td></tr><tr><td>v1.7.0 で追加したファイル</td><td><code>kakeibo_split.py</code> / <code>tests/test_kakeibo_split.py</code> / <code>tests/test_kakeibo_sequence.py</code></td></tr><tr><td>v1.7.3で追加したファイル</td><td><code>prompt_inputs.py</code> / <code>tests/test_prompt_inputs.py</code></td></tr><tr><td>v1.8.0で追加したファイル</td><td><code>attachment_store.py</code> / <code>tests/test_attachment_store.py</code></td></tr><tr><td>v1.8.1で追加したファイル</td><td><code>TERMS_OF_USE.md</code> / <code>PRIVACY_POLICY.md</code> / <code>DISCLAIMER.md</code> / <code>THIRD_PARTY_LICENSES.md</code></td></tr><tr><td>v1.8.1で改名したファイル</td><td><code>models/ここにモデルを追加してください.txt</code> → <code>models/PLACE_MODELS_HERE.txt</code></td></tr><tr><td>Git管理対象予定ファイル数</td><td>70（この一覧ファイルを含む）</td></tr><tr><td>SHA-256検証対象ファイル数</td><td>69（この一覧ファイルを除く）</td></tr><tr><td>検証対象の合計サイズ</td><td>2,099,936 バイト</td></tr></tbody></table></div>
-      <p>一覧の値は<strong>ワーキングツリー上の実ファイル</strong>です。v1.7.0 で追加した3ファイルも Git 管理対象であり、<strong>この一覧の検証対象に含まれています</strong>。</p>
-    </section>
-
-    <section class="readme-card">
-      <p class="eyebrow">Section 2</p>
-      <h2>2. 一覧全体の指紋</h2>
-      <p>個別の69件を1つの値で代表させたものです。</p>
-      <pre><code>MANIFEST_FINGERPRINT = 407fb9cea393897bf52ee072bb9dfc5b89424b8bf150ce8e4baeec2467b59c98</code></pre>
-      <p><strong>定義</strong>（再現に必要なため厳密に記します）:</p>
-      <ol class="readme-list"><li>対象は <code>git ls-files</code> の一覧に未追跡の新規公開予定4ファイルを加え、<strong>この一覧ファイル自身を除外した69件</strong></li><li>パス文字列（<code>/</code> 区切り、UTF-8）で昇順ソート</li><li>各行を <code>&lt;sha256小文字16進&gt;</code> + 半角スペース2個 + <code>&lt;相対パス&gt;</code> の形式にする</li><li>行区切りは <code>LF</code>、最終行にも <code>LF</code> を付ける</li><li>全体を UTF-8 でエンコードして SHA-256 を取る</li></ol>
-      <p>行区切りを <code>CRLF</code> にしたりソート順を変えると別の値になるため、照合時はこの定義に従ってください。</p>
-    </section>
-
-    <section class="readme-card">
-      <p class="eyebrow">Section 3</p>
-      <h2>3. ハッシュ値一覧（69件）</h2>
-      <div style="overflow-x:auto;"><table><thead><tr><th>ファイル</th><th>サイズ</th><th>SHA-256</th></tr></thead><tbody><tr><td><code>.gitattributes</code></td><td>66</td><td><code>1a1dbe176bc233b499d35a57db7513f2941c99ab9759f177830c9149be99005b</code></td></tr><tr><td><code>.gitignore</code></td><td>2,188</td><td><code>886a5bc4be48790e115553cfcb070f1367173f615f0c27e22440366c39b64572</code></td></tr><tr><td><code>CHANGELOG.md</code></td><td>73,293</td><td><code>b5c34d5fc2f01e0c27108123ed14de4e6677f5324ed07353ebcbc84bd277f36a</code></td></tr><tr><td><code>CURRENT_SPEC.md</code></td><td>48,537</td><td><code>a8cd45cba0742fae24d1084b35717840ec64cec3371f70cd6358622339b33957</code></td></tr><tr><td><code>DISCLAIMER.md</code></td><td>3,420</td><td><code>dd7c329cb5aa32ff82fcbe864a272e3b807f976ed05d351848d403826a4d27da</code></td></tr><tr><td><code>LICENSE</code></td><td>1,066</td><td><code>36a93dd774af2cff1359ea93cf1f833cdbf6dde8ac1af5bc883c04d8642b7dda</code></td></tr><tr><td><code>LLM_Local_Chat.py</code></td><td>204,702</td><td><code>267f61763f0842a48e16d418f1cdef844e16d1605d134766641ca22658391b31</code></td></tr><tr><td><code>LLM_Local_chat_run.bat</code></td><td>318</td><td><code>5da5f32b5f2d979165853903e192723049fb8b2e06af0f6b5d98a69b782a4387</code></td></tr><tr><td><code>PRIVACY_POLICY.md</code></td><td>6,379</td><td><code>0bbfd07a87d3ed29d715186b0cbf693b27ec4e6da28ea302c959bb6b4fc0304d</code></td></tr><tr><td><code>README.md</code></td><td>73,922</td><td><code>37a2afacc4c02db049d3adc56eead682f292b3666beb26f6eeb42324bcde53c2</code></td></tr><tr><td><code>SECURITY.md</code></td><td>7,408</td><td><code>fd2305ebdc0ca6c8b8b8570aafe4076582639e8a64d801b348679bded1abaadb</code></td></tr><tr><td><code>TERMS_OF_USE.md</code></td><td>6,053</td><td><code>5f08b450f3ca93bf1c32c03bfc75450f7b11569adf2842d4027d135f61805b90</code></td></tr><tr><td><code>THIRD_PARTY_LICENSES.md</code></td><td>4,996</td><td><code>3bb871e86938a4d1e0cbccafb63c9b87a591a3ac485341baf486893b767672bd</code></td></tr><tr><td><code>app_composition.py</code></td><td>641</td><td><code>2f3ed1db7b33073bc3d41cf23d5658a01c4948fe7930459eccfedcf82d8e1d96</code></td></tr><tr><td><code>architecture_slides.html</code></td><td>32,300</td><td><code>92604bfea1c6f652015450a34f76eee132d045d2653ee93e8ea008ff05c1a103</code></td></tr><tr><td><code>architecture_snapshot.md</code></td><td>19,324</td><td><code>ad10c9d0f3c51e5537b64e46980c35f754360e9d310425a9e4ef901620fd81ac</code></td></tr><tr><td><code>atomic_io.py</code></td><td>1,161</td><td><code>344b5a0c6a0031a7501470a3fa8905077955eb4f8747a3b16013ed701b8868c5</code></td></tr><tr><td><code>attachment_store.py</code></td><td>20,944</td><td><code>a613f7f0d9b9f1b9095c41e3c1f970bc99fcfe39447cd70d3c2764d38fcb4e33</code></td></tr><tr><td><code>audio_workers.py</code></td><td>32,016</td><td><code>e5b39d07bd0b3a72c7841ef1fa1e4b0ad4b95193a0cc650b6a44ac02495f6152</code></td></tr><tr><td><code>avatars/blink_avatar.png</code></td><td>226,927</td><td><code>2b88df1951233ac09d80ecfac9ecf2c5fd6cbb0ac68f1e27479b44c692118ec8</code></td></tr><tr><td><code>avatars/blink_speaking_avatar.png</code></td><td>228,347</td><td><code>545292da97fdac9421b74550fe9a6444a5e58d7301dc2d4747f1e7df7cfefe13</code></td></tr><tr><td><code>avatars/default_avatar.png</code></td><td>202,145</td><td><code>39f2e897368fd34154df3e2d561bef4d2c2fd4c9ee98396243076668f3b808ad</code></td></tr><tr><td><code>avatars/speaking_avatar.png</code></td><td>215,620</td><td><code>72092f956dfa04c9947173b71bcf845f1edbc388e0c6221b02632f2d55800a4b</code></td></tr><tr><td><code>chat_settings.json.example</code></td><td>1,056</td><td><code>ab65479290adc006133b5be293680cf818ea55a500ba8723c59b4af17260f334</code></td></tr><tr><td><code>check_audio_devices.py</code></td><td>2,093</td><td><code>551054885263e5e4eab4efb2947fa650893f08d50af07c006e3c989c42d8c632</code></td></tr><tr><td><code>code_reference.md</code></td><td>59,196</td><td><code>fd9527508be28e6e60c10775ec39335abc380e8bde6fc697af9c8d888e5c3265</code></td></tr><tr><td><code>controller.py</code></td><td>39,827</td><td><code>121c0abe54fd7a7c64d7fbb619df54dbea24c4abbb611dd197e7573612378329</code></td></tr><tr><td><code>history_crypto.py</code></td><td>5,551</td><td><code>d929d70384472946e75d6aa7244402710e23fbf03a9229be7d8c5bd9426fdc58</code></td></tr><tr><td><code>integrations.py</code></td><td>20,449</td><td><code>1e4fdb628bae7f7feb9b5bbdb88567b5c71f9fd3c017965c44dc3cd56dfdc030</code></td></tr><tr><td><code>json_extractors.py</code></td><td>4,512</td><td><code>2c7041fbf03c011b12f785851c271d5c4c67b179ea73a2abc7debde1a71fe4b3</code></td></tr><tr><td><code>kakeibo_amount.py</code></td><td>10,197</td><td><code>8a642373cfc85c5f62926a5008bed6370c44131eb29f0f4573e32d35e4899539</code></td></tr><tr><td><code>kakeibo_confirmation.py</code></td><td>5,544</td><td><code>fd4a7990690fda3cb1e70a085c9c2a3eeeba7dbbcb97de23e5b3bcd370bde494</code></td></tr><tr><td><code>kakeibo_date.py</code></td><td>7,772</td><td><code>b247b2d056e89e8f81fb4b39d778bd2d376158f161779c3bde372d0ef2a93569</code></td></tr><tr><td><code>kakeibo_split.py</code></td><td>14,304</td><td><code>71470446f64a6f96ae384de8a73c867a60ce4dd621e3bf30c8e158af5163967c</code></td></tr><tr><td><code>llm_service.py</code></td><td>6,830</td><td><code>fa9aee658822e46482852b7cca83c6a0b88e20855c2f6ebe889e2108892d9ce0</code></td></tr><tr><td><code>models/PLACE_MODELS_HERE.txt</code></td><td>0</td><td><code>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</code></td></tr><tr><td><code>portable_history.py</code></td><td>12,028</td><td><code>e2f08c6d420d5559ce91718e8d395c4e38c67a19c428de93cbf6cc270f8a99e7</code></td></tr><tr><td><code>prompt_builder.py</code></td><td>12,300</td><td><code>38a7289d053b2c2be2ab7dc2f4f04cf6aff0f0f6ff0a027ab9675ea60f3b8a99</code></td></tr><tr><td><code>prompt_inputs.py</code></td><td>13,438</td><td><code>803c70072f8cf8e814542acc39ff2ace1463de64d0825298b9bcce4d90582baf</code></td></tr><tr><td><code>requirements-cpu.txt</code></td><td>611</td><td><code>ef4c06ce946493dba563f1b2ab21f84750f3e4c4c147abd150c9e6fb0c0c7487</code></td></tr><tr><td><code>requirements.txt</code></td><td>1,543</td><td><code>adf851860f031fa32aa9a4e27f37ced62940ac1669152f2243b0e3eb581b8175</code></td></tr><tr><td><code>resource_manager.py</code></td><td>548</td><td><code>146218f30a873962e34171cb6cfc8b1bf7a94eab85e00da68665ea230972f211</code></td></tr><tr><td><code>resource_monitor.py</code></td><td>35,599</td><td><code>7a5897cdb5bbd1fcab09b133effa1c7c9d84957fdbe8100412b99bea3bd76644</code></td></tr><tr><td><code>session_store.py</code></td><td>53,601</td><td><code>1c650fd4accef50b71910e8c39b78bb4fa4597effece7f731196173dc4c1950a</code></td></tr><tr><td><code>tests/__init__.py</code></td><td>0</td><td><code>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</code></td></tr><tr><td><code>tests/test_app_composition.py</code></td><td>861</td><td><code>6cffdd6efb7f6caa0c78f71354de901cd8f81db8ae0e65a5b98b7ebe54ee495d</code></td></tr><tr><td><code>tests/test_app_gpu_startup.py</code></td><td>34,178</td><td><code>8c8f8e9f1b2caeabacb755653d184af9df5fe5768b9c3221b37f878479a0bd8e</code></td></tr><tr><td><code>tests/test_atomic_io.py</code></td><td>1,348</td><td><code>3b1f2c86f856cf84884c288e3c77f8199cf7dd27ed82ab262ffbdf5dea825fbb</code></td></tr><tr><td><code>tests/test_attachment_store.py</code></td><td>7,781</td><td><code>22c477fb033ebe00fc3fd8a7385fd1600b607b1a725d97fd05e471cb4b57d322</code></td></tr><tr><td><code>tests/test_audio_log_privacy.py</code></td><td>1,354</td><td><code>27c4853e4dfed79bbc669dcc2f5daf1c1c37f71891ff42b2c84774a1567514e6</code></td></tr><tr><td><code>tests/test_biolog_sanitization.py</code></td><td>14,533</td><td><code>5e6eb3f956f3ce26e6d78ff5a3b387267b63a6079e02364a842eaae3f2686c60</code></td></tr><tr><td><code>tests/test_history_crypto.py</code></td><td>4,731</td><td><code>6a8bd88a001496ffcfa58fa97c545afbdd0c900b842e25fe18c0bb1921470fdd</code></td></tr><tr><td><code>tests/test_integrations.py</code></td><td>7,257</td><td><code>d9813f4032356496a0a43480b1fe4bbe06ee208683b427b858e72b3d74dabf52</code></td></tr><tr><td><code>tests/test_json_extractors.py</code></td><td>6,824</td><td><code>d2a7b13be5e55824339412395edd28a9f9cbbe907ce93aac139cf7255ea815ad</code></td></tr><tr><td><code>tests/test_kakeibo_amount.py</code></td><td>17,269</td><td><code>e5742914e3bb80e02786cb839dfeb03fa9e3aca8e1852ebd322bdeea255e5ece</code></td></tr><tr><td><code>tests/test_kakeibo_confirmation.py</code></td><td>15,282</td><td><code>10bfac5083d47e1dead50327959c89d9a2f34aaf2950a4cedb459e5f1e6e462f</code></td></tr><tr><td><code>tests/test_kakeibo_date.py</code></td><td>8,610</td><td><code>ca9acfa6a682589d58b11fb6e0b80dc94fc80894a6b402f8f3183c6269c8e731</code></td></tr><tr><td><code>tests/test_kakeibo_sequence.py</code></td><td>21,600</td><td><code>a7e37c882bec83245da4dc709b0d82a963ad83c54521242ad6a4dc7a7c8c4e77</code></td></tr><tr><td><code>tests/test_kakeibo_split.py</code></td><td>25,490</td><td><code>56184a7e78ba640f4f1e28b48f1acd50c53fa1b8102e634b93c8d78ea63185c9</code></td></tr><tr><td><code>tests/test_lifecycle.py</code></td><td>33,404</td><td><code>368660ab61b0ccfe925bb9db3d2fe48feb47146afb5bbe825f9f010ec79403e9</code></td></tr><tr><td><code>tests/test_llm_concurrency.py</code></td><td>60,144</td><td><code>723836552d7cce1fc554de9955ba20e3822494c26d9e420a827f699b43508b20</code></td></tr><tr><td><code>tests/test_llm_metrics.py</code></td><td>1,629</td><td><code>b2ceea655859d283963e576c0597d52abe25ab9d2a9644c7a1d248c071e47315</code></td></tr><tr><td><code>tests/test_portable_history.py</code></td><td>9,044</td><td><code>0fa23b2486b31a29c8895dc9d5a29ae20b08855d56e8b9af63bcddc8dea55984</code></td></tr><tr><td><code>tests/test_portable_ui.py</code></td><td>16,556</td><td><code>cb6dfc45dda1cde738d4d59928aca50a417fb31f26a3762b2716c65fc162a5f3</code></td></tr><tr><td><code>tests/test_prompt_inputs.py</code></td><td>11,378</td><td><code>746f140a659bdc297d5350fefdb730daaab5add26423867e3f7ff9775631d84a</code></td></tr><tr><td><code>tests/test_resource_monitor.py</code></td><td>19,029</td><td><code>8c715e5feba60e6029307965b986d00698f3cc7d09bbbd181fcabc35e2d187e7</code></td></tr><tr><td><code>tests/test_runtime_paths.py</code></td><td>1,028</td><td><code>15249b53f0f04e67557455d4300f609cf383cf6c555e86afc38db6e39fafcbdf</code></td></tr><tr><td><code>tests/test_session_store.py</code></td><td>32,853</td><td><code>82c2338e82144b0f3f2ffee2fd0f8fe1d353c6795e7accaf868ba40b086ad65f</code></td></tr><tr><td><code>tests/test_streaming_tts.py</code></td><td>28,981</td><td><code>05ec82e3dbf5f6845fab71e2a9a7a2d78ac01c740d9f3ef04a2fd59256861574</code></td></tr></tbody></table></div>
-      <h3>補足</h3>
-      <ul class="readme-list"><li><code>models/PLACE_MODELS_HERE.txt</code> と <code>tests/__init__.py</code> は 0 バイトです。<code>e3b0c442…b7852b855</code> は空データの SHA-256 であり、正しい値です。</li></ul>
-    </section>
-
-    <section class="readme-card">
-      <p class="eyebrow">Section 4</p>
-      <h2>4. 検証方法</h2>
-      <h3>4-1. 一括検証</h3>
-      <p><strong>リポジトリのルートで</strong>次のスクリプトを実行してください。日本語ファイル名を含むGit管理対象全件で動作を確認済みです。</p>
-      <pre><code># -*- coding: utf-8 -*-
-"""Git管理対象予定ファイルのSHA-256を算出する。リポジトリのルートで実行する。
-
-この一覧ファイル自身は自己参照になるため対象から除外する。
-"""
-import hashlib, os, subprocess
-
-SELF = "SHA256.md"
-PENDING_NEW = {
-    "attachment_store.py",
-    "prompt_inputs.py",
-    "tests/test_attachment_store.py",
-    "tests/test_prompt_inputs.py",
-    "TERMS_OF_USE.md",
-    "PRIVACY_POLICY.md",
-    "DISCLAIMER.md",
-    "THIRD_PARTY_LICENSES.md",
-}
-
-def sha256_of(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-raw = subprocess.run(["git", "ls-files", "-z"],
-                     capture_output=True, check=True).stdout
-tracked = {
-    p.decode("utf-8") for p in raw.split(b"\x00") if p
-}
-RENAMES = {
-    "LLMローカル対話型AI.bat": "LLM_Local_chat_run.bat",
-    "コード解説_やさしい版.md": "code_reference.md",
-    "公開リポジトリ_SHA256一覧.md": "SHA256.md",
-}
-tracked = {RENAMES.get(p, p) for p in tracked}
-# commit/stageを行わないv1.8.1作業中も、新規公開予定ファイルを検証する。
-tracked.update(p for p in PENDING_NEW if os.path.isfile(p))
-tracked = sorted(tracked)
-targets = [r for r in tracked if r != SELF]
-
-lines = []
-for rel in targets:
-    local = rel.replace("/", os.sep)
-    if os.path.isfile(local):
-        lines.append(f"{sha256_of(local)}  {rel}")
-
-manifest = "\n".join(lines) + "\n"
-print(f"Git管理対象予定: {len(tracked)} 件")
-print(f"検証対象:     {len(lines)} 件")
-print("指紋: " + hashlib.sha256(manifest.encode("utf-8")).hexdigest())</code></pre>
-      <p><code>PYTHONIOENCODING=utf-8</code> を付けると出力の文字化けを避けられます。</p>
-      <p>期待値: Git管理対象予定 <code>70</code> 件、検証対象 <code>69</code> 件、指紋 <code>407fb9cea393897bf52ee072bb9dfc5b89424b8bf150ce8e4baeec2467b59c98</code></p>
-      <p>指紋は検証対象69件のSHA-256だけから生成するため、<strong>この一覧ファイルを編集しても指紋は変わりません。</strong> 変わるのは69件のいずれかを変更した場合だけです。</p>
-      <h3>4-2. 個別ファイルの確認</h3>
-      <p>1ファイルだけ確認する場合は PowerShell の標準コマンドで足ります。</p>
-      <pre><code>Get-FileHash -LiteralPath .\README.md -Algorithm SHA256</code></pre>
-      <h3>4-3. ⚠️ 使ってはいけない方法</h3>
-      <p><code>git ls-files</code> の出力を PowerShell のパイプラインへ流して <code>Get-FileHash</code> にかける形は<strong>使わないでください。</strong></p>
-      <pre><code># ❌ 誤った結果を出す
-git ls-files | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash }</code></pre>
-      <p>現在の公開対象のモデル配置用ファイル名はASCIIです。ただし、この一覧は未追跡の公開予定ファイルも明示的に加え、自己参照を除外する必要があります。単純なパイプラインではその対象定義を再現できないため、4-1 の手順を使ってください。</p>
-    </section>
-
-    <section class="readme-card">
-      <p class="eyebrow">Section 5</p>
-      <h2>5. この一覧が無効になる条件</h2>
-      <p>以下のいずれかが起きた時点で、一覧は現状と一致しなくなります。</p>
-      <ul class="readme-list"><li>検証対象65件のいずれかを編集した（1文字でも変わればハッシュは変わる）</li><li>検証対象を追加・削除・改名した（件数と指紋が変わる）</li><li>改行コードが変換された（<code>.gitattributes</code> により CRLF↔LF 変換が発生し得る）</li></ul>
-      <p>この一覧ファイル自身の編集は、検証対象から除外しているため指紋に影響しません。</p>
-      <p><strong>改行コードについての注意</strong>: <code>LLM_Local_Chat.py</code> はワーキングツリー上 CRLF で、git はコミット時に LF へ変換する旨の警告を出します。したがって<strong>この一覧の値はワーキングツリー上のバイト列に対するもので、git オブジェクトのハッシュとは一致しません</strong>。GitHub からダウンロードした際、改行コードの差でハッシュが一致しないことがあります。</p>
-    </section>
-
-    <section class="readme-card">
-      <p class="eyebrow">Section 6</p>
-      <h2>6. 版ごとのハッシュ変遷</h2>
-      <p>同一日に複数回更新したファイルの変遷を記録します。同じサイズでも内容が異なる場合があるため、<strong>サイズ比較ではなくハッシュで照合してください。</strong></p>
-      <h3>README.md</h3>
-      <div style="overflow-x:auto;"><table><thead><tr><th>状態</th><th>SHA-256</th><th>サイズ</th></tr></thead><tbody><tr><td>v1.7.2 Biolog完了日付表示修正後</td><td><code>3700c51bd505c7e9faa9d05693450f9c8b85faa79c73402247e00a1c2d409dcf</code></td><td>62,220</td></tr><tr><td>v1.7.2 文書整合性修正後</td><td><code>66737b4763fd9344aa263aab0d93a55692be598db9e51e580e15cbdd15466b4a</code></td><td>62,847</td></tr><tr><td>v1.7.3確定前 添付・パーソナライズ説明追加後</td><td><code>f58cae621136b0d5528a36a90b3ff676172917e31d65507c35177f2d55a50d2b</code></td><td>65,750</td></tr><tr><td>v1.7.3 リリース節・版数反映後</td><td><code>fd4cf0fbeb5aea5925f7244dbc4e643703c65ccc75a44ee4af719bcdaa388c2f</code></td><td>66,519</td></tr><tr><td>v1.8.0 永続添付・安全性説明反映後</td><td><code>c6d69cd07b329c599e5a438a8b5749e038d5e31ac56542d8b027b977b56c725a</code></td><td>72,937</td></tr><tr><td>v1.8.1 公開・保守文書リンク反映後</td><td><code>e9b9a540c91c536457181a120784b1d2ef839f894c784b8bbe1cd7ce46c4db0d</code></td><td>73,812</td></tr><tr><td>v1.8.1 コード解説リンクを冒頭へ移動後</td><td><code>08ae0a1a34b93d8aa042c90a3cf3ea8a5fa166be4db68925cceacb9ddf7dbab3</code></td><td>73,909</td></tr><tr><td><strong>v1.8.1 公開準備日を2026-08-29まで反映後（現行）</strong></td><td><code>37a2afacc4c02db049d3adc56eead682f292b3666beb26f6eeb42324bcde53c2</code></td><td>73,922</td></tr></tbody></table></div>
-      <h3>CURRENT_SPEC.md</h3>
-      <div style="overflow-x:auto;"><table><thead><tr><th>状態</th><th>SHA-256</th><th>サイズ</th></tr></thead><tbody><tr><td>v1.7.2 文書整合性修正前</td><td><code>ecd026f471248148b532c7e1fcd959ceaf2aba1b6a060fc7a68b0581cffade0c</code></td><td>39,193</td></tr><tr><td>v1.7.2 文書整合性修正後</td><td><code>54e4ea511d9522e8df55f165c685466af19127a75352c0fc24c2e366c016331d</code></td><td>40,093</td></tr><tr><td>v1.7.3確定前 添付・Vision仕様追加後</td><td><code>a3b64bed0b57fe29a2959c0f7d5b087993503db70be479249240ecfeacf82c9b</code></td><td>43,806</td></tr><tr><td>v1.7.3 版数・検証結果反映後</td><td><code>e069f34a94be4625b1b644a660f863161637a28ca1a9be35b880b27547690d47</code></td><td>43,979</td></tr><tr><td><strong>v1.8.0 永続添付仕様・検証結果反映後（公開用・現行）</strong></td><td><code>b297992eb9f745c804cb2cfbfac0aaabd741717cd006db3f081c5d9ab969990d</code></td><td>48,553</td></tr></tbody></table></div>
-      <h3>CHANGELOG.md</h3>
-      <div style="overflow-x:auto;"><table><thead><tr><th>状態</th><th>SHA-256</th><th>サイズ</th></tr></thead><tbody><tr><td>v1.6.0 日付修正前</td><td><code>05917059ac5de0aa717b8a87d070dc7c44c912d9edece50aa41afe6a673bab08</code></td><td>31,635</td></tr><tr><td>v1.6.0 日付修正後</td><td><code>098faffe31e2ed26c017484c1c3419a5531ea9672b4eccab98c5cdc029f96c02</code></td><td>31,635</td></tr><tr><td>v1.6.1 追記後</td><td><code>4d01269474e6bbe12a4d5efd185d6327d8adbe9fb538cdda554cec5619179465</code></td><td>32,608</td></tr><tr><td>v1.6.2 追記後</td><td><code>0a0e30b9abc40ef3e8ec9a6d03e8835cc7b7c2fbdf1b809d51696d76d2c94ec1</code></td><td>35,690</td></tr><tr><td>v1.6.3 追記後</td><td><code>bb01c2cb431b76d77ba20911fdb496105757416e16a618d728004037d7d7c81e</code></td><td>38,966</td></tr><tr><td>v1.6.3 実装との不一致を追記</td><td><code>c65acc93be19497d5d766f3da89b36770eb56a9ffab064c4e95df0a3eab31627</code></td><td>42,707</td></tr><tr><td>v1.6.3 文書内矛盾の整理後</td><td><code>ee99e6889463602348e03e196e4b700f7cb6b9bfc28d77ad0a3f6bcac90ba89e</code></td><td>45,698</td></tr><tr><td>v1.6.3 断定表現の最終整理後</td><td><code>c055f96840f9648237a1245e30247ab5a1ea96b27475c0d7e5a0a8640070ea64</code></td><td>48,031</td></tr><tr><td>v1.6.3 全文再構成の反映後</td><td><code>44647641a19d0a0c34af73cec68a34fb5b92d1e2694dd3c2f5957a15a19e9ce8</code></td><td>50,701</td></tr><tr><td>v1.7.1 日本語日付・日付直後金額修正後</td><td><code>a3bf8c09650f4ace94437560d6c52ccd2c0b9f98fafb83ef2a72db6820934d5c</code></td><td>62,591</td></tr><tr><td>v1.7.1 source_text空白差対応後</td><td><code>dc44963f790a4a824616ecb68e6b0bd80abc5a2046b34c0df5ccda9b04286539</code></td><td>63,301</td></tr><tr><td>v1.7.1 金額右側境界修正後</td><td><code>5c756db609293f10fa230c834f34be6d2a030f5c7b09bb427c94216130cae56b</code></td><td>63,768</td></tr><tr><td>v1.7.1 GPU hot reload / Auto runtime downshift確定後</td><td><code>ab8d28dc461ab374a0e3adbfbc28356929690785403d4a69a897f7127ee64075</code></td><td>66,407</td></tr><tr><td>v1.7.2 Biolog完了日付表示修正後</td><td><code>1d0e1825005b572701177b3553720bdae9669d04eb8d1f9ffd675d02eea64fa3</code></td><td>66,900</td></tr><tr><td>v1.7.3確定前 添付・パーソナライズ変更履歴追加後</td><td><code>6f440d68c6615d3486090545082bc44c443fcc35df4660953b41fc73fc7e2070</code></td><td>68,267</td></tr><tr><td>v1.7.3（2026-08-26）確定後</td><td><code>e8d13c37d8e14ec6cb0fbfb3bf22ba130e4749931542826cb941db7f341af36c</code></td><td>68,275</td></tr><tr><td>v1.7.3 IME未確定文字の表示修正後</td><td><code>ec2e23a17c1fce8ca032afa83344ba84a6efbbc52b390cb7640ee69f952e8978</code></td><td>68,521</td></tr><tr><td>v1.8.0 永続添付変更履歴・全640件反映後</td><td><code>d6d7d11786f04eed8d63cd9dd46cdec01767bf5bb378b608e55592d161e9363b</code></td><td>70,926</td></tr><tr><td>v1.8.1 公開・保守文書およびモデル配置ファイル名反映後</td><td><code>8f1c7dccec67c3783f0719e04f7b1e03f7193a3acf3fd24cabeac46aa1fe461e</code></td><td>73,067</td></tr><tr><td>v1.8.1 コード解説リンク移動を追記後</td><td><code>76092634deb4ce9fd8c2c8b3ff25e9b3c02c32835002351c4935ed55317ad6f7</code></td><td>73,293</td></tr><tr><td><strong>v1.8.1 バージョン日付を2026-08-29へ更新後（現行）</strong></td><td><code>b5c34d5fc2f01e0c27108123ed14de4e6677f5324ed07353ebcbc84bd277f36a</code></td><td>73,293</td></tr></tbody></table></div>
-      <p>v1.6.0 の日付修正は <code>2026-08-15</code> → <code>2026-08-17</code> の1行のみで、<strong>桁数が同じためサイズが変わりませんでした。</strong> ハッシュ照合が必要な変更の実例です。</p>
-      <h3>code_reference.md（旧: コード解説_やさしい版.md）</h3>
-      <div style="overflow-x:auto;"><table><thead><tr><th>状態</th><th>SHA-256</th><th>サイズ</th></tr></thead><tbody><tr><td>初版</td><td><code>28308f1a5341…</code>（先頭12桁のみ記録）</td><td>55,388</td></tr><tr><td>履歴キャッシュ記述の訂正版</td><td><code>b41758337669ea498e588b8f7772b82c25f570d010e6ed97d5b7f646d77f6e32</code></td><td>59,321</td></tr><tr><td>収録範囲の明示版</td><td><code>e4a72f79a50fdd34166cebef35df1e523a7ae0028634260c561cae033cfed691</code></td><td>62,922</td></tr><tr><td>章構成整理版</td><td><code>3a83b37bfe932a8e1d9a46a9906837ea6b248ee9c00daeeb1b9dabb406ffb2f1</code></td><td>61,983</td></tr><tr><td>公開向け全面見直し後</td><td><code>3c474d85ef4223407377ac2becb98c065fe45079203ac96e49b07b73e158dbf1</code></td><td>58,630</td></tr><tr><td>記述の正確性見直し後</td><td><code>84b1cc96e9e3c5cfefa01d72db0d9cc03b6c704951c834f315029654c031ba6c</code></td><td>64,844</td></tr><tr><td>v1.6.2 版数表追記後</td><td><code>ea9175692b7cc68a142f71c7575dac261d3871381a56e1264aadbf914e3509fc</code></td><td>65,066</td></tr><tr><td>v1.6.3 技術説明の正確化後</td><td><code>dbb4b27e871e6aa37aac76a5e55a705c93eb16182daf9060fec4a7bc7caeaeaa</code></td><td>68,047</td></tr><tr><td>v1.6.3 実装との突合後</td><td><code>f09bd311fbce58c5b47fe07071a4d6962c1aedd55de40bae260a4b6fa4467580</code></td><td>70,622</td></tr><tr><td>v1.6.3 文書内矛盾の整理後</td><td><code>808b4b95bd8fd9d0e43b7a5e397f8a69d88273b38945786cae3cdbe5a7ff8833</code></td><td>70,959</td></tr><tr><td>v1.6.3 断定表現の最終整理後</td><td><code>990c087775662205c3057faf52b45eddf8e09b8710df96c338164838e8e3698a</code></td><td>71,062</td></tr><tr><td>v1.6.3 全文再構成後</td><td><code>9768f9f3334f05c87dbedfd4515ca6bfbdca3b7a80f0bdaddc8155f1f8f197d4</code></td><td>43,327</td></tr><tr><td>v1.7.1 日本語日付・日付直後金額修正後</td><td><code>0bc9cea03d26de649b0b0fb58d37558f0e7842763cd6d0dc572f078f748776b8</code></td><td>48,917</td></tr><tr><td>v1.7.1 source_text空白差対応後</td><td><code>c394e3fad36a7351a11f689565d8d1fc0ad8d764db22e3778c04fc3fd3b5732d</code></td><td>49,629</td></tr><tr><td>v1.7.1 金額右側境界修正後</td><td><code>1c76558d3c3fddaff8e9eb1dcac8f34ac3fb553e4d47fbbbad2be5f8033a58e2</code></td><td>50,077</td></tr><tr><td>v1.7.1 GPU hot reload / Auto runtime downshift確定後</td><td><code>fe67a8f1f256fb4da337398ef181fb5d8e6855650cc580cf7025e2d196750aca</code></td><td>53,368</td></tr><tr><td>v1.7.2 文書整合性修正後</td><td><code>adeb60e7e9368eb2f28e6ed707ba1293b15145b90d371de4edec867509bf9118</code></td><td>54,130</td></tr><tr><td>v1.7.3確定前 添付・設定解説追加後</td><td><code>1f803eb29f7566fdbd953beee22d2f806ccf9f4f8a3f1289551c91561ff93c30</code></td><td>56,061</td></tr><tr><td>v1.7.3 版数・テスト説明反映後</td><td><code>67e5d2f6f05fcb203ba01f4403baad49f3117de1fd93e5f65d2b74c724b2801e</code></td><td>56,368</td></tr><tr><td><strong>v1.8.0 永続添付・安全性・テスト説明反映後（旧名での現行）</strong></td><td><code>d87d711c2a571ad3cddaeb752fd1499aced6f45ae17430c8902b5d0fce4247a7</code></td><td>59,204</td></tr><tr><td>v1.8.0 ファイル名変更反映後</td><td><code>1ab6b884dd55246f6d7f97224aa9d702a8b0f8964b1feb61418ebaf0e4833a08</code></td><td>59,196</td></tr><tr><td><strong>v1.8.1 現行版表記反映後（現行）</strong></td><td><code>fd9527508be28e6e60c10775ec39335abc380e8bde6fc697af9c8d888e5c3265</code></td><td>59,196</td></tr></tbody></table></div>
-      <p>v1.6.3では公開文書の技術説明を段階的に訂正し、その後 <code>コード解説_やさしい版.md</code> を現行コード優先で全文再構成しました。以下は再構成前までに確認された主な訂正内容です。いずれも<strong>記述側の誤りで、コードの不具合ではありません。</strong></p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>分類</th><th>内容</th></tr></thead><tbody><tr><td>事実誤り</td><td>モデルが同梱されていると読める記述 / マイクと読み上げが既定で有効であるかのような記述（実際は両方 <code>false</code>）/ 家計簿・健康記録が本アプリ単体で動くかのような記述（別アプリが必要。家計簿側は非公開）/ 「暗号化して保存」を無条件の安全性として書いていた点（DPAPIは同一Windowsユーザーなら復号可能）</td></tr><tr><td>数値の誤り</td><td>Pythonコードの規模を「約10,300行」と記載。実測は 7,165行（本体 + モジュール群、テストを除く）</td></tr><tr><td>陳腐化する記述</td><td>各ファイルの行数・テスト件数の決め打ちを削除し、自分で数えるスクリプトに置き換え</td></tr><tr><td>表示崩れ</td><td>罫線素片（<code>─│┌┼</code> など。UnicodeのAmbiguous幅で、日本語フォントでは2列・欧文フォントでは1列に描かれる）と日本語を混在させた図・表を、ASCIIのみの図とMarkdownテーブルへ置き換え</td></tr><tr><td>Markdown不正</td><td>3列ヘッダーに2列の本文が続く壊れたテーブルが2箇所</td></tr><tr><td>記述漏れ</td><td>検証範囲の表から筋肉量（<code>muscle_mass</code>）が欠落 / 「特に厚いのはこの3つ」として4件を列挙</td></tr></tbody></table></div>
-      <p><strong>全文再構成後の追加整理</strong>: <code>コード解説_やさしい版.md</code> は、現行コードを最終根拠として再記述し、相対日付を解析するかのような説明、複合単位金額を扱えるかのような例、現行コードで廃止済みの平文テキスト保存、家計簿モードの表示・履歴動作などをコード実装に合わせて整理しました。</p>
-      <h3>architecture_snapshot.md</h3>
-      <div style="overflow-x:auto;"><table><thead><tr><th>状態</th><th>SHA-256</th><th>サイズ</th></tr></thead><tbody><tr><td>v1.7.2 文書整合性修正前</td><td><code>0a9cc2173cf4f0900e7b33b14dc64b3da3022a0b2cac240288b2316d60e7037a</code></td><td>15,993</td></tr><tr><td>v1.7.2 文書整合性修正後</td><td><code>82ce4fb2b56ed847f341a02ebe249f4619da3b74fb1c56f117158a856c906aa3</code></td><td>16,786</td></tr><tr><td>v1.7.3 添付・Vision構成反映後</td><td><code>1eb15ee73e224f92a4bb3773744b8f357610c1411a8aa07348057fff035bb362</code></td><td>18,297</td></tr><tr><td><strong>v1.8.0 永続添付構成反映後（現行）</strong></td><td><code>ad10c9d0f3c51e5537b64e46980c35f754360e9d310425a9e4ef901620fd81ac</code></td><td>19,324</td></tr></tbody></table></div>
-      <h3>architecture_slides.html</h3>
-      <div style="overflow-x:auto;"><table><thead><tr><th>状態</th><th>SHA-256</th><th>サイズ</th></tr></thead><tbody><tr><td>ポート更新前</td><td><code>38d77cfa53a60ef287acf83320c1e5f8913cad88196f7ded7744cd8cf26346c4</code></td><td>32,300</td></tr><tr><td><strong>ポート 8767 反映後（現行）</strong></td><td><code>92604bfea1c6f652015450a34f76eee132d045d2653ee93e8ea008ff05c1a103</code></td><td>32,300</td></tr></tbody></table></div>
-      <p><strong>サイズが同一で内容が異なる</strong>例です。差分はポート番号 <code>8765</code> → <code>8767</code> の1箇所のみで、レイアウト・デザインは変更していません。</p>
-    </section>
-
-    <section class="readme-card">
-      <p class="eyebrow">Section 7</p>
-      <h2>7. 更新方法</h2>
-      <p>このファイルは管理対象予定ファイルの内容が変わるたびに古くなります。更新する場合は 4-1 のスクリプトを実行し、件数・指紋・変更されたファイルの行を書き換えてください。自己参照ファイルの除外、行形式、ソート、指紋計算の方式は変更しません。まだGit追跡前の新規公開予定ファイルだけは<code>PENDING_NEW</code>へ明示します。</p>
-    </section>
-
-    <section class="readme-card">
-      <p>Copyright &copy; 2026 shinosan1</p>
-      <nav class="doc-nav">
-        <a href="./README.html">ガイド</a>
-        <a href="./TERMS_OF_USE.html">利用規約</a>
-        <a href="./PRIVACY_POLICY.html">プライバシーポリシー</a>
-        <a href="./LICENSE.html">ライセンス</a>
-        <a href="./DISCLAIMER.html">免責事項</a>
-        <a href="./THIRD_PARTY_LICENSES.html">サードパーティライセンス</a>
-        <a href="./CODE_REFERENCE.html">コード解説</a>
-      </nav>
-    </section>
-  </main>
+<main class="readme-shell">
+<header class="readme-hero">
+<div class="readme-hero-title">
+<p class="eyebrow">Integrity</p>
+<h1>SHA-256 ハッシュ値一覧</h1>
+</div>
+<nav class="doc-nav">
+<a href="./README.html">ガイド</a>
+<a href="./TERMS_OF_USE.html">利用規約</a>
+<a href="./PRIVACY_POLICY.html">プライバシーポリシー</a>
+<a href="./LICENSE.html">ライセンス</a>
+<a href="./DISCLAIMER.html">免責事項</a>
+<a href="./THIRD_PARTY_LICENSES.html">サードパーティライセンス</a>
+<a href="./CODE_REFERENCE.html">コード解説</a>
+</nav>
+</header>
+<section class="readme-card">
+<p>最終更新: 2026-09-05 対象バージョン: v1.8.2 対象:
+公開リポジトリのルート以下 範囲: <strong>Git管理対象予定 68
+ファイルのうち 67 ファイル</strong></p>
+<p>このファイルは<strong>リポジトリの現行状態に追随して随時更新する一覧</strong>です。日付をファイル名に持たせると「ファイル名の日付と中身の時点がずれる」問題が起きるため、<strong>ファイル名は固定し、時点とバージョンは上の2行で管理</strong>します。特定日のスナップショットを残す運用はしていません。</p>
+<p>配布ファイルの完全性を利用者が確認できるようにするための一覧です。パスはすべて<strong>リポジトリルートからの相対パス</strong>で記載しています。</p>
+<p>Git管理対象予定は68ファイルです。このSHA-256一覧ファイル自身は自己参照を避けるため検証対象から除外し、残る67ファイルについてSHA-256を記録・検証しています。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="1-前提">1. 前提</h2>
+<h3 id="対象に含まれないもの">対象に含まれないもの</h3>
+<p>以下は git
+追跡外のため一覧に含まれません。いずれもリポジトリには同梱されず、各自で用意するものです。</p>
+<ul class="readme-list">
+<li><code>models/</code> のGGUFモデル本体（<code>.gitignore</code> が
+<code>models/</code> と <code>*.gguf</code> を除外。配置用の
+<code>PLACE_MODELS_HERE.txt</code> だけは公開対象として明示管理）</li>
+<li>Whisperモデル（初回起動時に自動ダウンロード）</li>
+<li><code>.venv/</code>（Python実行環境）</li>
+<li><code>chat_logs/</code>（会話履歴。個人データ）</li>
+<li><code>chat_settings.json</code>（実行時設定。<code>.example</code>
+のみ追跡対象）</li>
+<li><code>.git/</code> / <code>__pycache__/</code> /
+<code>.pytest_cache/</code></li>
+<li><code>docs/</code>（<code>.gitignore</code>
+がディレクトリ丸ごと除外）</li>
+<li>ローカル環境固有の運用メモと起動スクリプト、過去バージョンのソース</li>
+</ul>
+<h3 id="この一覧自身について">この一覧自身について</h3>
+<p><strong>この一覧ファイル自身は検証対象67件に含まれません。</strong>
+自分のSHA-256を自分の中に書くと自己参照になり、内容を更新するたびに記載値と実際の値がずれて確定できないためです。</p>
+<p>この一覧ファイルもGit管理対象であり公開されますが、ハッシュ検証の対象からのみ除外します。検証スクリプト（§4-1）も同じ除外を行うため、<strong>Git管理対象が68件になっても検証対象は67件で安定します。</strong></p>
+<h3 id="基準となる状態">基準となる状態</h3>
+<table>
+<thead>
+<tr class="header">
+<th>項目</th>
+<th>値</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>対応リリース</td>
+<td>v1.8.2</td>
+</tr>
+<tr class="even">
+<td>v1.7.0 で追加したファイル</td>
+<td><code>kakeibo_split.py</code> /
+<code>tests/test_kakeibo_split.py</code> /
+<code>tests/test_kakeibo_sequence.py</code></td>
+</tr>
+<tr class="odd">
+<td>v1.7.3で追加したファイル</td>
+<td><code>prompt_inputs.py</code> /
+<code>tests/test_prompt_inputs.py</code></td>
+</tr>
+<tr class="even">
+<td>v1.8.0で追加したファイル</td>
+<td><code>attachment_store.py</code> /
+<code>tests/test_attachment_store.py</code></td>
+</tr>
+<tr class="odd">
+<td>v1.8.1で追加したファイル</td>
+<td><code>TERMS_OF_USE.md</code> / <code>PRIVACY_POLICY.md</code> /
+<code>DISCLAIMER.md</code> / <code>THIRD_PARTY_LICENSES.md</code></td>
+</tr>
+<tr class="even">
+<td>v1.8.1で改名したファイル</td>
+<td><code>models/ここにモデルを追加してください.txt</code> →
+<code>models/PLACE_MODELS_HERE.txt</code></td>
+</tr>
+<tr class="odd">
+<td>Git管理対象予定ファイル数</td>
+<td>68（この一覧ファイルを含む）</td>
+</tr>
+<tr class="even">
+<td>SHA-256検証対象ファイル数</td>
+<td>67（この一覧ファイルを除く）</td>
+</tr>
+<tr class="odd">
+<td>検証対象の合計サイズ</td>
+<td>2,062,134 バイト</td>
+</tr>
+</tbody>
+</table>
+<p>一覧の値は<strong>ワーキングツリー上の実ファイル</strong>です。v1.7.0
+で追加した3ファイルも Git
+管理対象であり、<strong>この一覧の検証対象に含まれています</strong>。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="2-一覧全体の指紋">2. 一覧全体の指紋</h2>
+<p>個別の67件を1つの値で代表させたものです。</p>
+<pre><code>MANIFEST_FINGERPRINT = a956e4fed056e0cf9de5d27b2cc0a3a28c30a8f564d63f068e64561e37f8b1f3</code></pre>
+<p><strong>定義</strong>（再現に必要なため厳密に記します）:</p>
+<ol class="readme-list" type="1">
+<li>対象は <code>git ls-files</code>
+の一覧に未追跡の新規公開予定4ファイルを加え、削除済みファイルを除いたうえで、<strong>この一覧ファイル自身を除外した67件</strong></li>
+<li>パス文字列（<code>/</code> 区切り、UTF-8）で昇順ソート</li>
+<li>各行を <code>&lt;sha256小文字16進&gt;</code> + 半角スペース2個 +
+<code>&lt;相対パス&gt;</code> の形式にする</li>
+<li>行区切りは <code>LF</code>、最終行にも <code>LF</code> を付ける</li>
+<li>全体を UTF-8 でエンコードして SHA-256 を取る</li>
+</ol>
+<p>行区切りを <code>CRLF</code>
+にしたりソート順を変えると別の値になるため、照合時はこの定義に従ってください。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="3-ハッシュ値一覧67件">3. ハッシュ値一覧（67件）</h2>
+<table>
+<thead>
+<tr class="header">
+<th>ファイル</th>
+<th style="text-align: right;">サイズ</th>
+<th>SHA-256</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.gitattributes</code></td>
+<td style="text-align: right;">66</td>
+<td><code>1a1dbe176bc233b499d35a57db7513f2941c99ab9759f177830c9149be99005b</code></td>
+</tr>
+<tr class="even">
+<td><code>.gitignore</code></td>
+<td style="text-align: right;">2,095</td>
+<td><code>904bce071191163ced3dfcefaeb2d62a4a8005e8863a65bf9676b1a55c3a20a0</code></td>
+</tr>
+<tr class="odd">
+<td><code>CHANGELOG.md</code></td>
+<td style="text-align: right;">74,849</td>
+<td><code>5f960d60d64d78055506723a4f6aa4f546bdea9e0a04dc7e598846a5c9852b26</code></td>
+</tr>
+<tr class="even">
+<td><code>CURRENT_SPEC.md</code></td>
+<td style="text-align: right;">49,487</td>
+<td><code>0b52928bb254f72342e6486999d60dbebb31feca6fe4ab86794f3b28126caa8d</code></td>
+</tr>
+<tr class="odd">
+<td><code>DISCLAIMER.md</code></td>
+<td style="text-align: right;">3,420</td>
+<td><code>dd7c329cb5aa32ff82fcbe864a272e3b807f976ed05d351848d403826a4d27da</code></td>
+</tr>
+<tr class="even">
+<td><code>LICENSE</code></td>
+<td style="text-align: right;">1,066</td>
+<td><code>36a93dd774af2cff1359ea93cf1f833cdbf6dde8ac1af5bc883c04d8642b7dda</code></td>
+</tr>
+<tr class="odd">
+<td><code>LLM_Local_Chat.py</code></td>
+<td style="text-align: right;">205,778</td>
+<td><code>3846811172ef21c9a59a78129feddc9caf0e326efc12534d57cdc533bfcaa108</code></td>
+</tr>
+<tr class="even">
+<td><code>LLM_Local_chat_run.bat</code></td>
+<td style="text-align: right;">318</td>
+<td><code>5da5f32b5f2d979165853903e192723049fb8b2e06af0f6b5d98a69b782a4387</code></td>
+</tr>
+<tr class="odd">
+<td><code>PRIVACY_POLICY.md</code></td>
+<td style="text-align: right;">6,379</td>
+<td><code>0bbfd07a87d3ed29d715186b0cbf693b27ec4e6da28ea302c959bb6b4fc0304d</code></td>
+</tr>
+<tr class="even">
+<td><code>README.md</code></td>
+<td style="text-align: right;">74,895</td>
+<td><code>5f4fa01b1a160c7e783240c721f3813235dca679b394593a3dd1813baa531683</code></td>
+</tr>
+<tr class="odd">
+<td><code>SECURITY.md</code></td>
+<td style="text-align: right;">7,706</td>
+<td><code>4c7cf2bf8d3ea8324976e1bd7622f48d98b165dd91bcad27f77d675a357ba202</code></td>
+</tr>
+<tr class="even">
+<td><code>TERMS_OF_USE.md</code></td>
+<td style="text-align: right;">6,053</td>
+<td><code>5f08b450f3ca93bf1c32c03bfc75450f7b11569adf2842d4027d135f61805b90</code></td>
+</tr>
+<tr class="odd">
+<td><code>THIRD_PARTY_LICENSES.md</code></td>
+<td style="text-align: right;">4,996</td>
+<td><code>3bb871e86938a4d1e0cbccafb63c9b87a591a3ac485341baf486893b767672bd</code></td>
+</tr>
+<tr class="even">
+<td><code>app_composition.py</code></td>
+<td style="text-align: right;">641</td>
+<td><code>2f3ed1db7b33073bc3d41cf23d5658a01c4948fe7930459eccfedcf82d8e1d96</code></td>
+</tr>
+<tr class="odd">
+<td><code>atomic_io.py</code></td>
+<td style="text-align: right;">1,161</td>
+<td><code>344b5a0c6a0031a7501470a3fa8905077955eb4f8747a3b16013ed701b8868c5</code></td>
+</tr>
+<tr class="even">
+<td><code>attachment_store.py</code></td>
+<td style="text-align: right;">20,944</td>
+<td><code>a613f7f0d9b9f1b9095c41e3c1f970bc99fcfe39447cd70d3c2764d38fcb4e33</code></td>
+</tr>
+<tr class="odd">
+<td><code>audio_workers.py</code></td>
+<td style="text-align: right;">33,529</td>
+<td><code>7df48d403457032bb09a9c826a93924771936af22a6416535b8f89c03d6c4731</code></td>
+</tr>
+<tr class="even">
+<td><code>avatars/blink_avatar.png</code></td>
+<td style="text-align: right;">226,927</td>
+<td><code>2b88df1951233ac09d80ecfac9ecf2c5fd6cbb0ac68f1e27479b44c692118ec8</code></td>
+</tr>
+<tr class="odd">
+<td><code>avatars/blink_speaking_avatar.png</code></td>
+<td style="text-align: right;">228,347</td>
+<td><code>545292da97fdac9421b74550fe9a6444a5e58d7301dc2d4747f1e7df7cfefe13</code></td>
+</tr>
+<tr class="even">
+<td><code>avatars/default_avatar.png</code></td>
+<td style="text-align: right;">202,145</td>
+<td><code>39f2e897368fd34154df3e2d561bef4d2c2fd4c9ee98396243076668f3b808ad</code></td>
+</tr>
+<tr class="odd">
+<td><code>avatars/speaking_avatar.png</code></td>
+<td style="text-align: right;">215,620</td>
+<td><code>72092f956dfa04c9947173b71bcf845f1edbc388e0c6221b02632f2d55800a4b</code></td>
+</tr>
+<tr class="even">
+<td><code>chat_settings.json.example</code></td>
+<td style="text-align: right;">1,056</td>
+<td><code>ab65479290adc006133b5be293680cf818ea55a500ba8723c59b4af17260f334</code></td>
+</tr>
+<tr class="odd">
+<td><code>check_audio_devices.py</code></td>
+<td style="text-align: right;">2,093</td>
+<td><code>551054885263e5e4eab4efb2947fa650893f08d50af07c006e3c989c42d8c632</code></td>
+</tr>
+<tr class="even">
+<td><code>code_reference.md</code></td>
+<td style="text-align: right;">60,049</td>
+<td><code>85ac95a522997cca15c7a24550e7cb9bdf2762e91e3390eb038605ef4cc5861d</code></td>
+</tr>
+<tr class="odd">
+<td><code>controller.py</code></td>
+<td style="text-align: right;">39,827</td>
+<td><code>121c0abe54fd7a7c64d7fbb619df54dbea24c4abbb611dd197e7573612378329</code></td>
+</tr>
+<tr class="even">
+<td><code>history_crypto.py</code></td>
+<td style="text-align: right;">5,551</td>
+<td><code>d929d70384472946e75d6aa7244402710e23fbf03a9229be7d8c5bd9426fdc58</code></td>
+</tr>
+<tr class="odd">
+<td><code>integrations.py</code></td>
+<td style="text-align: right;">20,449</td>
+<td><code>1e4fdb628bae7f7feb9b5bbdb88567b5c71f9fd3c017965c44dc3cd56dfdc030</code></td>
+</tr>
+<tr class="even">
+<td><code>json_extractors.py</code></td>
+<td style="text-align: right;">4,512</td>
+<td><code>2c7041fbf03c011b12f785851c271d5c4c67b179ea73a2abc7debde1a71fe4b3</code></td>
+</tr>
+<tr class="odd">
+<td><code>kakeibo_amount.py</code></td>
+<td style="text-align: right;">10,197</td>
+<td><code>8a642373cfc85c5f62926a5008bed6370c44131eb29f0f4573e32d35e4899539</code></td>
+</tr>
+<tr class="even">
+<td><code>kakeibo_confirmation.py</code></td>
+<td style="text-align: right;">5,544</td>
+<td><code>fd4a7990690fda3cb1e70a085c9c2a3eeeba7dbbcb97de23e5b3bcd370bde494</code></td>
+</tr>
+<tr class="odd">
+<td><code>kakeibo_date.py</code></td>
+<td style="text-align: right;">7,772</td>
+<td><code>b247b2d056e89e8f81fb4b39d778bd2d376158f161779c3bde372d0ef2a93569</code></td>
+</tr>
+<tr class="even">
+<td><code>kakeibo_split.py</code></td>
+<td style="text-align: right;">14,304</td>
+<td><code>71470446f64a6f96ae384de8a73c867a60ce4dd621e3bf30c8e158af5163967c</code></td>
+</tr>
+<tr class="odd">
+<td><code>llm_service.py</code></td>
+<td style="text-align: right;">6,830</td>
+<td><code>fa9aee658822e46482852b7cca83c6a0b88e20855c2f6ebe889e2108892d9ce0</code></td>
+</tr>
+<tr class="even">
+<td><code>models/PLACE_MODELS_HERE.txt</code></td>
+<td style="text-align: right;">0</td>
+<td><code>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</code></td>
+</tr>
+<tr class="odd">
+<td><code>portable_history.py</code></td>
+<td style="text-align: right;">12,028</td>
+<td><code>e2f08c6d420d5559ce91718e8d395c4e38c67a19c428de93cbf6cc270f8a99e7</code></td>
+</tr>
+<tr class="even">
+<td><code>prompt_builder.py</code></td>
+<td style="text-align: right;">12,300</td>
+<td><code>38a7289d053b2c2be2ab7dc2f4f04cf6aff0f0f6ff0a027ab9675ea60f3b8a99</code></td>
+</tr>
+<tr class="odd">
+<td><code>prompt_inputs.py</code></td>
+<td style="text-align: right;">13,438</td>
+<td><code>803c70072f8cf8e814542acc39ff2ace1463de64d0825298b9bcce4d90582baf</code></td>
+</tr>
+<tr class="even">
+<td><code>requirements-cpu.txt</code></td>
+<td style="text-align: right;">611</td>
+<td><code>ef4c06ce946493dba563f1b2ab21f84750f3e4c4c147abd150c9e6fb0c0c7487</code></td>
+</tr>
+<tr class="odd">
+<td><code>requirements.txt</code></td>
+<td style="text-align: right;">1,543</td>
+<td><code>adf851860f031fa32aa9a4e27f37ced62940ac1669152f2243b0e3eb581b8175</code></td>
+</tr>
+<tr class="even">
+<td><code>resource_manager.py</code></td>
+<td style="text-align: right;">548</td>
+<td><code>146218f30a873962e34171cb6cfc8b1bf7a94eab85e00da68665ea230972f211</code></td>
+</tr>
+<tr class="odd">
+<td><code>resource_monitor.py</code></td>
+<td style="text-align: right;">35,964</td>
+<td><code>1068d1b25dba67003a0bfb29d28448e08bc59b112bb776478303ba3d3f2b3bbc</code></td>
+</tr>
+<tr class="even">
+<td><code>session_store.py</code></td>
+<td style="text-align: right;">53,601</td>
+<td><code>1c650fd4accef50b71910e8c39b78bb4fa4597effece7f731196173dc4c1950a</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/__init__.py</code></td>
+<td style="text-align: right;">0</td>
+<td><code>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_app_composition.py</code></td>
+<td style="text-align: right;">861</td>
+<td><code>6cffdd6efb7f6caa0c78f71354de901cd8f81db8ae0e65a5b98b7ebe54ee495d</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_app_gpu_startup.py</code></td>
+<td style="text-align: right;">34,178</td>
+<td><code>8c8f8e9f1b2caeabacb755653d184af9df5fe5768b9c3221b37f878479a0bd8e</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_atomic_io.py</code></td>
+<td style="text-align: right;">1,348</td>
+<td><code>3b1f2c86f856cf84884c288e3c77f8199cf7dd27ed82ab262ffbdf5dea825fbb</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_attachment_store.py</code></td>
+<td style="text-align: right;">7,781</td>
+<td><code>22c477fb033ebe00fc3fd8a7385fd1600b607b1a725d97fd05e471cb4b57d322</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_audio_log_privacy.py</code></td>
+<td style="text-align: right;">1,354</td>
+<td><code>27c4853e4dfed79bbc669dcc2f5daf1c1c37f71891ff42b2c84774a1567514e6</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_biolog_sanitization.py</code></td>
+<td style="text-align: right;">14,533</td>
+<td><code>5e6eb3f956f3ce26e6d78ff5a3b387267b63a6079e02364a842eaae3f2686c60</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_history_crypto.py</code></td>
+<td style="text-align: right;">4,731</td>
+<td><code>6a8bd88a001496ffcfa58fa97c545afbdd0c900b842e25fe18c0bb1921470fdd</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_integrations.py</code></td>
+<td style="text-align: right;">7,257</td>
+<td><code>d9813f4032356496a0a43480b1fe4bbe06ee208683b427b858e72b3d74dabf52</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_json_extractors.py</code></td>
+<td style="text-align: right;">6,824</td>
+<td><code>d2a7b13be5e55824339412395edd28a9f9cbbe907ce93aac139cf7255ea815ad</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_kakeibo_amount.py</code></td>
+<td style="text-align: right;">17,269</td>
+<td><code>e5742914e3bb80e02786cb839dfeb03fa9e3aca8e1852ebd322bdeea255e5ece</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_kakeibo_confirmation.py</code></td>
+<td style="text-align: right;">15,282</td>
+<td><code>10bfac5083d47e1dead50327959c89d9a2f34aaf2950a4cedb459e5f1e6e462f</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_kakeibo_date.py</code></td>
+<td style="text-align: right;">8,610</td>
+<td><code>ca9acfa6a682589d58b11fb6e0b80dc94fc80894a6b402f8f3183c6269c8e731</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_kakeibo_sequence.py</code></td>
+<td style="text-align: right;">21,600</td>
+<td><code>a7e37c882bec83245da4dc709b0d82a963ad83c54521242ad6a4dc7a7c8c4e77</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_kakeibo_split.py</code></td>
+<td style="text-align: right;">25,490</td>
+<td><code>56184a7e78ba640f4f1e28b48f1acd50c53fa1b8102e634b93c8d78ea63185c9</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_lifecycle.py</code></td>
+<td style="text-align: right;">35,736</td>
+<td><code>10c25ffdb7c5aeeda0bbe9023a98689d84249c2c2e24b0a62cace371c04a14b0</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_llm_concurrency.py</code></td>
+<td style="text-align: right;">60,144</td>
+<td><code>723836552d7cce1fc554de9955ba20e3822494c26d9e420a827f699b43508b20</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_llm_metrics.py</code></td>
+<td style="text-align: right;">1,629</td>
+<td><code>b2ceea655859d283963e576c0597d52abe25ab9d2a9644c7a1d248c071e47315</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_portable_history.py</code></td>
+<td style="text-align: right;">9,044</td>
+<td><code>0fa23b2486b31a29c8895dc9d5a29ae20b08855d56e8b9af63bcddc8dea55984</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_portable_ui.py</code></td>
+<td style="text-align: right;">16,556</td>
+<td><code>cb6dfc45dda1cde738d4d59928aca50a417fb31f26a3762b2716c65fc162a5f3</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_prompt_inputs.py</code></td>
+<td style="text-align: right;">11,378</td>
+<td><code>746f140a659bdc297d5350fefdb730daaab5add26423867e3f7ff9775631d84a</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_resource_monitor.py</code></td>
+<td style="text-align: right;">21,843</td>
+<td><code>52b3c3fc1ae91388167902babb0e8ffb67b4147aacdfcb37e0e80254cae4a8c5</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_runtime_paths.py</code></td>
+<td style="text-align: right;">1,028</td>
+<td><code>15249b53f0f04e67557455d4300f609cf383cf6c555e86afc38db6e39fafcbdf</code></td>
+</tr>
+<tr class="even">
+<td><code>tests/test_session_store.py</code></td>
+<td style="text-align: right;">32,853</td>
+<td><code>82c2338e82144b0f3f2ffee2fd0f8fe1d353c6795e7accaf868ba40b086ad65f</code></td>
+</tr>
+<tr class="odd">
+<td><code>tests/test_streaming_tts.py</code></td>
+<td style="text-align: right;">30,166</td>
+<td><code>7d20308bf06130a326956ca24d7a1860d806f78123b0d7adabf0e1250a363740</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="補足">補足</h3>
+<ul class="readme-list">
+<li><code>models/PLACE_MODELS_HERE.txt</code> と
+<code>tests/__init__.py</code> は 0
+バイトです。<code>e3b0c442…b7852b855</code> は空データの SHA-256
+であり、正しい値です。</li>
+</ul>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="4-検証方法">4. 検証方法</h2>
+<h3 id="4-1-一括検証">4-1. 一括検証</h3>
+<p><strong>リポジトリのルートで</strong>次のスクリプトを実行してください。日本語ファイル名を含むGit管理対象全件で動作を確認済みです。</p>
+<div class="sourceCode"><pre class="sourceCode python"><code class="sourceCode python"><span><a aria-hidden="true" tabindex="-1"></a><span class="co"># -*- coding: utf-8 -*-</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="co">"""Git管理対象予定ファイルのSHA-256を算出する。リポジトリのルートで実行する。</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a></span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="co">この一覧ファイル自身は自己参照になるため対象から除外する。</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="co">"""</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="im">import</span> hashlib, os, subprocess</span>
+<span><a aria-hidden="true" tabindex="-1"></a></span>
+<span><a aria-hidden="true" tabindex="-1"></a>SELF <span class="op">=</span> <span class="st">"SHA256.md"</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>PENDING_NEW <span class="op">=</span> {</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"attachment_store.py"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"prompt_inputs.py"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"tests/test_attachment_store.py"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"tests/test_prompt_inputs.py"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"TERMS_OF_USE.md"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"PRIVACY_POLICY.md"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"DISCLAIMER.md"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"THIRD_PARTY_LICENSES.md"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>}</span>
+<span><a aria-hidden="true" tabindex="-1"></a></span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sha256_of(path):</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    h <span class="op">=</span> hashlib.sha256()</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="cf">with</span> <span class="bu">open</span>(path, <span class="st">"rb"</span>) <span class="im">as</span> f:</span>
+<span><a aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> chunk <span class="kw">in</span> <span class="bu">iter</span>(<span class="kw">lambda</span>: f.read(<span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>), <span class="st">b""</span>):</span>
+<span><a aria-hidden="true" tabindex="-1"></a>            h.update(chunk)</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> h.hexdigest()</span>
+<span><a aria-hidden="true" tabindex="-1"></a></span>
+<span><a aria-hidden="true" tabindex="-1"></a>raw <span class="op">=</span> subprocess.run([<span class="st">"git"</span>, <span class="st">"ls-files"</span>, <span class="st">"-z"</span>],</span>
+<span><a aria-hidden="true" tabindex="-1"></a>                     capture_output<span class="op">=</span><span class="va">True</span>, check<span class="op">=</span><span class="va">True</span>).stdout</span>
+<span><a aria-hidden="true" tabindex="-1"></a>tracked <span class="op">=</span> {</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    p.decode(<span class="st">"utf-8"</span>) <span class="cf">for</span> p <span class="kw">in</span> raw.split(<span class="st">b"</span><span class="ch">\x00</span><span class="st">"</span>) <span class="cf">if</span> p</span>
+<span><a aria-hidden="true" tabindex="-1"></a>}</span>
+<span><a aria-hidden="true" tabindex="-1"></a>RENAMES <span class="op">=</span> {</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"LLMローカル対話型AI.bat"</span>: <span class="st">"LLM_Local_chat_run.bat"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"コード解説_やさしい版.md"</span>: <span class="st">"code_reference.md"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"公開リポジトリ_SHA256一覧.md"</span>: <span class="st">"SHA256.md"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"models/ここにモデルを追加してください.txt"</span>: <span class="st">"models/PLACE_MODELS_HERE.txt"</span>,</span>
+<span><a aria-hidden="true" tabindex="-1"></a>}</span>
+<span><a aria-hidden="true" tabindex="-1"></a>tracked <span class="op">=</span> {RENAMES.get(p, p) <span class="cf">for</span> p <span class="kw">in</span> tracked}</span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="co"># commit/stageを行わないv1.8.2作業中も、新規公開予定ファイルを検証する。</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>tracked.update(p <span class="cf">for</span> p <span class="kw">in</span> PENDING_NEW <span class="cf">if</span> os.path.isfile(p))</span>
+<span><a aria-hidden="true" tabindex="-1"></a>tracked <span class="op">=</span> <span class="bu">sorted</span>(p <span class="cf">for</span> p <span class="kw">in</span> tracked <span class="cf">if</span> os.path.isfile(p.replace(<span class="st">"/"</span>, os.sep)))</span>
+<span><a aria-hidden="true" tabindex="-1"></a>targets <span class="op">=</span> [r <span class="cf">for</span> r <span class="kw">in</span> tracked <span class="cf">if</span> r <span class="op">!=</span> SELF]</span>
+<span><a aria-hidden="true" tabindex="-1"></a></span>
+<span><a aria-hidden="true" tabindex="-1"></a>lines <span class="op">=</span> []</span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> rel <span class="kw">in</span> targets:</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    local <span class="op">=</span> rel.replace(<span class="st">"/"</span>, os.sep)</span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> os.path.isfile(local):</span>
+<span><a aria-hidden="true" tabindex="-1"></a>        lines.append(<span class="ss">f"</span><span class="sc">{</span>sha256_of(local)<span class="sc">}</span><span class="ss">  </span><span class="sc">{</span>rel<span class="sc">}</span><span class="ss">"</span>)</span>
+<span><a aria-hidden="true" tabindex="-1"></a></span>
+<span><a aria-hidden="true" tabindex="-1"></a>manifest <span class="op">=</span> <span class="st">"</span><span class="ch">\n</span><span class="st">"</span>.join(lines) <span class="op">+</span> <span class="st">"</span><span class="ch">\n</span><span class="st">"</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"Git管理対象予定: </span><span class="sc">{</span><span class="bu">len</span>(tracked)<span class="sc">}</span><span class="ss"> 件"</span>)</span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"検証対象:     </span><span class="sc">{</span><span class="bu">len</span>(lines)<span class="sc">}</span><span class="ss"> 件"</span>)</span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"指紋: "</span> <span class="op">+</span> hashlib.sha256(manifest.encode(<span class="st">"utf-8"</span>)).hexdigest())</span></code></pre></div>
+<p><code>PYTHONIOENCODING=utf-8</code>
+を付けると出力の文字化けを避けられます。</p>
+<p>期待値: Git管理対象予定 <code>68</code> 件、検証対象 <code>67</code>
+件、指紋
+<code>a956e4fed056e0cf9de5d27b2cc0a3a28c30a8f564d63f068e64561e37f8b1f3</code></p>
+<p>指紋は検証対象67件のSHA-256だけから生成するため、<strong>この一覧ファイルを編集しても指紋は変わりません。</strong>
+変わるのは67件のいずれかを変更した場合だけです。</p>
+<h3 id="4-2-個別ファイルの確認">4-2. 個別ファイルの確認</h3>
+<p>1ファイルだけ確認する場合は PowerShell の標準コマンドで足ります。</p>
+<div class="sourceCode"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span><a aria-hidden="true" tabindex="-1"></a>Get-FileHash <span class="op">-</span>LiteralPath <span class="op">.</span>\README<span class="op">.</span><span class="fu">md</span> <span class="op">-</span>Algorithm SHA256</span></code></pre></div>
+<h3 id="4-3-warning-使ってはいけない方法">4-3. ⚠️
+使ってはいけない方法</h3>
+<p><code>git ls-files</code> の出力を PowerShell のパイプラインへ流して
+<code>Get-FileHash</code>
+にかける形は<strong>使わないでください。</strong></p>
+<div class="sourceCode"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span><a aria-hidden="true" tabindex="-1"></a><span class="co"># ❌ 誤った結果を出す</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>git ls-files <span class="op">|</span> <span class="fu">ForEach-Object</span> <span class="op">{</span> <span class="op">(</span>Get-FileHash <span class="op">-</span>LiteralPath <span class="va">$_</span> <span class="op">-</span>Algorithm SHA256<span class="op">).</span><span class="fu">Hash</span> <span class="op">}</span></span></code></pre></div>
+<p>現在の公開対象のモデル配置用ファイル名はASCIIです。ただし、この一覧は未追跡の公開予定ファイルも明示的に加え、自己参照を除外する必要があります。単純なパイプラインではその対象定義を再現できないため、4-1
+の手順を使ってください。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="5-この一覧が無効になる条件">5. この一覧が無効になる条件</h2>
+<p>以下のいずれかが起きた時点で、一覧は現状と一致しなくなります。</p>
+<ul class="readme-list">
+<li>検証対象67件のいずれかを編集した（1文字でも変わればハッシュは変わる）</li>
+<li>検証対象を追加・削除・改名した（件数と指紋が変わる）</li>
+<li>改行コードが変換された（<code>.gitattributes</code> により CRLF↔︎LF
+変換が発生し得る）</li>
+</ul>
+<p>この一覧ファイル自身の編集は、検証対象から除外しているため指紋に影響しません。</p>
+<p><strong>改行コードについての注意</strong>:
+<code>LLM_Local_Chat.py</code> はワーキングツリー上 CRLF で、git
+はコミット時に LF
+へ変換する旨の警告を出します。したがって<strong>この一覧の値はワーキングツリー上のバイト列に対するもので、git
+オブジェクトのハッシュとは一致しません</strong>。GitHub
+からダウンロードした際、改行コードの差でハッシュが一致しないことがあります。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="6-版ごとのハッシュ変遷">6. 版ごとのハッシュ変遷</h2>
+<p>同一日に複数回更新したファイルの変遷を記録します。同じサイズでも内容が異なる場合があるため、<strong>サイズ比較ではなくハッシュで照合してください。</strong></p>
+<h3 id="readmemd">README.md</h3>
+<table>
+<thead>
+<tr class="header">
+<th>状態</th>
+<th>SHA-256</th>
+<th style="text-align: right;">サイズ</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>v1.7.2 Biolog完了日付表示修正後</td>
+<td><code>3700c51bd505c7e9faa9d05693450f9c8b85faa79c73402247e00a1c2d409dcf</code></td>
+<td style="text-align: right;">62,220</td>
+</tr>
+<tr class="even">
+<td>v1.7.2 文書整合性修正後</td>
+<td><code>66737b4763fd9344aa263aab0d93a55692be598db9e51e580e15cbdd15466b4a</code></td>
+<td style="text-align: right;">62,847</td>
+</tr>
+<tr class="odd">
+<td>v1.7.3確定前 添付・パーソナライズ説明追加後</td>
+<td><code>f58cae621136b0d5528a36a90b3ff676172917e31d65507c35177f2d55a50d2b</code></td>
+<td style="text-align: right;">65,750</td>
+</tr>
+<tr class="even">
+<td>v1.7.3 リリース節・版数反映後</td>
+<td><code>fd4cf0fbeb5aea5925f7244dbc4e643703c65ccc75a44ee4af719bcdaa388c2f</code></td>
+<td style="text-align: right;">66,519</td>
+</tr>
+<tr class="odd">
+<td>v1.8.0 永続添付・安全性説明反映後</td>
+<td><code>c6d69cd07b329c599e5a438a8b5749e038d5e31ac56542d8b027b977b56c725a</code></td>
+<td style="text-align: right;">72,937</td>
+</tr>
+<tr class="even">
+<td>v1.8.1 公開・保守文書リンク反映後</td>
+<td><code>e9b9a540c91c536457181a120784b1d2ef839f894c784b8bbe1cd7ce46c4db0d</code></td>
+<td style="text-align: right;">73,812</td>
+</tr>
+<tr class="odd">
+<td>v1.8.1 コード解説リンクを冒頭へ移動後</td>
+<td><code>08ae0a1a34b93d8aa042c90a3cf3ea8a5fa166be4db68925cceacb9ddf7dbab3</code></td>
+<td style="text-align: right;">73,909</td>
+</tr>
+<tr class="even">
+<td>v1.8.1 公開準備日を2026-08-29まで反映後</td>
+<td><code>37a2afacc4c02db049d3adc56eead682f292b3666beb26f6eeb42324bcde53c2</code></td>
+<td style="text-align: right;">73,922</td>
+</tr>
+<tr class="odd">
+<td><strong>v1.8.2 安全性修正・版数反映後（現行）</strong></td>
+<td><code>5f4fa01b1a160c7e783240c721f3813235dca679b394593a3dd1813baa531683</code></td>
+<td style="text-align: right;">74,895</td>
+</tr>
+</tbody>
+</table>
+<h3 id="current_specmd">CURRENT_SPEC.md</h3>
+<table>
+<thead>
+<tr class="header">
+<th>状態</th>
+<th>SHA-256</th>
+<th style="text-align: right;">サイズ</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>v1.7.2 文書整合性修正前</td>
+<td><code>ecd026f471248148b532c7e1fcd959ceaf2aba1b6a060fc7a68b0581cffade0c</code></td>
+<td style="text-align: right;">39,193</td>
+</tr>
+<tr class="even">
+<td>v1.7.2 文書整合性修正後</td>
+<td><code>54e4ea511d9522e8df55f165c685466af19127a75352c0fc24c2e366c016331d</code></td>
+<td style="text-align: right;">40,093</td>
+</tr>
+<tr class="odd">
+<td>v1.7.3確定前 添付・Vision仕様追加後</td>
+<td><code>a3b64bed0b57fe29a2959c0f7d5b087993503db70be479249240ecfeacf82c9b</code></td>
+<td style="text-align: right;">43,806</td>
+</tr>
+<tr class="even">
+<td>v1.7.3 版数・検証結果反映後</td>
+<td><code>e069f34a94be4625b1b644a660f863161637a28ca1a9be35b880b27547690d47</code></td>
+<td style="text-align: right;">43,979</td>
+</tr>
+<tr class="odd">
+<td>v1.8.0 永続添付仕様・検証結果反映後（公開用）</td>
+<td><code>b297992eb9f745c804cb2cfbfac0aaabd741717cd006db3f081c5d9ab969990d</code></td>
+<td style="text-align: right;">48,553</td>
+</tr>
+<tr class="even">
+<td><strong>v1.8.2 現行仕様・版数反映後（現行）</strong></td>
+<td><code>0b52928bb254f72342e6486999d60dbebb31feca6fe4ab86794f3b28126caa8d</code></td>
+<td style="text-align: right;">49,487</td>
+</tr>
+</tbody>
+</table>
+<h3 id="changelogmd">CHANGELOG.md</h3>
+<table>
+<thead>
+<tr class="header">
+<th>状態</th>
+<th>SHA-256</th>
+<th>サイズ</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>v1.6.0 日付修正前</td>
+<td><code>05917059ac5de0aa717b8a87d070dc7c44c912d9edece50aa41afe6a673bab08</code></td>
+<td>31,635</td>
+</tr>
+<tr class="even">
+<td>v1.6.0 日付修正後</td>
+<td><code>098faffe31e2ed26c017484c1c3419a5531ea9672b4eccab98c5cdc029f96c02</code></td>
+<td>31,635</td>
+</tr>
+<tr class="odd">
+<td>v1.6.1 追記後</td>
+<td><code>4d01269474e6bbe12a4d5efd185d6327d8adbe9fb538cdda554cec5619179465</code></td>
+<td>32,608</td>
+</tr>
+<tr class="even">
+<td>v1.6.2 追記後</td>
+<td><code>0a0e30b9abc40ef3e8ec9a6d03e8835cc7b7c2fbdf1b809d51696d76d2c94ec1</code></td>
+<td>35,690</td>
+</tr>
+<tr class="odd">
+<td>v1.6.3 追記後</td>
+<td><code>bb01c2cb431b76d77ba20911fdb496105757416e16a618d728004037d7d7c81e</code></td>
+<td>38,966</td>
+</tr>
+<tr class="even">
+<td>v1.6.3 実装との不一致を追記</td>
+<td><code>c65acc93be19497d5d766f3da89b36770eb56a9ffab064c4e95df0a3eab31627</code></td>
+<td>42,707</td>
+</tr>
+<tr class="odd">
+<td>v1.6.3 文書内矛盾の整理後</td>
+<td><code>ee99e6889463602348e03e196e4b700f7cb6b9bfc28d77ad0a3f6bcac90ba89e</code></td>
+<td>45,698</td>
+</tr>
+<tr class="even">
+<td>v1.6.3 断定表現の最終整理後</td>
+<td><code>c055f96840f9648237a1245e30247ab5a1ea96b27475c0d7e5a0a8640070ea64</code></td>
+<td>48,031</td>
+</tr>
+<tr class="odd">
+<td>v1.6.3 全文再構成の反映後</td>
+<td><code>44647641a19d0a0c34af73cec68a34fb5b92d1e2694dd3c2f5957a15a19e9ce8</code></td>
+<td>50,701</td>
+</tr>
+<tr class="even">
+<td>v1.7.1 日本語日付・日付直後金額修正後</td>
+<td><code>a3bf8c09650f4ace94437560d6c52ccd2c0b9f98fafb83ef2a72db6820934d5c</code></td>
+<td>62,591</td>
+</tr>
+<tr class="odd">
+<td>v1.7.1 source_text空白差対応後</td>
+<td><code>dc44963f790a4a824616ecb68e6b0bd80abc5a2046b34c0df5ccda9b04286539</code></td>
+<td>63,301</td>
+</tr>
+<tr class="even">
+<td>v1.7.1 金額右側境界修正後</td>
+<td><code>5c756db609293f10fa230c834f34be6d2a030f5c7b09bb427c94216130cae56b</code></td>
+<td>63,768</td>
+</tr>
+<tr class="odd">
+<td>v1.7.1 GPU hot reload / Auto runtime downshift確定後</td>
+<td><code>ab8d28dc461ab374a0e3adbfbc28356929690785403d4a69a897f7127ee64075</code></td>
+<td>66,407</td>
+</tr>
+<tr class="even">
+<td>v1.7.2 Biolog完了日付表示修正後</td>
+<td><code>1d0e1825005b572701177b3553720bdae9669d04eb8d1f9ffd675d02eea64fa3</code></td>
+<td>66,900</td>
+</tr>
+<tr class="odd">
+<td>v1.7.3確定前 添付・パーソナライズ変更履歴追加後</td>
+<td><code>6f440d68c6615d3486090545082bc44c443fcc35df4660953b41fc73fc7e2070</code></td>
+<td>68,267</td>
+</tr>
+<tr class="even">
+<td>v1.7.3（2026-08-26）確定後</td>
+<td><code>e8d13c37d8e14ec6cb0fbfb3bf22ba130e4749931542826cb941db7f341af36c</code></td>
+<td>68,275</td>
+</tr>
+<tr class="odd">
+<td>v1.7.3 IME未確定文字の表示修正後</td>
+<td><code>ec2e23a17c1fce8ca032afa83344ba84a6efbbc52b390cb7640ee69f952e8978</code></td>
+<td>68,521</td>
+</tr>
+<tr class="even">
+<td>v1.8.0 永続添付変更履歴・全640件反映後</td>
+<td><code>d6d7d11786f04eed8d63cd9dd46cdec01767bf5bb378b608e55592d161e9363b</code></td>
+<td>70,926</td>
+</tr>
+<tr class="odd">
+<td>v1.8.1 公開・保守文書およびモデル配置ファイル名反映後</td>
+<td><code>8f1c7dccec67c3783f0719e04f7b1e03f7193a3acf3fd24cabeac46aa1fe461e</code></td>
+<td>73,067</td>
+</tr>
+<tr class="even">
+<td>v1.8.1 コード解説リンク移動を追記後</td>
+<td><code>76092634deb4ce9fd8c2c8b3ff25e9b3c02c32835002351c4935ed55317ad6f7</code></td>
+<td>73,293</td>
+</tr>
+<tr class="odd">
+<td>v1.8.1 バージョン日付を2026-08-29へ更新後</td>
+<td><code>b5c34d5fc2f01e0c27108123ed14de4e6677f5324ed07353ebcbc84bd277f36a</code></td>
+<td>73,293</td>
+</tr>
+<tr class="even">
+<td>Unreleased nvidia-smiコンソール抑止追記後</td>
+<td><code>e97c6822535721654b1a25aa3be8da717824b4939fb5474fe546d564a5d78e55</code></td>
+<td>73,857</td>
+</tr>
+<tr class="odd">
+<td><strong>v1.8.2 リリース確定後（現行）</strong></td>
+<td><code>5f960d60d64d78055506723a4f6aa4f546bdea9e0a04dc7e598846a5c9852b26</code></td>
+<td>74,849</td>
+</tr>
+</tbody>
+</table>
+<p>v1.6.0 の日付修正は <code>2026-08-15</code> → <code>2026-08-17</code>
+の1行のみで、<strong>桁数が同じためサイズが変わりませんでした。</strong>
+ハッシュ照合が必要な変更の実例です。</p>
+<h3 id="code_referencemd旧-コード解説_やさしい版md">code_reference.md（旧:
+コード解説_やさしい版.md）</h3>
+<table>
+<thead>
+<tr class="header">
+<th>状態</th>
+<th>SHA-256</th>
+<th>サイズ</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>初版</td>
+<td><code>28308f1a5341…</code>（先頭12桁のみ記録）</td>
+<td>55,388</td>
+</tr>
+<tr class="even">
+<td>履歴キャッシュ記述の訂正版</td>
+<td><code>b41758337669ea498e588b8f7772b82c25f570d010e6ed97d5b7f646d77f6e32</code></td>
+<td>59,321</td>
+</tr>
+<tr class="odd">
+<td>収録範囲の明示版</td>
+<td><code>e4a72f79a50fdd34166cebef35df1e523a7ae0028634260c561cae033cfed691</code></td>
+<td>62,922</td>
+</tr>
+<tr class="even">
+<td>章構成整理版</td>
+<td><code>3a83b37bfe932a8e1d9a46a9906837ea6b248ee9c00daeeb1b9dabb406ffb2f1</code></td>
+<td>61,983</td>
+</tr>
+<tr class="odd">
+<td>公開向け全面見直し後</td>
+<td><code>3c474d85ef4223407377ac2becb98c065fe45079203ac96e49b07b73e158dbf1</code></td>
+<td>58,630</td>
+</tr>
+<tr class="even">
+<td>記述の正確性見直し後</td>
+<td><code>84b1cc96e9e3c5cfefa01d72db0d9cc03b6c704951c834f315029654c031ba6c</code></td>
+<td>64,844</td>
+</tr>
+<tr class="odd">
+<td>v1.6.2 版数表追記後</td>
+<td><code>ea9175692b7cc68a142f71c7575dac261d3871381a56e1264aadbf914e3509fc</code></td>
+<td>65,066</td>
+</tr>
+<tr class="even">
+<td>v1.6.3 技術説明の正確化後</td>
+<td><code>dbb4b27e871e6aa37aac76a5e55a705c93eb16182daf9060fec4a7bc7caeaeaa</code></td>
+<td>68,047</td>
+</tr>
+<tr class="odd">
+<td>v1.6.3 実装との突合後</td>
+<td><code>f09bd311fbce58c5b47fe07071a4d6962c1aedd55de40bae260a4b6fa4467580</code></td>
+<td>70,622</td>
+</tr>
+<tr class="even">
+<td>v1.6.3 文書内矛盾の整理後</td>
+<td><code>808b4b95bd8fd9d0e43b7a5e397f8a69d88273b38945786cae3cdbe5a7ff8833</code></td>
+<td>70,959</td>
+</tr>
+<tr class="odd">
+<td>v1.6.3 断定表現の最終整理後</td>
+<td><code>990c087775662205c3057faf52b45eddf8e09b8710df96c338164838e8e3698a</code></td>
+<td>71,062</td>
+</tr>
+<tr class="even">
+<td>v1.6.3 全文再構成後</td>
+<td><code>9768f9f3334f05c87dbedfd4515ca6bfbdca3b7a80f0bdaddc8155f1f8f197d4</code></td>
+<td>43,327</td>
+</tr>
+<tr class="odd">
+<td>v1.7.1 日本語日付・日付直後金額修正後</td>
+<td><code>0bc9cea03d26de649b0b0fb58d37558f0e7842763cd6d0dc572f078f748776b8</code></td>
+<td>48,917</td>
+</tr>
+<tr class="even">
+<td>v1.7.1 source_text空白差対応後</td>
+<td><code>c394e3fad36a7351a11f689565d8d1fc0ad8d764db22e3778c04fc3fd3b5732d</code></td>
+<td>49,629</td>
+</tr>
+<tr class="odd">
+<td>v1.7.1 金額右側境界修正後</td>
+<td><code>1c76558d3c3fddaff8e9eb1dcac8f34ac3fb553e4d47fbbbad2be5f8033a58e2</code></td>
+<td>50,077</td>
+</tr>
+<tr class="even">
+<td>v1.7.1 GPU hot reload / Auto runtime downshift確定後</td>
+<td><code>fe67a8f1f256fb4da337398ef181fb5d8e6855650cc580cf7025e2d196750aca</code></td>
+<td>53,368</td>
+</tr>
+<tr class="odd">
+<td>v1.7.2 文書整合性修正後</td>
+<td><code>adeb60e7e9368eb2f28e6ed707ba1293b15145b90d371de4edec867509bf9118</code></td>
+<td>54,130</td>
+</tr>
+<tr class="even">
+<td>v1.7.3確定前 添付・設定解説追加後</td>
+<td><code>1f803eb29f7566fdbd953beee22d2f806ccf9f4f8a3f1289551c91561ff93c30</code></td>
+<td>56,061</td>
+</tr>
+<tr class="odd">
+<td>v1.7.3 版数・テスト説明反映後</td>
+<td><code>67e5d2f6f05fcb203ba01f4403baad49f3117de1fd93e5f65d2b74c724b2801e</code></td>
+<td>56,368</td>
+</tr>
+<tr class="even">
+<td><strong>v1.8.0
+永続添付・安全性・テスト説明反映後（旧名での現行）</strong></td>
+<td><code>d87d711c2a571ad3cddaeb752fd1499aced6f45ae17430c8902b5d0fce4247a7</code></td>
+<td>59,204</td>
+</tr>
+<tr class="odd">
+<td>v1.8.0 ファイル名変更反映後</td>
+<td><code>1ab6b884dd55246f6d7f97224aa9d702a8b0f8964b1feb61418ebaf0e4833a08</code></td>
+<td>59,196</td>
+</tr>
+<tr class="even">
+<td>v1.8.1 現行版表記反映後</td>
+<td><code>fd9527508be28e6e60c10775ec39335abc380e8bde6fc697af9c8d888e5c3265</code></td>
+<td>59,196</td>
+</tr>
+<tr class="odd">
+<td><strong>v1.8.2
+保存・認識世代・生成上限・版数反映後（現行）</strong></td>
+<td><code>85ac95a522997cca15c7a24550e7cb9bdf2762e91e3390eb038605ef4cc5861d</code></td>
+<td>60,049</td>
+</tr>
+</tbody>
+</table>
+<p>v1.6.3では公開文書の技術説明を段階的に訂正し、その後
+<code>コード解説_やさしい版.md</code>
+を現行コード優先で全文再構成しました。以下は再構成前までに確認された主な訂正内容です。いずれも<strong>記述側の誤りで、コードの不具合ではありません。</strong></p>
+<table>
+<thead>
+<tr class="header">
+<th>分類</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>事実誤り</td>
+<td>モデルが同梱されていると読める記述 /
+マイクと読み上げが既定で有効であるかのような記述（実際は両方
+<code>false</code>）/
+家計簿・健康記録が本アプリ単体で動くかのような記述（別アプリが必要。家計簿側は非公開）/
+「暗号化して保存」を無条件の安全性として書いていた点（DPAPIは同一Windowsユーザーなら復号可能）</td>
+</tr>
+<tr class="even">
+<td>数値の誤り</td>
+<td>Pythonコードの規模を「約10,300行」と記載。実測は 7,165行（本体 +
+モジュール群、テストを除く）</td>
+</tr>
+<tr class="odd">
+<td>陳腐化する記述</td>
+<td>各ファイルの行数・テスト件数の決め打ちを削除し、自分で数えるスクリプトに置き換え</td>
+</tr>
+<tr class="even">
+<td>表示崩れ</td>
+<td>罫線素片（<code>─│┌┼</code>
+など。UnicodeのAmbiguous幅で、日本語フォントでは2列・欧文フォントでは1列に描かれる）と日本語を混在させた図・表を、ASCIIのみの図とMarkdownテーブルへ置き換え</td>
+</tr>
+<tr class="odd">
+<td>Markdown不正</td>
+<td>3列ヘッダーに2列の本文が続く壊れたテーブルが2箇所</td>
+</tr>
+<tr class="even">
+<td>記述漏れ</td>
+<td>検証範囲の表から筋肉量（<code>muscle_mass</code>）が欠落 /
+「特に厚いのはこの3つ」として4件を列挙</td>
+</tr>
+</tbody>
+</table>
+<p><strong>全文再構成後の追加整理</strong>:
+<code>コード解説_やさしい版.md</code>
+は、現行コードを最終根拠として再記述し、相対日付を解析するかのような説明、複合単位金額を扱えるかのような例、現行コードで廃止済みの平文テキスト保存、家計簿モードの表示・履歴動作などをコード実装に合わせて整理しました。</p>
+<h3 id="architecture_snapshotmd">architecture_snapshot.md</h3>
+<table>
+<thead>
+<tr class="header">
+<th>状態</th>
+<th>SHA-256</th>
+<th style="text-align: right;">サイズ</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>v1.7.2 文書整合性修正前</td>
+<td><code>0a9cc2173cf4f0900e7b33b14dc64b3da3022a0b2cac240288b2316d60e7037a</code></td>
+<td style="text-align: right;">15,993</td>
+</tr>
+<tr class="even">
+<td>v1.7.2 文書整合性修正後</td>
+<td><code>82ce4fb2b56ed847f341a02ebe249f4619da3b74fb1c56f117158a856c906aa3</code></td>
+<td style="text-align: right;">16,786</td>
+</tr>
+<tr class="odd">
+<td>v1.7.3 添付・Vision構成反映後</td>
+<td><code>1eb15ee73e224f92a4bb3773744b8f357610c1411a8aa07348057fff035bb362</code></td>
+<td style="text-align: right;">18,297</td>
+</tr>
+<tr class="even">
+<td><strong>v1.8.0 永続添付構成反映後（現行）</strong></td>
+<td><code>ad10c9d0f3c51e5537b64e46980c35f754360e9d310425a9e4ef901620fd81ac</code></td>
+<td style="text-align: right;">19,324</td>
+</tr>
+</tbody>
+</table>
+<h3 id="architecture_slideshtml">architecture_slides.html</h3>
+<table>
+<thead>
+<tr class="header">
+<th>状態</th>
+<th>SHA-256</th>
+<th>サイズ</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>ポート更新前</td>
+<td><code>38d77cfa53a60ef287acf83320c1e5f8913cad88196f7ded7744cd8cf26346c4</code></td>
+<td>32,300</td>
+</tr>
+<tr class="even">
+<td><strong>ポート 8767 反映後（現行）</strong></td>
+<td><code>92604bfea1c6f652015450a34f76eee132d045d2653ee93e8ea008ff05c1a103</code></td>
+<td>32,300</td>
+</tr>
+</tbody>
+</table>
+<p><strong>サイズが同一で内容が異なる</strong>例です。差分はポート番号
+<code>8765</code> → <code>8767</code>
+の1箇所のみで、レイアウト・デザインは変更していません。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="7-更新方法">7. 更新方法</h2>
+<p>このファイルは管理対象予定ファイルの内容が変わるたびに古くなります。更新する場合は
+4-1
+のスクリプトを実行し、件数・指紋・変更されたファイルの行を書き換えてください。自己参照ファイルの除外、行形式、ソート、指紋計算の方式は変更しません。まだGit追跡前の新規公開予定ファイルだけは<code>PENDING_NEW</code>へ明示します。</p>
+</section>
+</main>
 </body>
 </html>

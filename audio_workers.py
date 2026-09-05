@@ -441,6 +441,8 @@ class VoiceRecognizer:
         self._active = True
         self._tts_active = False
         self._tts_generation = 0
+        # マイクOFF/停止より前に開始した録音・認識結果を識別する。
+        self._recognition_generation = 0
         self._flush_request = False
         self._mic_read_error_last_log = None
         self._mic_read_error_active = False
@@ -468,7 +470,16 @@ class VoiceRecognizer:
             self._flush_request = True  # 復帰時にバッファをフラッシュ
             self._enabled.set()
         else:
+            self._recognition_generation += 1
             self._enabled.clear()
+
+    def is_recognition_current(self, generation: int) -> bool:
+        """指定した録音世代が、現在も送信可能かを返す。"""
+        return (
+            self._active
+            and self._enabled.is_set()
+            and generation == self._recognition_generation
+        )
 
     @staticmethod
     def _rms(data: bytes) -> float:
@@ -605,6 +616,7 @@ class VoiceRecognizer:
                 pre_frames = self._wait_for_speech_onset(stream)
                 if pre_frames is None:
                     continue
+                recognition_generation = self._recognition_generation
 
                 self._fire(self.on_listening)
 
@@ -613,7 +625,10 @@ class VoiceRecognizer:
                 silence_count = 0
                 max_chunks    = VAD_MAX_SECONDS * AUDIO_RATE // AUDIO_CHUNK
 
-                while self._active and len(frames) < max_chunks:
+                while (
+                    self.is_recognition_current(recognition_generation)
+                    and len(frames) < max_chunks
+                ):
                     try:
                         chunk = stream.read(
                             AUDIO_CHUNK, exception_on_overflow=False)
@@ -635,6 +650,9 @@ class VoiceRecognizer:
 
                 # TTS中に録音が破棄された場合はWhisper処理をスキップ
                 if not frames:
+                    continue
+
+                if not self.is_recognition_current(recognition_generation):
                     continue
 
                 rms_values = [self._rms(frame) for frame in frames]
@@ -714,6 +732,9 @@ class VoiceRecognizer:
                     if self._tts_interfered_since(tts_generation):
                         print("[WhisperDiag] decision=discard reason=tts_started_during_transcribe")
                         continue
+                    if not self.is_recognition_current(recognition_generation):
+                        print("[WhisperDiag] decision=discard reason=mic_disabled_during_transcribe")
+                        continue
                     noise_reason = classify_recognition_quality(text, segments)
                     if noise_reason is None and not text:
                         noise_reason = "empty_text"
@@ -739,10 +760,17 @@ class VoiceRecognizer:
                             if self._tts_interfered_since(tts_generation):
                                 print("[WhisperDiag] decision=discard reason=tts_started_before_send")
                                 continue
+                            if not self.is_recognition_current(recognition_generation):
+                                print("[WhisperDiag] decision=discard reason=mic_disabled_before_send")
+                                continue
                             _last_text      = text
                             _last_text_time = now
                             print("[WhisperDiag] decision=send reason=accepted")
-                            self.on_text(text)
+                            callback = getattr(self, "on_text_generation", None)
+                            if callback is not None:
+                                callback(text, recognition_generation)
+                            else:
+                                self.on_text(text)
                         else:
                             print("[WhisperDiag] decision=discard reason=recent_duplicate")
                 except Exception as e:
@@ -756,4 +784,6 @@ class VoiceRecognizer:
             pa.terminate()
 
     def stop(self) -> None:
+        self._recognition_generation += 1
+        self._enabled.clear()
         self._active = False

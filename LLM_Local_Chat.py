@@ -158,7 +158,7 @@ if sys.platform == "win32":
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.8.1"
+APP_VERSION = "1.8.2"
 
 
 def app_path(*parts: str) -> str:
@@ -3046,13 +3046,20 @@ class ChatApp:
             self._queue_initial_greeting()
             return
         print("[Whisper] VoiceRecognizer を起動します")
-        self._voice = VoiceRecognizer(
+        voice = VoiceRecognizer(
             wm,
             on_text=lambda t: self._post_ui(
                 lambda tx=t: self._voice_input(tx)),
             vad_threshold=self._vad_thresh,
             res_monitor=self._deps.res_monitor,
         )
+        voice.on_text_generation = lambda text, generation, source=voice: (
+            self._post_ui(
+                lambda tx=text, gen=generation, recognizer=source:
+                self._voice_input(tx, recognizer, gen)
+            )
+        )
+        self._voice = voice
         self._voice.on_idle       = lambda: self._post_ui(self._mic_idle)
         self._voice.on_listening  = lambda: self._post_ui(self._mic_listening)
         self._voice.on_processing = lambda: self._post_ui(self._mic_processing)
@@ -3733,7 +3740,7 @@ class ChatApp:
             )
 
         if self._current_path == target:
-            self._new_session()
+            self._new_session(save_current=False)
 
         self._refresh_chat_list()
 
@@ -3998,7 +4005,15 @@ class ChatApp:
     ) -> None:
         self._integrations.confirm_and_send_biolog(record, explicit_fields)
 
-    def _voice_input(self, text: str) -> None:
+    def _voice_input(self, text: str, recognizer=None, generation=None) -> None:
+        if (
+            recognizer is not None
+            and (
+                recognizer is not self._voice
+                or not recognizer.is_recognition_current(generation)
+            )
+        ):
+            return
         self._ctrl.handle_voice(text)
 
     # ══════════════════════════════════════════════
@@ -4041,10 +4056,18 @@ class ChatApp:
     # ══════════════════════════════════════════════
     #  セッション管理
     # ══════════════════════════════════════════════
-    def _new_session(self) -> None:
+    def _save_before_session_replace(self) -> bool:
+        """現在の通常会話を置換する前に保存する。"""
+        if getattr(self, "_is_guest", False):
+            return True
+        return self._save_now()
+
+    def _new_session(self, *, save_current: bool = True) -> None:
         if hasattr(self, "_ctrl") and self._ctrl.is_busy():
             messagebox.showwarning(
                 "警告", "AIの処理中です。しばらくお待ちください。")
+            return
+        if save_current and not self._save_before_session_replace():
             return
         # チャット切替は添付削除操作ではない。表示中の参照だけを外す。
         self._attachments = []
@@ -4363,6 +4386,8 @@ class ChatApp:
         except Exception as e:
             messagebox.showerror("読込エラー", str(e))
             return
+        if not self._save_before_session_replace():
+            return
 
         # 元チャットの保存済み添付は削除せず、選択したチャットを復元する。
         self._attachments = []
@@ -4403,12 +4428,14 @@ class ChatApp:
             messagebox.showwarning(
                 "警告", "AIの処理中はゲストモードを切り替えられません。")
             return
+        if not self._is_guest and not self._save_before_session_replace():
+            return
         self._is_guest = not self._is_guest
         self._btn_guest.config(
             text="ゲストモード: ON"  if self._is_guest else "ゲストモード: OFF",
             fg  =C["guest_tag"]      if self._is_guest else C["fg_sub"],
         )
-        self._new_session()
+        self._new_session(save_current=False)
 
     # ══════════════════════════════════════════════
     #  設定ダイアログ

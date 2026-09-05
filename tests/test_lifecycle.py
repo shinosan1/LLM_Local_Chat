@@ -227,6 +227,7 @@ class SessionAttachmentLifetimeTests(unittest.TestCase):
     def _session_app(self):
         app = ChatApp.__new__(ChatApp)
         app._attachments = [object()]
+        app._is_guest = False
         app._ctrl = Mock()
         app._ctrl.is_busy.return_value = False
         app._session_store = Mock()
@@ -239,6 +240,7 @@ class SessionAttachmentLifetimeTests(unittest.TestCase):
         app._chat_text = Mock()
         app._entry = Mock()
         app._update_status = Mock()
+        app._save_now = Mock(return_value=True)
         return app
 
     def test_new_session_discards_session_attachments(self):
@@ -253,6 +255,20 @@ class SessionAttachmentLifetimeTests(unittest.TestCase):
             app._new_session()
         self.assertEqual(len(app._attachments), 1)
 
+    def test_save_failure_keeps_current_session_when_creating_new_one(self):
+        app = self._session_app()
+        attachments = app._attachments
+        app._current_path = "current-path"
+        app._current_session = {"history": [{"user": "keep"}]}
+        app._save_now.return_value = False
+
+        app._new_session()
+
+        self.assertIs(app._attachments, attachments)
+        self.assertEqual(app._current_path, "current-path")
+        self.assertEqual(app._current_session["history"], [{"user": "keep"}])
+        app._session_store.new_session.assert_not_called()
+
     def test_loading_another_session_discards_attachments(self):
         app = self._session_app()
         app._chat_list = Mock()
@@ -265,6 +281,49 @@ class SessionAttachmentLifetimeTests(unittest.TestCase):
         }
         app._load_selected()
         self.assertEqual(app._attachments, [])
+
+    def test_save_failure_keeps_current_session_when_loading_another_one(self):
+        app = self._session_app()
+        attachments = app._attachments
+        app._current_path = "current-path"
+        app._current_session = {"history": [{"user": "keep"}]}
+        app._save_now.return_value = False
+        app._chat_list = Mock()
+        app._chat_list.curselection.return_value = (0,)
+        app._files = ["other-path"]
+        app._session_store.load.return_value = {
+            "title": "別のチャット", "summary": "", "history": []}
+
+        app._load_selected()
+
+        self.assertIs(app._attachments, attachments)
+        self.assertEqual(app._current_path, "current-path")
+        self.assertEqual(app._current_session["history"], [{"user": "keep"}])
+
+    def test_save_failure_keeps_normal_mode_when_enabling_guest(self):
+        app = self._session_app()
+        app._btn_guest = Mock()
+        app._current_path = "current-path"
+        app._save_now.return_value = False
+
+        app._toggle_guest()
+
+        self.assertFalse(app._is_guest)
+        app._btn_guest.config.assert_not_called()
+
+    def test_voice_input_discards_stale_recognition_result(self):
+        app = ChatApp.__new__(ChatApp)
+        app._ctrl = Mock()
+        recognizer = Mock()
+        app._voice = recognizer
+        recognizer.is_recognition_current.return_value = False
+
+        app._voice_input("古い結果", recognizer, 1)
+
+        app._ctrl.handle_voice.assert_not_called()
+        recognizer.is_recognition_current.return_value = True
+        app._voice_input("新しい結果", recognizer, 2)
+        app._ctrl.handle_voice.assert_called_once_with("新しい結果")
 
     def test_current_chat_attachment_clear_requires_confirmation(self):
         attachment = Mock()

@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Local Chat — アーキテクチャ</title>
+<style>
+  /* ── リセット & ベース ──────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0d0d14;
+    --surface:   #14141f;
+    --card:      #1c1c2e;
+    --border:    #2a2a40;
+    --accent:    #10A37F;
+    --accent2:   #7c3aed;
+    --accent3:   #f59e0b;
+    --accent4:   #ef4444;
+    --fg:        #e2e8f0;
+    --fg-sub:    #94a3b8;
+    --code-bg:   #1e1e2e;
+    --code-fg:   #cdd6f4;
+    --green:     #a6e3a1;
+    --blue:      #89b4fa;
+    --yellow:    #f9e2af;
+    --red:       #f38ba8;
+    --mauve:     #cba6f7;
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Segoe UI', 'Noto Sans JP', system-ui, sans-serif;
+    overflow: hidden;
+  }
+
+  /* ── スライドコンテナ ───────────────────────── */
+  .deck {
+    width: 100vw; height: 100vh;
+    position: relative;
+  }
+
+  .slide {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    padding: 48px 80px;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.4s ease, transform 0.4s ease;
+    transform: translateY(20px);
+  }
+  .slide.active {
+    opacity: 1; pointer-events: auto;
+    transform: translateY(0);
+  }
+
+  /* ── ナビゲーション ─────────────────────────── */
+  .nav {
+    position: fixed; bottom: 28px; left: 50%;
+    transform: translateX(-50%);
+    display: flex; gap: 12px; align-items: center;
+    z-index: 100;
+  }
+  .nav button {
+    background: var(--card); border: 1px solid var(--border);
+    color: var(--fg); padding: 8px 20px; border-radius: 8px;
+    cursor: pointer; font-size: 14px; transition: background 0.2s;
+  }
+  .nav button:hover { background: var(--border); }
+  .nav button:disabled { opacity: 0.3; cursor: default; }
+  .counter {
+    font-size: 13px; color: var(--fg-sub);
+    min-width: 60px; text-align: center;
+  }
+  .progress-bar {
+    position: fixed; top: 0; left: 0; height: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    transition: width 0.4s ease;
+    z-index: 100;
+  }
+
+  /* ── 共通テキスト ────────────────────────────── */
+  .slide-title {
+    font-size: clamp(22px, 3vw, 34px);
+    font-weight: 700;
+    color: var(--fg);
+    margin-bottom: 32px;
+    text-align: center;
+    line-height: 1.3;
+  }
+  .slide-title .accent  { color: var(--accent); }
+  .slide-title .accent2 { color: var(--accent2); }
+
+  .sub {
+    font-size: 14px; color: var(--fg-sub);
+    margin-top: 8px; letter-spacing: 0.04em;
+    text-align: center;
+  }
+  .badge {
+    display: inline-block;
+    padding: 3px 10px; border-radius: 20px;
+    font-size: 12px; font-weight: 600;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    margin: 0 4px;
+  }
+  .badge.purple {
+    background: color-mix(in srgb, var(--accent2) 15%, transparent);
+    color: var(--mauve); border-color: color-mix(in srgb, var(--accent2) 40%, transparent);
+  }
+  .badge.yellow {
+    background: color-mix(in srgb, var(--accent3) 15%, transparent);
+    color: var(--yellow); border-color: color-mix(in srgb, var(--accent3) 40%, transparent);
+  }
+  .badge.red {
+    background: color-mix(in srgb, var(--accent4) 15%, transparent);
+    color: var(--red); border-color: color-mix(in srgb, var(--accent4) 40%, transparent);
+  }
+
+  /* ── カード ─────────────────────────────────── */
+  .cards {
+    display: flex; gap: 20px; width: 100%; max-width: 1100px;
+    flex-wrap: wrap; justify-content: center;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 24px 28px;
+    flex: 1; min-width: 200px;
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card-icon { font-size: 28px; margin-bottom: 10px; }
+  .card-title {
+    font-size: 15px; font-weight: 700;
+    color: var(--accent); margin-bottom: 8px;
+  }
+  .card-body { font-size: 13px; color: var(--fg-sub); line-height: 1.7; }
+
+  /* ── テーブル ────────────────────────────────── */
+  table {
+    border-collapse: collapse; width: 100%; max-width: 900px;
+    font-size: 14px;
+  }
+  th {
+    background: color-mix(in srgb, var(--accent) 12%, var(--card));
+    color: var(--accent); font-weight: 700;
+    padding: 10px 16px; text-align: left; border-bottom: 2px solid var(--accent);
+  }
+  td {
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    color: var(--fg-sub); line-height: 1.6;
+    vertical-align: top;
+  }
+  td:first-child { color: var(--blue); font-family: monospace; font-size: 13px; }
+  tr:hover td { background: color-mix(in srgb, var(--border) 40%, transparent); }
+
+  /* ── コードブロック ──────────────────────────── */
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px 24px;
+    font-family: 'Consolas', 'Cascadia Code', monospace;
+    font-size: 13px; line-height: 1.7;
+    color: var(--code-fg); overflow-x: auto;
+    max-width: 900px; width: 100%;
+  }
+  .kw  { color: var(--mauve); }
+  .fn  { color: var(--blue); }
+  .st  { color: var(--green); }
+  .cm  { color: #6c7086; font-style: italic; }
+  .op  { color: var(--red); }
+  .num { color: var(--yellow); }
+  .cls { color: var(--yellow); font-weight: 700; }
+
+  /* ── フローダイアグラム ──────────────────────── */
+  .flow {
+    display: flex; align-items: center; gap: 0;
+    flex-wrap: wrap; justify-content: center;
+    max-width: 1000px;
+  }
+  .flow-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 20px;
+    text-align: center; min-width: 130px;
+    font-size: 13px; font-weight: 600;
+    transition: border-color 0.2s;
+  }
+  .flow-box.green  { border-color: var(--accent);  color: var(--green);  }
+  .flow-box.purple { border-color: var(--accent2); color: var(--mauve);  }
+  .flow-box.yellow { border-color: var(--accent3); color: var(--yellow); }
+  .flow-box.red    { border-color: var(--accent4); color: var(--red);    }
+  .flow-box.blue   { border-color: #60a5fa;        color: var(--blue);   }
+  .arrow {
+    font-size: 22px; color: var(--fg-sub);
+    padding: 0 8px; user-select: none;
+  }
+  .flow-label {
+    font-size: 11px; color: var(--fg-sub);
+    margin-top: 4px; font-weight: 400;
+  }
+
+  /* ── 2カラムレイアウト ───────────────────────── */
+  .two-col {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 24px; width: 100%; max-width: 1000px;
+    align-items: start;
+  }
+  .col-label {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; margin-bottom: 12px;
+    padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  }
+  .col-label.before { color: var(--red); }
+  .col-label.after  { color: var(--green); }
+
+  /* ── リスト ──────────────────────────────────── */
+  ul.styled { list-style: none; max-width: 800px; width: 100%; }
+  ul.styled li {
+    padding: 10px 0 10px 20px; border-bottom: 1px solid var(--border);
+    color: var(--fg-sub); font-size: 14px; line-height: 1.6;
+    position: relative;
+  }
+  ul.styled li::before {
+    content: '▸'; position: absolute; left: 0;
+    color: var(--accent);
+  }
+  ul.styled li strong { color: var(--fg); }
+
+  /* ── タイトルスライド装飾 ────────────────────── */
+  .hero-title {
+    font-size: clamp(32px, 5vw, 56px);
+    font-weight: 800; text-align: center;
+    line-height: 1.2; margin-bottom: 16px;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 60%, #60a5fa 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hero-sub {
+    font-size: 16px; color: var(--fg-sub);
+    text-align: center; letter-spacing: 0.06em;
+  }
+  .hero-badges { display: flex; gap: 10px; margin-top: 24px; flex-wrap: wrap; justify-content: center; }
+  .glow-ring {
+    width: 280px; height: 280px;
+    border-radius: 50%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent) 8%, transparent) 0%, transparent 70%);
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -60%);
+    pointer-events: none;
+  }
+
+  /* ── スレッド図 ──────────────────────────────── */
+  .thread-diagram {
+    display: flex; flex-direction: column; gap: 10px;
+    max-width: 860px; width: 100%;
+  }
+  .thread-row {
+    display: flex; align-items: stretch; gap: 10px;
+  }
+  .thread-name {
+    min-width: 200px; padding: 10px 16px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px 0 0 8px; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center;
+  }
+  .thread-body {
+    flex: 1; padding: 10px 16px;
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 0 8px 8px 0; font-size: 12px; color: var(--fg-sub);
+    line-height: 1.6;
+  }
+  .thread-body code { color: var(--blue); font-family: monospace; }
+
+  /* ── アーキテクチャ層図 ──────────────────────── */
+  .layer-stack {
+    display: flex; flex-direction: column; gap: 6px;
+    max-width: 700px; width: 100%;
+  }
+  .layer {
+    padding: 16px 28px; border-radius: 10px;
+    display: flex; align-items: center; gap: 16px;
+    border: 1px solid var(--border);
+  }
+  .layer-num {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+    min-width: 28px;
+  }
+  .layer-title { font-size: 15px; font-weight: 700; }
+  .layer-desc  { font-size: 12px; color: var(--fg-sub); margin-top: 2px; }
+  .layer-arrow-down {
+    text-align: center; font-size: 20px; color: var(--fg-sub);
+    margin: -2px 0;
+  }
+</style>
+</head>
+<body>
+
+<div class="progress-bar" id="progress"></div>
+
+<div class="deck" id="deck">
+
+  <!-- ===== SLIDE 1: タイトル ===== -->
+  <div class="slide active" id="s1">
+    <div class="glow-ring"></div>
+    <p style="font-size:13px;letter-spacing:.14em;color:var(--fg-sub);margin-bottom:12px;text-transform:uppercase;">Architecture Deep Dive</p>
+    <h1 class="hero-title">LLM Local Chat</h1>
+    <p class="hero-sub">ローカルLLM × 音声 × TTS × 外部API 統合チャットアプリの設計</p>
+    <div class="hero-badges">
+      <span class="badge">llama.cpp</span>
+      <span class="badge purple">Whisper</span>
+      <span class="badge yellow">SAPI5 TTS</span>
+      <span class="badge red">Tkinter UI</span>
+      <span class="badge">Kakeibo / Biolog API</span>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 2: 全体構成 ===== -->
+  <div class="slide" id="s2">
+    <h2 class="slide-title">全体 <span class="accent">アーキテクチャ</span></h2>
+    <div class="layer-stack">
+      <div class="layer" style="background:color-mix(in srgb,#ef4444 8%,var(--card));border-color:#ef4444;">
+        <span class="layer-num" style="color:#ef4444">UI</span>
+        <div><div class="layer-title" style="color:#f87171">ChatApp（Tkinter）</div>
+        <div class="layer-desc">ウィジェット・イベント配線・root.after() による UI 更新</div></div>
+      </div>
+      <div class="layer-arrow-down">↓</div>
+      <div class="layer" style="background:color-mix(in srgb,var(--accent2) 8%,var(--card));border-color:var(--accent2);">
+        <span class="layer-num" style="color:var(--mauve)">CTL</span>
+        <div><div class="layer-title" style="color:var(--mauve)">Controller</div>
+        <div class="layer-desc">handle_text / handle_voice / stop — 唯一の制御点</div></div>
+      </div>
+      <div class="layer-arrow-down">↓</div>
+      <div class="layer" style="background:color-mix(in srgb,var(--accent) 8%,var(--card));border-color:var(--accent);">
+        <span class="layer-num" style="color:var(--green)">SVC</span>
+        <div><div class="layer-title" style="color:var(--green)">Services</div>
+        <div class="layer-desc">LLMService · TTSWorker · VoiceRecognizer · API Clients</div></div>
+      </div>
+      <div class="layer-arrow-down">↓</div>
+      <div class="layer" style="background:color-mix(in srgb,#60a5fa 8%,var(--card));border-color:#60a5fa;">
+        <span class="layer-num" style="color:var(--blue)">INF</span>
+        <div><div class="layer-title" style="color:var(--blue)">Infrastructure</div>
+        <div class="layer-desc">llama-cpp-python · PyAudio · win32com (SAPI5) · urllib</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 3: クラス構成 ===== -->
+  <div class="slide" id="s3">
+    <h2 class="slide-title">クラス <span class="accent">構成</span></h2>
+    <table>
+      <thead>
+        <tr><th>クラス</th><th>責務</th><th>スレッド</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>ChatApp</td><td>Tkinter ウィンドウ全体・イベント配線・UI 更新</td><td>メインスレッド</td></tr>
+        <tr><td>Controller</td><td>入力統合・LLM 制御・後処理・TTS トリガー</td><td>メイン + ワーカー生成</td></tr>
+        <tr><td>LLMService</td><td>ストリーミング推論・abort フラグ管理</td><td>ワーカー（デーモン）</td></tr>
+        <tr><td>TTSWorker</td><td>SAPI5 発話キュー・on_start / on_stop コールバック</td><td>デーモン常駐</td></tr>
+        <tr><td>VoiceRecognizer</td><td>PyAudio + RMS-VAD + Whisper 音声認識</td><td>デーモン常駐</td></tr>
+        <tr><td>AvatarWindow</td><td>瞬き・口パクアニメーション（Toplevel）</td><td>メインスレッド</td></tr>
+        <tr><td>SettingsDialog</td><td>設定編集・モデルパス・温度・VAD 閾値</td><td>メインスレッド</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ===== SLIDE 4: スレッド設計 ===== -->
+  <div class="slide" id="s4">
+    <h2 class="slide-title"><span class="accent">スレッド</span> 設計</h2>
+    <div class="thread-diagram">
+      <div class="thread-row">
+        <div class="thread-name" style="color:var(--red);border-color:var(--accent4);">🖥 メインスレッド<br><small style="color:var(--fg-sub)">Tkinter mainloop</small></div>
+        <div class="thread-body">UI 描画・イベント処理。<code>root.after(0, cb)</code> 経由でのみ UI 更新を受け付ける</div>
+      </div>
+      <div class="thread-row">
+        <div class="thread-name" style="color:var(--mauve);border-color:var(--accent2);">🤖 LLM ワーカー<br><small style="color:var(--fg-sub)">都度生成・デーモン</small></div>
+        <div class="thread-body">ストリーミング推論ループ。完了時 <code>root.after(0, _on_llm_done)</code></div>
+      </div>
+      <div class="thread-row">
+        <div class="thread-name" style="color:var(--yellow);border-color:var(--accent3);">🔊 TTSWorker<br><small style="color:var(--fg-sub)">常駐デーモン</small></div>
+        <div class="thread-body">発話キューをポーリング。発話開始／終了時 <code>root.after(0, on_start/on_stop)</code></div>
+      </div>
+      <div class="thread-row">
+        <div class="thread-name" style="color:var(--blue);border-color:#60a5fa;">🎤 VoiceRecognizer<br><small style="color:var(--fg-sub)">常駐デーモン</small></div>
+        <div class="thread-body">VAD → Whisper ループ。テキスト確定時 <code>root.after(0, _voice_input)</code></div>
+      </div>
+      <div class="thread-row">
+        <div class="thread-name" style="color:var(--green);border-color:var(--accent);">🌐 API ワーカー<br><small style="color:var(--fg-sub)">都度生成・デーモン</small></div>
+        <div class="thread-body">Kakeibo / Biolog への POST。完了時 <code>root.after(0, _chat_write)</code></div>
+      </div>
+    </div>
+    <p class="sub" style="margin-top:16px;">⚠ Tkinter を直接操作できるのはメインスレッドのみ</p>
+  </div>
+
+  <!-- ===== SLIDE 5: Controller パターン ===== -->
+  <div class="slide" id="s5">
+    <h2 class="slide-title">Controller <span class="accent2">パターン</span>導入</h2>
+    <div class="two-col">
+      <div>
+        <div class="col-label before">Before — ChatApp 直結</div>
+        <pre><code><span class="kw">class</span> <span class="cls">ChatApp</span>:
+  <span class="kw">def</span> <span class="fn">_send</span>(self):
+    <span class="cm"># UI読取</span>
+    text = self._entry.get(...)
+    <span class="cm"># LLM スレッド生成</span>
+    threading.Thread(
+      target=self.<span class="fn">_llm_worker</span>
+    ).start()
+
+  <span class="kw">def</span> <span class="fn">_llm_worker</span>(self, ...):
+    <span class="cm"># 推論・ストリーミング</span>
+    ...
+
+  <span class="kw">def</span> <span class="fn">_on_llm_done</span>(self, ...):
+    <span class="cm"># 後処理・TTS・保存</span>
+    ...</code></pre>
+      </div>
+      <div>
+        <div class="col-label after">After — Controller 委譲</div>
+        <pre><code><span class="kw">class</span> <span class="cls">ChatApp</span>:
+  <span class="kw">def</span> <span class="fn">_send</span>(self):
+    self._ctrl.<span class="fn">handle_text</span>()
+
+  <span class="kw">def</span> <span class="fn">_voice_input</span>(self, text):
+    self._ctrl.<span class="fn">handle_voice</span>(text)
+
+  <span class="kw">def</span> <span class="fn">_stop_all</span>(self):
+    self._ctrl.<span class="fn">stop</span>()
+
+<span class="kw">class</span> <span class="cls">Controller</span>:
+  <span class="cm"># 制御ロジックをここに集約</span>
+  ...</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 6: チャット送信フロー ===== -->
+  <div class="slide" id="s6">
+    <h2 class="slide-title">チャット <span class="accent">送信フロー</span></h2>
+    <div class="flow" style="gap:0;">
+      <div class="flow-box red">
+        👤 ユーザー入力
+        <div class="flow-label">_entry (Tkinter Text)</div>
+      </div>
+      <span class="arrow">→</span>
+      <div class="flow-box purple">
+        ChatApp._send()
+        <div class="flow-label">薄いラッパー</div>
+      </div>
+      <span class="arrow">→</span>
+      <div class="flow-box purple">
+        Controller.handle_text()
+        <div class="flow-label">入力検証・UI更新</div>
+      </div>
+    </div>
+    <div style="text-align:center;font-size:22px;color:var(--fg-sub);margin:8px 0;">↓</div>
+    <div class="flow">
+      <div class="flow-box yellow">
+        PromptBuilder.build()
+        <div class="flow-label">messages 構築</div>
+      </div>
+      <span class="arrow">→</span>
+      <div class="flow-box yellow">
+        ResourceManager.decide()
+        <div class="flow-label">VRAM チェック</div>
+      </div>
+      <span class="arrow">→</span>
+      <div class="flow-box green">
+        LLMService.generate()
+        <div class="flow-label">ストリーミング推論</div>
+      </div>
+    </div>
+    <div style="text-align:center;font-size:22px;color:var(--fg-sub);margin:8px 0;">↓</div>
+    <div class="flow">
+      <div class="flow-box purple">
+        Controller._on_llm_done()
+        <div class="flow-label">履歴・要約・API</div>
+      </div>
+      <span class="arrow">→</span>
+      <div class="flow-box yellow">
+        TTSWorker.speak()
+        <div class="flow-label">コードブロック除外</div>
+      </div>
+      <span class="arrow">→</span>
+      <div class="flow-box red">
+        ChatApp._save_now()
+        <div class="flow-label">JSON 保存</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 7: 音声認識フロー ===== -->
+  <div class="slide" id="s7">
+    <h2 class="slide-title">音声認識 <span class="accent">フロー</span></h2>
+    <div class="flow" style="flex-direction:column;align-items:flex-start;gap:12px;max-width:720px;">
+      <div style="display:flex;align-items:center;gap:12px;width:100%;">
+        <div class="flow-box blue" style="min-width:160px">🎤 PyAudio<div class="flow-label">16kHz / int16</div></div>
+        <span class="arrow">→</span>
+        <div class="flow-box blue" style="flex:1">RMS-VAD<div class="flow-label">閾値超過で音声開始検出（VAD_SPEECH_CHUNKS=6 連続）</div></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;width:100%;">
+        <div class="flow-box blue" style="min-width:160px">📼 録音バッファ</div>
+        <span class="arrow">→</span>
+        <div class="flow-box blue" style="flex:1">無音検出で終了<div class="flow-label">VAD_SILENCE_CHUNKS=30 または VAD_MAX_SECONDS=6 秒</div></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;width:100%;">
+        <div class="flow-box purple" style="min-width:160px">Whisper 変換</div>
+        <span class="arrow">→</span>
+        <div class="flow-box purple" style="flex:1">ノイズ・重複フィルタ<div class="flow-label">WHISPER_NOISE / WHISPER_NOISE_PARTIAL · 同一テキスト 10 秒排除</div></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;width:100%;">
+        <div class="flow-box green" style="min-width:160px">root.after()<div class="flow-label">UI スレッドへ</div></div>
+        <span class="arrow">→</span>
+        <div class="flow-box green" style="flex:1">Controller.handle_voice(text)<div class="flow-label">_tts_active=True の間はスキップ（ハウリング防止）</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 8: TTS & アバター ===== -->
+  <div class="slide" id="s8">
+    <h2 class="slide-title">TTS <span class="accent">&</span> アバター制御</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="card-icon">🔊</div>
+        <div class="card-title">TTSWorker</div>
+        <div class="card-body">
+          Windows SAPI5 (<code>win32com</code>) を使う常駐デーモン。<br>
+          テキストを Queue に積み、<code>_play_loop</code> が順次発話。<br>
+          <code>stop_all()</code> でキューをフラッシュ＆中断。
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔒</div>
+        <div class="card-title">マイク排他制御</div>
+        <div class="card-body">
+          TTS 発話中は <code>voice._tts_active = True</code> にセット。<br>
+          VoiceRecognizer はこのフラグを確認し、音声チャンクを読み捨て。<br>
+          TTS 終了 800ms 後に復帰（ハウリング防止）。
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-icon">🐱</div>
+        <div class="card-title">AvatarWindow</div>
+        <div class="card-body">
+          別 Toplevel ウィンドウで常駐。<br>
+          <strong>瞬き</strong>: ランダム間隔 2〜6 秒、150ms 閉じる<br>
+          <strong>口パク</strong>: TTS 発話中に 140ms ごとにトグル
+        </div>
+      </div>
+    </div>
+    <div class="flow" style="margin-top:24px;">
+      <div class="flow-box yellow">tts.speak(text)</div>
+      <span class="arrow">→</span>
+      <div class="flow-box yellow">on_start cb</div>
+      <span class="arrow">→</span>
+      <div class="flow-box red">voice._tts_active=True<br>VAD threshold↑</div>
+      <span class="arrow">→</span>
+      <div class="flow-box yellow">SAPI5 発話</div>
+      <span class="arrow">→</span>
+      <div class="flow-box yellow">on_stop cb</div>
+      <span class="arrow">→</span>
+      <div class="flow-box green">800ms後に復帰</div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 9: 外部 API 連携 ===== -->
+  <div class="slide" id="s9">
+    <h2 class="slide-title">外部 <span class="accent">API</span> 連携</h2>
+    <div class="two-col" style="gap:28px;">
+      <div>
+        <div class="col-label" style="color:var(--accent3)">💴 Kakeibo（家計簿）モード</div>
+        <ul class="styled" style="font-size:13px;">
+          <li><strong>ポート:</strong> 8767</li>
+          <li><strong>プロンプト注入:</strong> <code>_kakeibo_build_prompt()</code> で支出カテゴリ一覧とスキーマを挿入</li>
+          <li><strong>JSON 抽出:</strong> <code>_extract_kakeibo_json()</code> で <code>```json ... ```</code> ブロックを正規表現でパース</li>
+          <li><strong>送信:</strong> <code>POST /api/kakeibo/record</code> をデーモンスレッドで非同期 POST</li>
+          <li><strong>必須フィールド:</strong> amount / category / store / date / type</li>
+        </ul>
+      </div>
+      <div>
+        <div class="col-label" style="color:var(--blue)">❤ Biolog（健康記録）モード</div>
+        <ul class="styled" style="font-size:13px;">
+          <li><strong>ポート:</strong> 8766</li>
+          <li><strong>プロンプト注入:</strong> <code>_health_build_prompt()</code> で体重・体脂肪・食事・活動スキーマを挿入</li>
+          <li><strong>JSON 抽出:</strong> <code>_extract_health_json()</code> で計測値を取得</li>
+          <li><strong>送信タイミング:</strong> TTS 開始直後に非同期送信（VAD 排他を損なわない）</li>
+          <li><strong>DB:</strong> SQLite（WAL 禁止・NTFS 非互換）</li>
+        </ul>
+      </div>
+    </div>
+    <div class="flow" style="margin-top:20px;">
+      <div class="flow-box purple">LLM 応答</div>
+      <span class="arrow">→</span>
+      <div class="flow-box yellow">JSON 抽出</div>
+      <span class="arrow">→</span>
+      <div class="flow-box green">API POST<div class="flow-label">デーモンスレッド</div></div>
+      <span class="arrow">→</span>
+      <div class="flow-box red">root.after()<div class="flow-label">結果を chat に表示</div></div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 10: セッション & 設定管理 ===== -->
+  <div class="slide" id="s10">
+    <h2 class="slide-title">セッション <span class="accent">&</span> 設定管理</h2>
+    <div class="two-col">
+      <div>
+        <div class="col-label" style="color:var(--accent)">セッション JSON（chat_logs/）</div>
+        <pre><code>{
+  <span class="st">"title"</span>: <span class="st">"今日の夕飯は…"</span>,
+  <span class="st">"history"</span>: [
+    {
+      <span class="st">"user"</span>: <span class="st">"メッセージ"</span>,
+      <span class="st">"assistant"</span>: <span class="st">"応答"</span>
+    }
+  ],
+  <span class="st">"summary"</span>: <span class="st">"要約テキスト"</span>
+}</code></pre>
+        <p style="font-size:12px;color:var(--fg-sub);margin-top:8px;">
+          ターン数が SUMMARY_THRESHOLD(4) の倍数になると<br>
+          バックグラウンドで LLM 要約を生成
+        </p>
+      </div>
+      <div>
+        <div class="col-label" style="color:var(--accent)">設定 JSON（chat_settings.json）</div>
+        <pre><code>{
+  <span class="st">"model_path"</span>: <span class="st">"models/gemma..."</span>,
+  <span class="st">"n_ctx"</span>:      <span class="num">8192</span>,
+  <span class="st">"max_tokens"</span>: <span class="num">1024</span>,
+  <span class="st">"temperature"</span>:<span class="num">0.7</span>,
+  <span class="st">"vad_threshold"</span>:<span class="num">150</span>,
+  <span class="st">"mic_enabled"</span>: <span class="kw">false</span>,
+  <span class="st">"tts_enabled"</span>: <span class="kw">false</span>
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 11: VRAM セーフティ ===== -->
+  <div class="slide" id="s11">
+    <h2 class="slide-title">VRAM <span class="accent">セーフティフィルタ</span></h2>
+    <div class="cards">
+      <div class="card">
+        <div class="card-icon">📊</div>
+        <div class="card-title">ResourceMonitor</div>
+        <div class="card-body">
+          バックグラウンドで GPU 使用率を監視。<br>
+          Whisper の δgpu% も考慮した動的 max_tokens 算出。
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-icon">🛡</div>
+        <div class="card-title">VRAMGuard</div>
+        <div class="card-body">
+          LLM ロード前に VRAM 残量を確認。<br>
+          <code>adjust_llm()</code> で gpu_layers を自動削減。<br>
+          不足なら CPU フォールバック。
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-icon">⚡</div>
+        <div class="card-title">adjust_inference()</div>
+        <div class="card-body">
+          推論直前に再チェック。<br>
+          高負荷時は max_tokens を削減して実行。<br>
+          閾値超過なら実行拒否 → エラーメッセージ表示。
+        </div>
+      </div>
+    </div>
+    <div class="flow" style="margin-top:24px;">
+      <div class="flow-box blue">LLM ロード時</div>
+      <span class="arrow">→</span>
+      <div class="flow-box blue">VRAMGuard<br>adjust_llm()</div>
+      <span class="arrow">→</span>
+      <div class="flow-box yellow">推論直前</div>
+      <span class="arrow">→</span>
+      <div class="flow-box yellow">adjust_inference()<br>ResourceManager</div>
+      <span class="arrow">→</span>
+      <div class="flow-box green">OK → 実行</div>
+      <span class="arrow">/</span>
+      <div class="flow-box red">NG → 拒否</div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 12: まとめ ===== -->
+  <div class="slide" id="s12">
+    <div class="glow-ring" style="background:radial-gradient(circle,color-mix(in srgb,var(--accent2) 8%,transparent) 0%,transparent 70%)"></div>
+    <h2 class="slide-title">まとめ</h2>
+    <ul class="styled" style="max-width:700px;">
+      <li><strong>UI → Controller → Services</strong> の明確な3層分離</li>
+      <li><strong>root.after()</strong> によるスレッド安全な UI 更新を徹底</li>
+      <li><strong>_tts_active フラグ</strong> で TTS ↔ マイクの排他制御</li>
+      <li><strong>VRAMGuard</strong> で GPU リソースを保護しつつ動的に最適化</li>
+      <li><strong>Kakeibo / Biolog</strong> の API 連携をモードとして UI に統合</li>
+      <li><strong>セッション要約</strong> でコンテキスト長を効率的に管理</li>
+      <li>Windows 専用（SAPI5 TTS）だが、TTS 層は差し替え可能な構造</li>
+    </ul>
+  </div>
+
+</div><!-- /deck -->
+
+<!-- ── ナビゲーション ── -->
+<div class="nav">
+  <button id="prev" onclick="go(-1)" disabled>← 前へ</button>
+  <span class="counter" id="counter">1 / 12</span>
+  <button id="next" onclick="go(1)">次へ →</button>
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  let cur = 0;
+
+  function go(dir) {
+    slides[cur].classList.remove('active');
+    cur = Math.max(0, Math.min(slides.length - 1, cur + dir));
+    slides[cur].classList.add('active');
+    document.getElementById('counter').textContent = `${cur + 1} / ${slides.length}`;
+    document.getElementById('prev').disabled = cur === 0;
+    document.getElementById('next').disabled = cur === slides.length - 1;
+    document.getElementById('progress').style.width = `${(cur + 1) / slides.length * 100}%`;
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') go(1);
+    if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')                     go(-1);
+  });
+
+  // 初期 progress
+  document.getElementById('progress').style.width = `${1 / slides.length * 100}%`;
+</script>
+</body>
+</html>

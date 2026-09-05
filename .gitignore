@@ -32,6 +32,7 @@ tk_chat_local.py(*)
 /skills.md
 /start.sh
 /docs/incidents/
+
 # ── Pythonキャッシュ ──────────────────────────
 __pycache__/
 *.pyc
@@ -59,6 +60,8 @@ data/
 # ── バックアップ・旧データ（実行用フォルダ）──
 backup_before_*/
 backup_*/
+.doc-sync-backup-*/
+.release-*-backup-*/
 OLD_DATA/
 *.bak
 *.bak_*

@@ -1,438 +1,1403 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#3d5a80">
-  <meta name="description" content="LLM Local Chat ガイド">
-  <title>LLM Local Chat ガイド</title>
-  <link rel="stylesheet" href="./styles.css">
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<meta content="#3d5a80" name="theme-color"/>
+<meta content="LLM Local Chat ガイド" name="description"/>
+<title>LLM Local Chat</title>
+<link href="./styles.css" rel="stylesheet"/>
 </head>
 <body class="readme-page">
-  <main class="readme-shell">
-    <header class="readme-hero">
-      <div class="readme-hero-title">
-        <p class="eyebrow">Guide</p>
-        <h1>LLM Local Chat</h1>
-      </div>
-      <nav class="doc-nav">
-        <a href="./TERMS_OF_USE.html">利用規約</a>
-        <a href="./PRIVACY_POLICY.html">プライバシーポリシー</a>
-        <a href="./LICENSE.html">ライセンス</a>
-        <a href="./DISCLAIMER.html">免責事項</a>
-        <a href="./THIRD_PARTY_LICENSES.html">サードパーティライセンス</a>
-        <a href="./CODE_REFERENCE.html">コード解説</a>
-        <a href="./SHA256.html">SHA-256</a>
-      </nav>
-    </header>
-
-    <section class="readme-card">
-      <p>ローカルLLM（llama.cpp）＋ Whisper音声認識＋ Windows SAPIを組み合わせた日本語AIチャットアプリです。 <strong>必要な依存ライブラリとモデルを取得済みの場合、推論・音声認識・音声合成・会話処理はローカルで実行されます。Biologと家計簿API連携は、別プロセスのローカルHTTP APIを任意で利用します。</strong></p>
-      <p>ローカル処理を重視した構成です。機密情報を扱う業務環境へ導入する場合は、端末のアクセス制御、Windowsユーザープロファイル、ディスク暗号化、Dockerポート、依存ライブラリ、バックアップ方法を含め、組織の情報セキュリティ担当者による事前評価を行ってください。</p>
-      <p><code>Python 3.12.10</code> <code>Version 1.8.1</code> <code>Platform: Windows</code> <code>License: MIT</code></p>
-      <p>詳しい実装の解説は<a href="./CODE_REFERENCE.html">コード解説</a>を参照してください。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>主な機能</h2>
-      <ul class="readme-list"><li>ストリーミング表示によるリアルタイム応答</li><li>PyAudio + RMS-VAD + Whisper による常駐音声認識</li><li>Windows SAPI5（win32comによる直接制御）のTTS読み上げ</li><li>アバターウィンドウ（瞬き・口パクアニメーション）</li><li>会話の要約メモリ（長期会話対応）</li><li>チャット履歴の保存・読み込み・検索</li><li><code>chat_settings.json</code>によるsystem prompt・persona・応答言語等のパーソナライズ</li><li>TXT / MD / JSON / CSVとPNG / JPEGのチャット単位の永続添付</li><li>ゲストモード（<code>chat_logs/</code>への履歴保存なし）</li><li>ダークテーマUI</li><li><strong>Biolog健康記録連携</strong> — 💪ボタンで計測値・食事・活動内容・メモを入力し、確認後にBiolog APIへPOST（v1.1.0）</li><li><strong>家計簿API連携（オプション）</strong> — ユーザー入力から最大10件の取引候補を生成し、1件ずつ確認したうえで、別途用意したローカルの<code>kakeibo-bridge</code> APIへ1件ずつPOSTします。家計簿アプリ、家計簿DB、<code>kakeibo-bridge</code>サーバー実装は本リポジトリに含まれません</li><li><strong>VRAM安全フィルタ</strong> — LLM・Whisper 同時動作時のVRAM枯渇によるクラッシュを確率的に削減（v1.2.0）</li><li><strong>LLM GPUオフロード切替</strong> — 自動・Full GPU・約75%・約50%・約25%・CPUを設定画面から選び、アプリを再起動せずモデルを安全に再読み込みします</li></ul>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.8.1 公開・保守文書の整備</h2>
-      <p>公開準備日: 2026-08-28〜2026-08-29</p>
-      <p>利用規約、プライバシーポリシー、免責事項、第三者ソフトウェアおよびライセンス情報を追加し、READMEから参照できるようにしました。公開用のSHA-256一覧には、README、アプリ本体、既存の公開対象および追加文書の実測値を記録しています。</p>
-      <p>この版では、チャット処理、保存形式、添付管理、ローカルAPI連携、UIの仕様を変更していません。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.8.0 チャット単位の保存済み添付</h2>
-      <p>リリース日: 2026-08-27</p>
-      <p>TXT / MD / JSON / CSVとPNG / JPEGは、添付時点のコピーをチャットへ紐づけて保存します。同じチャットでは後続質問・チャット切替・アプリ再起動後も再添付せず参照できます。履歴JSONには復元用メタデータだけを保存し、本文・画像本体・元ファイル絶対パスは埋め込みません。</p>
-      <p>設定の「保存済み添付ファイル」では、個別削除と全チャット対象の一括削除、総件数・合計容量を確認できます。保存領域はユーザー単位に分離されないため、共有環境での一括削除は同じ保存領域を使う他利用者の添付にも影響し得ます。</p>
-      <p><code>system_prompt</code>等のinline設定と外部promptは併用できます。本文なしで添付だけを送信する操作、同名・別内容の複数添付にも対応しました。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.7.3 パーソナライズ・ファイル添付・Vision対応</h2>
-      <p>リリース日: 2026-08-26</p>
-      <p><code>chat_settings.json</code>からsystem prompt、persona、応答言語、内部思考を表示しない指示を設定できるようになりました。長いpromptは、アプリ配置フォルダ基準のUTF-8 TXT / MDから読み込めます。</p>
-      <p>通常チャットではTXT / MD / JSON / CSVとPNG / JPEGを添付できます。選択時の内容を現在の会話セッション中だけメモリに保持し、後続質問でも参照します。実パス、画像バイナリ、テキスト添付本文は会話履歴・保存JSONへ残しません。</p>
-      <p>Visionは<code>llama-cpp-python 0.3.34</code>の<code>gemma4</code> / <code>llava15</code> handlerに対応します。対応projector / mmprojが設定されていないモデルでは画像を送信せず、UIへ警告します。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.7.2 不具合修正</h2>
-      <h3>Biologの日付省略時の完了表示を修正</h3>
-      <p>日付を省略したBiolog登録では、送信直前にJSTの登録日を確定し、実際にPOSTするrecordへ保持します。</p>
-      <p>成功時の表示日付は、API応答に有効な日付がある場合はその日付を優先し、ない場合は実際にPOSTした確定日付を使用します。これにより、登録自体は成功しているのに完了日付が<code>?</code>と表示される問題を修正しました。</p>
-      <p>明示日付は変更せず、API失敗時に成功表示を出さない既存挙動も維持しています。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.7.1 不具合修正</h2>
-      <p>この節は、LLM Local Chat側の家計簿API連携クライアントにおける候補生成・検証・確認・送信処理の修正です。実際の台帳登録には別途起動した<code>kakeibo-bridge</code> APIが必要で、家計簿アプリ、家計簿DB、bridgeサーバーは本リポジトリに含まれません。</p>
-      <h3>LLM GPUオフロードの再起動不要切替</h3>
-      <p>生成設定では、LLM GPUオフロードの希望モードを<code>自動</code>・<code>Full GPU</code>・<code>約75%</code>・ <code>約50%</code>・<code>約25%</code>・<code>CPU</code>から選択できます。変更時はチャットやアプリを終了せず、 旧モデルを解放してから新しい配置でバックグラウンド再読み込みします。</p>
-      <p>希望モードとは別に、最後に実際にロード成功したGPUオフロード率・配置レイヤー数・ Full/Partial/CPUを読み取り専用で表示します。<code>自動</code>では推論直前に最低予約量を 下回った場合だけ現在より低い配置へ自動downshiftし、同じ入力を1回だけ継続します。 推論ごとの自動upshiftは行わず、上位配置の再検討は起動・通常のモデル再読み込み・ 設定画面の「GPU配置を再評価」で行います。</p>
-      <h3>家計簿の日付入力に日本語形式を追加</h3>
-      <p>家計簿の日付は、従来の <code>YYYY/MM/DD</code>、<code>YYYY-MM-DD</code>、<code>M/D</code> に加えて、 <code>M月D日</code> と <code>YYYY年M月D日</code> もユーザー原文から機械抽出します。全角数字にも対応します。</p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>入力例</th><th>登録候補の日付</th></tr></thead><tbody><tr><td><code>8月22日セリア1130円</code></td><td>実行年を補った <code>2026-08-22</code>（実行年が2026年の場合）</td></tr><tr><td><code>８月２２日セリア１１３０円</code></td><td>同上</td></tr><tr><td><code>2026年8月22日セリア1130円</code></td><td><code>2026-08-22</code></td></tr><tr><td><code>２０２６年８月２２日セリア１１３０円</code></td><td><code>2026-08-22</code></td></tr></tbody></table></div>
-      <p>実在しない日付は明示日付として採用しません。無効な年付き表現の内部を年なし形式として 再解釈することもありません。例えば、実行年が閏年でも <code>2025年2月29日</code> を 実行年の <code>2月29日</code> として採用せず、日付なしの場合と同じく実行日へフォールバックします。</p>
-      <p>「昨日」「一昨日」「先週」などの自然言語相対日付には対応していません。 日付は引き続きLLM出力ではなくユーザー原文から決定し、確認画面で修正できます。</p>
-      <h3>日付直後の金額入力を修正</h3>
-      <p><code>8/20 1603円</code>、<code>2026/8/20 1603円</code>、<code>2026-08-20 1603円</code>のように、 日付の直後へ空白を置いて正常な金額を入力した場合も登録候補として扱います。 <code>1 603円</code>や<code>12 000円</code>のように金額の数字列自体が空白で分断された表記は、 従来どおり不正形式として拒否します。</p>
-      <h3>金額直後の日本語日付入力を修正</h3>
-      <p><code>2170円8月18日</code>や<code>1130円2026年8月22日</code>のように、金額の直後へ <code>M月D日</code> / <code>YYYY年M月D日</code>が続く自然入力も正しく扱います。数字列の単なる連結は 許可せず、実在しない月日や<code>100円50</code>のような表記は金額候補として採用しません。</p>
-      <h3>複数取引のsource_text空白差を安全に復元</h3>
-      <p>複数取引でLLMが <code>source_text</code> 内の半角スペースまたは全角スペースだけを 削除・追加・置換した場合、完全一致を先に試したうえで、原文上の位置が一意に 確定できるときだけ元の原文断片へ復元します。最終候補にはLLMが整形した文字列ではなく、 対応する原文の実スライスを使用します。</p>
-      <p>句読点、金額カンマ、数字、日付、店名、改行などの差は無視しません。 空白を除いた一致位置が複数ある場合や断片同士が重なる場合も、従来どおり入力全体を拒否します。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.7.0の主な改善</h2>
-      <h3>LLM Local Chat側の家計簿API連携：複数取引対応</h3>
-      <p>1回の入力から<strong>最大10件の取引候補を生成</strong>できるようになりました。</p>
-      <p>これはLLM Local Chat側の候補生成・確認・API送信処理の改善です。実際の台帳登録には、別途用意したローカルの<code>kakeibo-bridge</code> APIが必要です。</p>
-      <p><strong>一括登録ではありません。</strong> 「1取引 = 1確認 = 1 POST」という安全境界はそのままで、変わったのは入口だけです。候補は1件ずつ確認し、<code>kakeibo-bridge</code> APIへ1件ずつPOSTします。</p>
-      <pre><code>入力: スーパーで2000円、コンビニで500円、薬局で1200円
+<main class="readme-shell">
+<header class="readme-hero">
+<div class="readme-hero-title">
+<p class="eyebrow">Guide</p>
+<h1>LLM Local Chat</h1>
+</div>
+<nav class="doc-nav">
+<a href="./TERMS_OF_USE.html">利用規約</a>
+<a href="./PRIVACY_POLICY.html">プライバシーポリシー</a>
+<a href="./LICENSE.html">ライセンス</a>
+<a href="./DISCLAIMER.html">免責事項</a>
+<a href="./THIRD_PARTY_LICENSES.html">サードパーティライセンス</a>
+<a href="./CODE_REFERENCE.html">コード解説</a>
+<a href="./SHA256.html">SHA-256</a>
+</nav>
+</header>
+<section class="readme-card">
+<p>ローカルLLM（llama.cpp）＋ Whisper音声認識＋ Windows
+SAPIを組み合わせた日本語AIチャットアプリです。<br/>
+<strong>必要な依存ライブラリとモデルを取得済みの場合、推論・音声認識・音声合成・会話処理はローカルで実行されます。Biologと家計簿API連携は、別プロセスのローカルHTTP
+APIを任意で利用します。</strong></p>
+<p>ローカル処理を重視した構成です。機密情報を扱う業務環境へ導入する場合は、端末のアクセス制御、Windowsユーザープロファイル、ディスク暗号化、Dockerポート、依存ライブラリ、バックアップ方法を含め、組織の情報セキュリティ担当者による事前評価を行ってください。</p>
+<p>詳しい実装の解説は <a href="./CODE_REFERENCE.html">コード解説</a>
+を参照してください。</p>
+<hr/>
+<p><code>Python 3.12.10</code> <code>Version 1.8.2</code> <code>Platform: Windows</code> <code>License: MIT</code></p>
+</section>
+<section class="readme-card">
+<h2 id="主な機能">主な機能</h2>
+<ul class="readme-list">
+<li>ストリーミング表示によるリアルタイム応答</li>
+<li>PyAudio + RMS-VAD + Whisper による常駐音声認識</li>
+<li>Windows SAPI5（win32comによる直接制御）のTTS読み上げ</li>
+<li>アバターウィンドウ（瞬き・口パクアニメーション）</li>
+<li>会話の要約メモリ（長期会話対応）</li>
+<li>チャット履歴の保存・読み込み・検索</li>
+<li><code>chat_settings.json</code>によるsystem
+prompt・persona・応答言語等のパーソナライズ</li>
+<li>TXT / MD / JSON / CSVとPNG / JPEGのチャット単位の永続添付</li>
+<li>ゲストモード（<code>chat_logs/</code>への履歴保存なし）</li>
+<li>ダークテーマUI</li>
+<li><strong>Biolog健康記録連携</strong> —
+💪ボタンで計測値・食事・活動内容・メモを入力し、確認後にBiolog
+APIへPOST（v1.1.0）</li>
+<li><strong>家計簿API連携（オプション）</strong> —
+ユーザー入力から最大10件の取引候補を生成し、1件ずつ確認したうえで、別途用意したローカルの<code>kakeibo-bridge</code>
+APIへ1件ずつPOSTします。家計簿アプリ、家計簿DB、<code>kakeibo-bridge</code>サーバー実装は本リポジトリに含まれません</li>
+<li><strong>VRAM安全フィルタ</strong> — LLM・Whisper
+同時動作時のVRAM枯渇によるクラッシュを確率的に削減（v1.2.0）</li>
+<li><strong>LLM GPUオフロード切替</strong> — 自動・Full
+GPU・約75%・約50%・約25%・CPUを設定画面から選び、アプリを再起動せずモデルを安全に再読み込みします</li>
+</ul>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v182-安全性修正">v1.8.2 安全性修正</h2>
+<p>リリース日: 2026-09-05</p>
+<ul class="readme-list">
+<li>会話履歴の保存に失敗した場合は、新規チャット・履歴切替・通常モードからゲストモードへの切替を中断し、現在の未保存会話を維持します。チャット削除直後の新規作成では、削除済み履歴を再保存しません。</li>
+<li>マイクOFF／停止時に音声認識世代を無効化し、録音中・Whisper文字起こし後・送信直前・UIキュー処理時の古い認識結果を破棄します。OFF→ON後にOFF前の発話が送信される競合を防ぎます。</li>
+<li>VRAM状況で <code>max_tokens</code>
+を自動縮小する場合も、実効値が利用者の設定上限を超えないようにしました。</li>
+</ul>
+<p>実装時の検証は、関連テスト153件成功、全テスト677件成功・1件skip、<code>git diff --check</code>成功です。実モデル・実マイク・外部APIを使う実機確認はこの検証には含まれません。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v181-公開保守文書の整備">v1.8.1 公開・保守文書の整備</h2>
+<p>公開準備日: 2026-08-28〜2026-08-29</p>
+<p>利用規約、プライバシーポリシー、免責事項、第三者ソフトウェアおよびライセンス情報を追加し、READMEから参照できるようにしました。公開用のSHA-256一覧には、README、アプリ本体、既存の公開対象および追加文書の実測値を記録しています。</p>
+<p>この版では、チャット処理、保存形式、添付管理、ローカルAPI連携、UIの仕様を変更していません。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v180-チャット単位の保存済み添付">v1.8.0
+チャット単位の保存済み添付</h2>
+<p>リリース日: 2026-08-27</p>
+<p>TXT / MD / JSON / CSVとPNG /
+JPEGは、添付時点のコピーをチャットへ紐づけて保存します。同じチャットでは後続質問・チャット切替・アプリ再起動後も再添付せず参照できます。履歴JSONには復元用メタデータだけを保存し、本文・画像本体・元ファイル絶対パスは埋め込みません。</p>
+<p>設定の「保存済み添付ファイル」では、個別削除と全チャット対象の一括削除、総件数・合計容量を確認できます。保存領域はユーザー単位に分離されないため、共有環境での一括削除は同じ保存領域を使う他利用者の添付にも影響し得ます。</p>
+<p><code>system_prompt</code>等のinline設定と外部promptは併用できます。本文なしで添付だけを送信する操作、同名・別内容の複数添付にも対応しました。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v173-パーソナライズファイル添付vision対応">v1.7.3
+パーソナライズ・ファイル添付・Vision対応</h2>
+<p>リリース日: 2026-08-26</p>
+<p><code>chat_settings.json</code>からsystem
+prompt、persona、応答言語、内部思考を表示しない指示を設定できるようになりました。長いpromptは、アプリ配置フォルダ基準のUTF-8
+TXT / MDから読み込めます。</p>
+<p>通常チャットではTXT / MD / JSON / CSVとPNG /
+JPEGを添付できます。選択時の内容を現在の会話セッション中だけメモリに保持し、後続質問でも参照します。実パス、画像バイナリ、テキスト添付本文は会話履歴・保存JSONへ残しません。</p>
+<p>Visionは<code>llama-cpp-python 0.3.34</code>の<code>gemma4</code> /
+<code>llava15</code> handlerに対応します。対応projector /
+mmprojが設定されていないモデルでは画像を送信せず、UIへ警告します。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v172-不具合修正">v1.7.2 不具合修正</h2>
+<h3 id="biologの日付省略時の完了表示を修正">Biologの日付省略時の完了表示を修正</h3>
+<p>日付を省略したBiolog登録では、送信直前にJSTの登録日を確定し、実際にPOSTするrecordへ保持します。</p>
+<p>成功時の表示日付は、API応答に有効な日付がある場合はその日付を優先し、ない場合は実際にPOSTした確定日付を使用します。これにより、登録自体は成功しているのに完了日付が<code>?</code>と表示される問題を修正しました。</p>
+<p>明示日付は変更せず、API失敗時に成功表示を出さない既存挙動も維持しています。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v171-不具合修正">v1.7.1 不具合修正</h2>
+<p>この節は、LLM Local
+Chat側の家計簿API連携クライアントにおける候補生成・検証・確認・送信処理の修正です。実際の台帳登録には別途起動した<code>kakeibo-bridge</code>
+APIが必要で、家計簿アプリ、家計簿DB、bridgeサーバーは本リポジトリに含まれません。</p>
+<h3 id="llm-gpuオフロードの再起動不要切替">LLM
+GPUオフロードの再起動不要切替</h3>
+<p>生成設定では、LLM
+GPUオフロードの希望モードを<code>自動</code>・<code>Full GPU</code>・<code>約75%</code>・
+<code>約50%</code>・<code>約25%</code>・<code>CPU</code>から選択できます。変更時はチャットやアプリを終了せず、
+旧モデルを解放してから新しい配置でバックグラウンド再読み込みします。</p>
+<p>希望モードとは別に、最後に実際にロード成功したGPUオフロード率・配置レイヤー数・
+Full/Partial/CPUを読み取り専用で表示します。<code>自動</code>では推論直前に最低予約量を
+下回った場合だけ現在より低い配置へ自動downshiftし、同じ入力を1回だけ継続します。
+推論ごとの自動upshiftは行わず、上位配置の再検討は起動・通常のモデル再読み込み・
+設定画面の「GPU配置を再評価」で行います。</p>
+<h3 id="家計簿の日付入力に日本語形式を追加">家計簿の日付入力に日本語形式を追加</h3>
+<p>家計簿の日付は、従来の
+<code>YYYY/MM/DD</code>、<code>YYYY-MM-DD</code>、<code>M/D</code>
+に加えて、 <code>M月D日</code> と <code>YYYY年M月D日</code>
+もユーザー原文から機械抽出します。全角数字にも対応します。</p>
+<table>
+<thead>
+<tr class="header">
+<th>入力例</th>
+<th>登録候補の日付</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>8月22日セリア1130円</code></td>
+<td>実行年を補った <code>2026-08-22</code>（実行年が2026年の場合）</td>
+</tr>
+<tr class="even">
+<td><code>８月２２日セリア１１３０円</code></td>
+<td>同上</td>
+</tr>
+<tr class="odd">
+<td><code>2026年8月22日セリア1130円</code></td>
+<td><code>2026-08-22</code></td>
+</tr>
+<tr class="even">
+<td><code>２０２６年８月２２日セリア１１３０円</code></td>
+<td><code>2026-08-22</code></td>
+</tr>
+</tbody>
+</table>
+<p>実在しない日付は明示日付として採用しません。無効な年付き表現の内部を年なし形式として
+再解釈することもありません。例えば、実行年が閏年でも
+<code>2025年2月29日</code> を 実行年の <code>2月29日</code>
+として採用せず、日付なしの場合と同じく実行日へフォールバックします。</p>
+<p>「昨日」「一昨日」「先週」などの自然言語相対日付には対応していません。
+日付は引き続きLLM出力ではなくユーザー原文から決定し、確認画面で修正できます。</p>
+<h3 id="日付直後の金額入力を修正">日付直後の金額入力を修正</h3>
+<p><code>8/20 1603円</code>、<code>2026/8/20 1603円</code>、<code>2026-08-20 1603円</code>のように、
+日付の直後へ空白を置いて正常な金額を入力した場合も登録候補として扱います。
+<code>1 603円</code>や<code>12 000円</code>のように金額の数字列自体が空白で分断された表記は、
+従来どおり不正形式として拒否します。</p>
+<h3 id="金額直後の日本語日付入力を修正">金額直後の日本語日付入力を修正</h3>
+<p><code>2170円8月18日</code>や<code>1130円2026年8月22日</code>のように、金額の直後へ
+<code>M月D日</code> /
+<code>YYYY年M月D日</code>が続く自然入力も正しく扱います。数字列の単なる連結は
+許可せず、実在しない月日や<code>100円50</code>のような表記は金額候補として採用しません。</p>
+<h3 id="複数取引のsource_text空白差を安全に復元">複数取引のsource_text空白差を安全に復元</h3>
+<p>複数取引でLLMが <code>source_text</code>
+内の半角スペースまたは全角スペースだけを
+削除・追加・置換した場合、完全一致を先に試したうえで、原文上の位置が一意に
+確定できるときだけ元の原文断片へ復元します。最終候補にはLLMが整形した文字列ではなく、
+対応する原文の実スライスを使用します。</p>
+<p>句読点、金額カンマ、数字、日付、店名、改行などの差は無視しません。
+空白を除いた一致位置が複数ある場合や断片同士が重なる場合も、従来どおり入力全体を拒否します。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v170の主な改善">v1.7.0の主な改善</h2>
+<h3 id="llm-local-chat側の家計簿api連携複数取引対応">LLM Local
+Chat側の家計簿API連携：複数取引対応</h3>
+<p>1回の入力から<strong>最大10件の取引候補を生成</strong>できるようになりました。</p>
+<p>これはLLM Local
+Chat側の候補生成・確認・API送信処理の改善です。実際の台帳登録には、別途用意したローカルの<code>kakeibo-bridge</code>
+APIが必要です。</p>
+<p><strong>一括登録ではありません。</strong> 「1取引 = 1確認 = 1
+POST」という安全境界はそのままで、変わったのは入口だけです。候補は1件ずつ確認し、<code>kakeibo-bridge</code>
+APIへ1件ずつPOSTします。</p>
+<pre class="text"><code>入力: スーパーで2000円、コンビニで500円、薬局で1200円
 
   (1 / 3) スーパー  2,000円  → 確認 → POST #1
   (2 / 3) コンビニ    500円  → 確認 → POST #2
   (3 / 3) 薬局      1,200円  → 確認 → POST #3</code></pre>
-      <div style="overflow-x:auto;"><table><thead><tr><th>項目</th><th>動作</th></tr></thead><tbody><tr><td>上限</td><td>10件（<code>MAX_KAKEIBO_TRANSACTIONS_PER_INPUT</code>）</td></tr><tr><td>11件以上</td><td><strong>入力全体を拒否</strong>（確認画面0件・POST 0件）。先頭10件だけ処理する部分成功は行いません</td></tr><tr><td>金額・日付</td><td>従来どおり<strong>LLM出力を最終値にせず</strong>、各取引の原文断片から機械抽出します</td></tr><tr><td>確認</td><td>複数のときはタイトルへ <code>(2 / 3)</code> を表示。「この取引をスキップ」と「残りを中止」を分けています</td></tr><tr><td>送信</td><td><strong>直列</strong>。前のPOSTの完了を待ってから次の確認画面を開きます（並列送信はしません）</td></tr><tr><td>途中失敗</td><td>残りの候補を処理せず停止します。このクライアントからPOST済みの取引は取り消しません</td></tr><tr><td>1件だけの入力</td><td>従来どおりの動作・従来どおりの確認画面です</td></tr></tbody></table></div>
-      <p>LLMが返す取引ごとの原文断片（<code>source_text</code>）は信用せず、<strong>原文に実在すること・空でないこと・範囲が重複しないこと・原文順に並べられること</strong>をコード側で検証します。原文に無い文言をLLMが生成した場合は候補になりません。</p>
-      <p>1つの断片に有効な金額候補が複数あり、1取引なのか内訳なのか判断できない場合は、推測せず入力全体を拒否します。</p>
-      <p>さらに、次の場合は<strong>推測せず入力全体を拒否</strong>します（意図しない部分送信を防ぐため）。</p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>状況</th><th>例</th><th>動作</th></tr></thead><tbody><tr><td>LLMが取引を取りこぼした</td><td>原文に3取引あるのにLLMが2件しか返さない</td><td>全体拒否。原文の金額をすべての断片が覆っているかを確認します</td></tr><tr><td>金額だけの断片</td><td>「スーパーで2000円と500円」を「スーパーで2000円」「500円」へ分割</td><td>全体拒否。同一文脈内の複数金額を人工的に切り分けたものは受理しません</td></tr><tr><td>日付が一意に決まらない</td><td>「8/16 スーパーで2000円、8/17 コンビニで500円、薬局で1200円」</td><td>全体拒否。薬局がどちらの日付か確定できません</td></tr></tbody></table></div>
-      <p>日付は、原文全体の明示日付が<strong>ちょうど1種類のときだけ</strong>、日付を持たない取引へ適用します。「8/16 スーパーで2000円、コンビニで500円」なら両方 8/16 です。</p>
-      <p>確認・POSTシーケンスが進行中の間は、<strong>キーボード入力・音声入力とも新しい送信を開始しません</strong>（<code>Controller.is_busy()</code>）。完了・スキップ・中止・エラーのいずれでも解除されます。</p>
-      <p>音声入力とキーボード入力は同じ経路を通るため、どちらでも同じ処理になります。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.6.3の主な改善</h2>
-      <p>ロジックの変更はありません（<code>APP_VERSION</code> のみ更新）。公開ドキュメントの技術的正確性の修正だけを行っています。</p>
-      <h3><code>コード解説_やさしい版.md</code> の全面改稿</h3>
-      <p>段階的な訂正を重ねた結果、記述の根拠と章構成を統一する必要が生じたため、<strong>現行コードを最終根拠として全文を再構成</strong>しました。</p>
-      <p>根拠の優先順位を文書冒頭に明示しています。</p>
-      <ol class="readme-list"><li>Pythonコード、設定テンプレート、起動バッチ</li><li>回帰テスト</li><li>README / CHANGELOG などの公開文書</li></ol>
-      <p>コードと文書の記載が食い違う場合は現行コードを優先します。行番号・総行数・テスト件数など、更新で変わりやすい値は本文へ固定しません。</p>
-      <p>再構成にあたり、<strong>旧版に残っていた実装との不一致</strong>を新たに3件検出し、修正しました。</p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>項目</th><th>旧版の記述</th><th>現行コードの実装</th></tr></thead><tbody><tr><td><code>kakeibo_date.py</code></td><td>「おととい」「先週の金曜」などを日付に直す</td><td><strong>自然言語の相対日付を解析するコードはありません。</strong> 対応形式は <code>YYYY/MM/DD</code>、<code>YYYY-MM-DD</code>、<code>M/D</code>、<code>YYYY年M月D日</code>、<code>M月D日</code></td></tr><tr><td><code>kakeibo_amount.py</code></td><td>「1万5千円」「¥1,500」などを数値に直す</td><td>**複合単位表記（<code>1万5千円</code>）は不正形式として拒否**。対応単位は <code>円</code> / <code>千円</code> / <code>万円</code></td></tr><tr><td>平文テキスト保存</td><td>「テキスト書き出し / 平文 .txt」</td><td><strong>現行の「ファイル」メニューに平文保存はありません。</strong> v1.5.0で暗号化エクスポートへ置き換え済み</td></tr></tbody></table></div>
-      <p>あわせて、次の実装事実を新たに記載しています。</p>
-      <ul class="readme-list"><li>家計簿モードのやり取りは通常会話履歴へ追加せず、要約対象にも入らない</li><li>家計簿の <code>amount</code> と <code>date</code> はLLM出力を最終値にせず、ユーザー原文から機械抽出する</li><li><code>store</code> / <code>memo</code> はユーザー原文に含まれる場合だけ候補へ残す</li><li><code>resource_monitor.py</code> の <code>VRAMGuard</code> は定義のみで、現行の他モジュールから参照されていない</li><li><code>atomic_io.py</code> はファイルディスクリプタを <code>fsync</code> するが、ディレクトリの <code>fsync</code> は行わない</li></ul>
-      <h3>技術説明の正確化（改稿前に実施した訂正）</h3>
-      <p>改稿以前の版で、<strong>公式仕様に照らして不正確だった技術説明</strong>を訂正しています。以下は改稿版にも反映されています。</p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>項目</th><th>訂正前</th><th>訂正後</th></tr></thead><tbody><tr><td>HTTPS制限</td><td>「httpsを許すと外部サーバへ送れてしまう」</td><td>schemeと送信先は別要素。<strong>外部送信を防いでいるのはホスト・ポートの許可リスト、リダイレクト禁止、プロキシ無効化</strong>。HTTP限定は本実装の方針</td></tr><tr><td><code>os.replace()</code></td><td>「別ドライブだとコピー＋削除に落ちる」</td><td>異なるファイルシステム間では<strong>失敗することがある</strong>。自動フォールバックはしない</td></tr><tr><td>DPAPI</td><td>「別ユーザーは読めない」「二度と読めなくなる」</td><td><strong>通常は復号できない</strong> / 必要なプロファイルや資格情報を失うと<strong>復号できなくなる可能性がある</strong></td></tr><tr><td>外部通信</td><td>「外部へ出ていく通信は2つだけ」「唯一データが外に出る経路」</td><td>機能ごとに記述。「だけ」「唯一」の断定を削除</td></tr><tr><td>マイク</td><td>「マイクを常時読み続けます」</td><td><strong>音声入力をONにしている間</strong>、マイク入力を継続的に監視する</td></tr><tr><td>LLMの排他制御</td><td>「必ず1つずつ順番に実行される」</td><td>実行中は<strong>新しい開始要求を拒否する</strong>（順番待ちのキューではない）</td></tr><tr><td>AES-GCM</td><td>「改ざんされていないことを保証」</td><td><strong>認証タグにより改ざんを検出</strong>。<code>InvalidTag</code> は鍵・nonce・関連データの不一致でも発生</td></tr></tbody></table></div>
-      <p>実装との不一致も次のとおり訂正しました。</p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>項目</th><th>訂正前</th><th>訂正後（実装どおり）</th></tr></thead><tbody><tr><td>連携APIの許可ポート</td><td>「ポート 8767・8766 のみ」</td><td><code>LOCAL_API_PORTS</code> = <code>KAKEIBO_BRIDGE_PORT</code>（環境変数で変更可、<strong>既定8767</strong>）と <code>8766</code></td></tr><tr><td>持ち出しアーカイブの上限</td><td>「爆弾ファイル（展開すると巨大化）への対策」</td><td><strong>圧縮・展開の実装はない。</strong> 過大な入力・長い文字列・多数のレコード・深い入れ子によるメモリ消費と処理負荷の制限</td></tr><tr><td>スレッド</td><td>「6種類のスレッドが同時に動いています」</td><td>常駐・音声入力ON時のみ・処理のたびに生成が混在。<strong>必要に応じて使う</strong></td></tr><tr><td>家計簿・健康記録</td><td>「有効」</td><td><strong>利用可能（モード選択時）</strong>。<code>Controller._active_mode</code> の既定は <code>"default"</code></td></tr><tr><td>ストリーミング</td><td>「1文字ずつ受け取り」「句点「。」が来るたび」</td><td><strong>文字列断片</strong>（<code>delta.content</code>）が届くたび。文境界は <code>。！？!?</code> と改行の5種類</td></tr><tr><td>GGUFの破損</td><td>「黙って誤動作することはありません」</td><td>例外になる場合はあるが、<strong>あらゆる破損・取り違え・差し替えを検出できる保証はない</strong></td></tr><tr><td>Whisperの誤生成</td><td>「YouTube字幕データで学習した名残」</td><td>原因の断定を削除（本プロジェクトのコードから確認できないため）</td></tr></tbody></table></div>
-      <p>さらに、<strong>文書内で矛盾していた記述</strong>を整理しました。</p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>項目</th><th>訂正前</th><th>訂正後</th></tr></thead><tbody><tr><td>冒頭の位置づけ</td><td>「自分のパソコンの中だけで動く」</td><td>主要な推論・音声認識・音声合成・会話処理をローカルで実行する（直後のWhisperダウンロード説明と矛盾していた）</td></tr><tr><td>起動手順のポート</td><td>「ポート 8767」</td><td>「<code>KAKEIBO_BRIDGE_PORT</code>、既定 8767」に統一</td></tr><tr><td>動作の保証</td><td>「連携なしでも問題なく動作します」</td><td>「連携APIを必要としません」（11章の実機未確認の記載と矛盾していた）</td></tr><tr><td>スレッド</td><td>「いずれも <code>daemon=True</code>」</td><td><strong>Pythonのメインスレッドはデーモンではない。</strong> バックグラウンドスレッドに限定</td></tr><tr><td>同時実行</td><td>「LLMを2つ動かすと破綻します」</td><td>競合とリソース増加を避けるため同時実行を許可していない</td></tr><tr><td>ゲストモード</td><td>「ファイルは一切作られません」</td><td><strong>会話履歴ファイルを保存しません</strong></td></tr></tbody></table></div>
-      <p>あわせて、更新のたびに変わる比率（「テストコードは本体の半分」）2箇所、公開文書に残っていた内部 <code>docs/</code> パス2箇所、作者固有の製品名、SAPI5の日本語音声に関する説明、評価的な表現を修正しました。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.6.2の主な改善</h2>
-      <h3>公開ドキュメントの記述修正</h3>
-      <p>コードの動作は変更していません。<code>コード解説_やさしい版.md</code> の説明に、<strong>利用者の判断に影響する誤りと不足</strong>があったため修正しました。</p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>項目</th><th>修正前の記述</th><th>実際</th></tr></thead><tbody><tr><td>GGUFモデル</td><td>同梱されていると読める書き方</td><td><strong>含まれません。</strong> 各自でダウンロードして <code>models/</code> へ配置</td></tr><tr><td>マイク入力</td><td>使える機能として無条件に紹介</td><td>既定は<strong>無効</strong>（<code>mic_enabled: false</code>）。設定で切替</td></tr><tr><td>読み上げ</td><td>同上</td><td>既定は<strong>無効</strong>（<code>tts_enabled: false</code>）。設定で切替</td></tr><tr><td>家計簿・健康記録の登録</td><td>本アプリの機能として紹介</td><td><strong>別途ローカルAPIが必要。</strong> 家計簿アプリ、家計簿DB、<code>kakeibo-bridge</code>サーバーは本リポジトリに非同梱</td></tr><tr><td>会話履歴の暗号化</td><td>「暗号化して保存されます」</td><td>DPAPIは<strong>同一Windowsユーザーの権限で動くプログラムからは復号可能</strong>。設定ファイルとテキスト書き出しは平文</td></tr></tbody></table></div>
-      <p>あわせて、Pythonコードの規模を「約10,300行」と記載していた誤り（実測 7,165行）、不正なMarkdownテーブル、送信値の検証範囲表からの筋肉量の欠落を修正しました。</p>
-      <p>また、行数やテスト件数の決め打ちは更新のたびに古くなるため本文から削除し、利用者が自分で数えるスクリプトへ置き換えています。</p>
-      <p><code>README.md</code> に記載の仕様・手順に変更はありません。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.6.1の主な改善</h2>
-      <h3>家計簿モードの日付解析</h3>
-      <p>原文に年付きの日付が明示されている場合、その日付をそのまま登録候補に使うよう修正しました。</p>
-      <pre><code>入力: 2026/08/16 テスト店にて日用品2000円分買う
+<table>
+<thead>
+<tr class="header">
+<th>項目</th>
+<th>動作</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>上限</td>
+<td>10件（<code>MAX_KAKEIBO_TRANSACTIONS_PER_INPUT</code>）</td>
+</tr>
+<tr class="even">
+<td>11件以上</td>
+<td><strong>入力全体を拒否</strong>（確認画面0件・POST
+0件）。先頭10件だけ処理する部分成功は行いません</td>
+</tr>
+<tr class="odd">
+<td>金額・日付</td>
+<td>従来どおり<strong>LLM出力を最終値にせず</strong>、各取引の原文断片から機械抽出します</td>
+</tr>
+<tr class="even">
+<td>確認</td>
+<td>複数のときはタイトルへ <code>(2 / 3)</code>
+を表示。「この取引をスキップ」と「残りを中止」を分けています</td>
+</tr>
+<tr class="odd">
+<td>送信</td>
+<td><strong>直列</strong>。前のPOSTの完了を待ってから次の確認画面を開きます（並列送信はしません）</td>
+</tr>
+<tr class="even">
+<td>途中失敗</td>
+<td>残りの候補を処理せず停止します。このクライアントからPOST済みの取引は取り消しません</td>
+</tr>
+<tr class="odd">
+<td>1件だけの入力</td>
+<td>従来どおりの動作・従来どおりの確認画面です</td>
+</tr>
+</tbody>
+</table>
+<p>LLMが返す取引ごとの原文断片（<code>source_text</code>）は信用せず、<strong>原文に実在すること・空でないこと・範囲が重複しないこと・原文順に並べられること</strong>をコード側で検証します。原文に無い文言をLLMが生成した場合は候補になりません。</p>
+<p>1つの断片に有効な金額候補が複数あり、1取引なのか内訳なのか判断できない場合は、推測せず入力全体を拒否します。</p>
+<p>さらに、次の場合は<strong>推測せず入力全体を拒否</strong>します（意図しない部分送信を防ぐため）。</p>
+<table>
+<thead>
+<tr class="header">
+<th>状況</th>
+<th>例</th>
+<th>動作</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>LLMが取引を取りこぼした</td>
+<td>原文に3取引あるのにLLMが2件しか返さない</td>
+<td>全体拒否。原文の金額をすべての断片が覆っているかを確認します</td>
+</tr>
+<tr class="even">
+<td>金額だけの断片</td>
+<td>「スーパーで2000円と500円」を「スーパーで2000円」「500円」へ分割</td>
+<td>全体拒否。同一文脈内の複数金額を人工的に切り分けたものは受理しません</td>
+</tr>
+<tr class="odd">
+<td>日付が一意に決まらない</td>
+<td>「8/16 スーパーで2000円、8/17 コンビニで500円、薬局で1200円」</td>
+<td>全体拒否。薬局がどちらの日付か確定できません</td>
+</tr>
+</tbody>
+</table>
+<p>日付は、原文全体の明示日付が<strong>ちょうど1種類のときだけ</strong>、日付を持たない取引へ適用します。「8/16
+スーパーで2000円、コンビニで500円」なら両方 8/16 です。</p>
+<p>確認・POSTシーケンスが進行中の間は、<strong>キーボード入力・音声入力とも新しい送信を開始しません</strong>（<code>Controller.is_busy()</code>）。完了・スキップ・中止・エラーのいずれでも解除されます。</p>
+<p>音声入力とキーボード入力は同じ経路を通るため、どちらでも同じ処理になります。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v163の主な改善">v1.6.3の主な改善</h2>
+<p>ロジックの変更はありません（<code>APP_VERSION</code>
+のみ更新）。公開ドキュメントの技術的正確性の修正だけを行っています。</p>
+<h3 id="コード解説_やさしい版md-の全面改稿"><code>コード解説_やさしい版.md</code>
+の全面改稿</h3>
+<p>段階的な訂正を重ねた結果、記述の根拠と章構成を統一する必要が生じたため、<strong>現行コードを最終根拠として全文を再構成</strong>しました。</p>
+<p>根拠の優先順位を文書冒頭に明示しています。</p>
+<ol class="readme-list" type="1">
+<li>Pythonコード、設定テンプレート、起動バッチ</li>
+<li>回帰テスト</li>
+<li>README / CHANGELOG などの公開文書</li>
+</ol>
+<p>コードと文書の記載が食い違う場合は現行コードを優先します。行番号・総行数・テスト件数など、更新で変わりやすい値は本文へ固定しません。</p>
+<p>再構成にあたり、<strong>旧版に残っていた実装との不一致</strong>を新たに3件検出し、修正しました。</p>
+<table>
+<thead>
+<tr class="header">
+<th>項目</th>
+<th>旧版の記述</th>
+<th>現行コードの実装</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>kakeibo_date.py</code></td>
+<td>「おととい」「先週の金曜」などを日付に直す</td>
+<td><strong>自然言語の相対日付を解析するコードはありません。</strong>
+対応形式は
+<code>YYYY/MM/DD</code>、<code>YYYY-MM-DD</code>、<code>M/D</code>、<code>YYYY年M月D日</code>、<code>M月D日</code></td>
+</tr>
+<tr class="even">
+<td><code>kakeibo_amount.py</code></td>
+<td>「1万5千円」「¥1,500」などを数値に直す</td>
+<td><strong>複合単位表記（<code>1万5千円</code>）は不正形式として拒否</strong>。対応単位は
+<code>円</code> / <code>千円</code> / <code>万円</code></td>
+</tr>
+<tr class="odd">
+<td>平文テキスト保存</td>
+<td>「テキスト書き出し / 平文 .txt」</td>
+<td><strong>現行の「ファイル」メニューに平文保存はありません。</strong>
+v1.5.0で暗号化エクスポートへ置き換え済み</td>
+</tr>
+</tbody>
+</table>
+<p>あわせて、次の実装事実を新たに記載しています。</p>
+<ul class="readme-list">
+<li>家計簿モードのやり取りは通常会話履歴へ追加せず、要約対象にも入らない</li>
+<li>家計簿の <code>amount</code> と <code>date</code>
+はLLM出力を最終値にせず、ユーザー原文から機械抽出する</li>
+<li><code>store</code> / <code>memo</code>
+はユーザー原文に含まれる場合だけ候補へ残す</li>
+<li><code>resource_monitor.py</code> の <code>VRAMGuard</code>
+は定義のみで、現行の他モジュールから参照されていない</li>
+<li><code>atomic_io.py</code> はファイルディスクリプタを
+<code>fsync</code> するが、ディレクトリの <code>fsync</code>
+は行わない</li>
+</ul>
+<h3 id="技術説明の正確化改稿前に実施した訂正">技術説明の正確化（改稿前に実施した訂正）</h3>
+<p>改稿以前の版で、<strong>公式仕様に照らして不正確だった技術説明</strong>を訂正しています。以下は改稿版にも反映されています。</p>
+<table>
+<thead>
+<tr class="header">
+<th>項目</th>
+<th>訂正前</th>
+<th>訂正後</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>HTTPS制限</td>
+<td>「httpsを許すと外部サーバへ送れてしまう」</td>
+<td>schemeと送信先は別要素。<strong>外部送信を防いでいるのはホスト・ポートの許可リスト、リダイレクト禁止、プロキシ無効化</strong>。HTTP限定は本実装の方針</td>
+</tr>
+<tr class="even">
+<td><code>os.replace()</code></td>
+<td>「別ドライブだとコピー＋削除に落ちる」</td>
+<td>異なるファイルシステム間では<strong>失敗することがある</strong>。自動フォールバックはしない</td>
+</tr>
+<tr class="odd">
+<td>DPAPI</td>
+<td>「別ユーザーは読めない」「二度と読めなくなる」</td>
+<td><strong>通常は復号できない</strong> /
+必要なプロファイルや資格情報を失うと<strong>復号できなくなる可能性がある</strong></td>
+</tr>
+<tr class="even">
+<td>外部通信</td>
+<td>「外部へ出ていく通信は2つだけ」「唯一データが外に出る経路」</td>
+<td>機能ごとに記述。「だけ」「唯一」の断定を削除</td>
+</tr>
+<tr class="odd">
+<td>マイク</td>
+<td>「マイクを常時読み続けます」</td>
+<td><strong>音声入力をONにしている間</strong>、マイク入力を継続的に監視する</td>
+</tr>
+<tr class="even">
+<td>LLMの排他制御</td>
+<td>「必ず1つずつ順番に実行される」</td>
+<td>実行中は<strong>新しい開始要求を拒否する</strong>（順番待ちのキューではない）</td>
+</tr>
+<tr class="odd">
+<td>AES-GCM</td>
+<td>「改ざんされていないことを保証」</td>
+<td><strong>認証タグにより改ざんを検出</strong>。<code>InvalidTag</code>
+は鍵・nonce・関連データの不一致でも発生</td>
+</tr>
+</tbody>
+</table>
+<p>実装との不一致も次のとおり訂正しました。</p>
+<table>
+<thead>
+<tr class="header">
+<th>項目</th>
+<th>訂正前</th>
+<th>訂正後（実装どおり）</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>連携APIの許可ポート</td>
+<td>「ポート 8767・8766 のみ」</td>
+<td><code>LOCAL_API_PORTS</code> =
+<code>KAKEIBO_BRIDGE_PORT</code>（環境変数で変更可、<strong>既定8767</strong>）と
+<code>8766</code></td>
+</tr>
+<tr class="even">
+<td>持ち出しアーカイブの上限</td>
+<td>「爆弾ファイル（展開すると巨大化）への対策」</td>
+<td><strong>圧縮・展開の実装はない。</strong>
+過大な入力・長い文字列・多数のレコード・深い入れ子によるメモリ消費と処理負荷の制限</td>
+</tr>
+<tr class="odd">
+<td>スレッド</td>
+<td>「6種類のスレッドが同時に動いています」</td>
+<td>常駐・音声入力ON時のみ・処理のたびに生成が混在。<strong>必要に応じて使う</strong></td>
+</tr>
+<tr class="even">
+<td>家計簿・健康記録</td>
+<td>「有効」</td>
+<td><strong>利用可能（モード選択時）</strong>。<code>Controller._active_mode</code>
+の既定は <code>"default"</code></td>
+</tr>
+<tr class="odd">
+<td>ストリーミング</td>
+<td>「1文字ずつ受け取り」「句点「。」が来るたび」</td>
+<td><strong>文字列断片</strong>（<code>delta.content</code>）が届くたび。文境界は
+<code>。！？!?</code> と改行の5種類</td>
+</tr>
+<tr class="even">
+<td>GGUFの破損</td>
+<td>「黙って誤動作することはありません」</td>
+<td>例外になる場合はあるが、<strong>あらゆる破損・取り違え・差し替えを検出できる保証はない</strong></td>
+</tr>
+<tr class="odd">
+<td>Whisperの誤生成</td>
+<td>「YouTube字幕データで学習した名残」</td>
+<td>原因の断定を削除（本プロジェクトのコードから確認できないため）</td>
+</tr>
+</tbody>
+</table>
+<p>さらに、<strong>文書内で矛盾していた記述</strong>を整理しました。</p>
+<table>
+<thead>
+<tr class="header">
+<th>項目</th>
+<th>訂正前</th>
+<th>訂正後</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>冒頭の位置づけ</td>
+<td>「自分のパソコンの中だけで動く」</td>
+<td>主要な推論・音声認識・音声合成・会話処理をローカルで実行する（直後のWhisperダウンロード説明と矛盾していた）</td>
+</tr>
+<tr class="even">
+<td>起動手順のポート</td>
+<td>「ポート 8767」</td>
+<td>「<code>KAKEIBO_BRIDGE_PORT</code>、既定 8767」に統一</td>
+</tr>
+<tr class="odd">
+<td>動作の保証</td>
+<td>「連携なしでも問題なく動作します」</td>
+<td>「連携APIを必要としません」（11章の実機未確認の記載と矛盾していた）</td>
+</tr>
+<tr class="even">
+<td>スレッド</td>
+<td>「いずれも <code>daemon=True</code>」</td>
+<td><strong>Pythonのメインスレッドはデーモンではない。</strong>
+バックグラウンドスレッドに限定</td>
+</tr>
+<tr class="odd">
+<td>同時実行</td>
+<td>「LLMを2つ動かすと破綻します」</td>
+<td>競合とリソース増加を避けるため同時実行を許可していない</td>
+</tr>
+<tr class="even">
+<td>ゲストモード</td>
+<td>「ファイルは一切作られません」</td>
+<td><strong>会話履歴ファイルを保存しません</strong></td>
+</tr>
+</tbody>
+</table>
+<p>あわせて、更新のたびに変わる比率（「テストコードは本体の半分」）2箇所、公開文書に残っていた内部
+<code>docs/</code>
+パス2箇所、作者固有の製品名、SAPI5の日本語音声に関する説明、評価的な表現を修正しました。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v162の主な改善">v1.6.2の主な改善</h2>
+<h3 id="公開ドキュメントの記述修正">公開ドキュメントの記述修正</h3>
+<p>コードの動作は変更していません。<code>コード解説_やさしい版.md</code>
+の説明に、<strong>利用者の判断に影響する誤りと不足</strong>があったため修正しました。</p>
+<table>
+<thead>
+<tr class="header">
+<th>項目</th>
+<th>修正前の記述</th>
+<th>実際</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>GGUFモデル</td>
+<td>同梱されていると読める書き方</td>
+<td><strong>含まれません。</strong> 各自でダウンロードして
+<code>models/</code> へ配置</td>
+</tr>
+<tr class="even">
+<td>マイク入力</td>
+<td>使える機能として無条件に紹介</td>
+<td>既定は<strong>無効</strong>（<code>mic_enabled: false</code>）。設定で切替</td>
+</tr>
+<tr class="odd">
+<td>読み上げ</td>
+<td>同上</td>
+<td>既定は<strong>無効</strong>（<code>tts_enabled: false</code>）。設定で切替</td>
+</tr>
+<tr class="even">
+<td>家計簿・健康記録の登録</td>
+<td>本アプリの機能として紹介</td>
+<td><strong>別途ローカルAPIが必要。</strong>
+家計簿アプリ、家計簿DB、<code>kakeibo-bridge</code>サーバーは本リポジトリに非同梱</td>
+</tr>
+<tr class="odd">
+<td>会話履歴の暗号化</td>
+<td>「暗号化して保存されます」</td>
+<td>DPAPIは<strong>同一Windowsユーザーの権限で動くプログラムからは復号可能</strong>。設定ファイルとテキスト書き出しは平文</td>
+</tr>
+</tbody>
+</table>
+<p>あわせて、Pythonコードの規模を「約10,300行」と記載していた誤り（実測
+7,165行）、不正なMarkdownテーブル、送信値の検証範囲表からの筋肉量の欠落を修正しました。</p>
+<p>また、行数やテスト件数の決め打ちは更新のたびに古くなるため本文から削除し、利用者が自分で数えるスクリプトへ置き換えています。</p>
+<p><code>README.md</code> に記載の仕様・手順に変更はありません。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v161の主な改善">v1.6.1の主な改善</h2>
+<h3 id="家計簿モードの日付解析">家計簿モードの日付解析</h3>
+<p>原文に年付きの日付が明示されている場合、その日付をそのまま登録候補に使うよう修正しました。</p>
+<pre class="text"><code>入力: 2026/08/16 テスト店にて日用品2000円分買う
 　　　　　↓
 日付: 2026-08-16</code></pre>
-      <p>v1.6.0以前は、<code>2026/08/16</code> と <code>2026-08-16</code> のどちらの形式も日付として認識されず、常に実行日へフォールバックしていました。</p>
-      <p>対応する日付形式は次のとおりです。</p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>入力形式</th><th>採用される日付</th></tr></thead><tbody><tr><td><code>2026/08/16</code></td><td>原文の年月日をそのまま使用</td></tr><tr><td><code>2026-08-16</code></td><td>同上（<code>/</code> 形式と同じ結果）</td></tr><tr><td><code>2026年8月16日</code></td><td>原文の年月日をそのまま使用</td></tr><tr><td><code>7/17</code></td><td>実行年を補って使用（従来どおり）</td></tr><tr><td><code>7月17日</code></td><td>実行年を補って使用</td></tr><tr><td>日付表現なし</td><td>実行日を使用（従来どおり）</td></tr></tbody></table></div>
-      <p>実在しない暦日（<code>2026/02/30</code>・<code>2026年2月30日</code>）、範囲外の月（<code>2026/13/01</code>）、 区切り文字の混在（<code>2026/08-16</code>）は日付として扱わず、実行日へフォールバックします。 無効な年付き日本語日付の内部を、年なしの月日として再解釈することはありません。</p>
-      <p>日付はLLMの出力を使わず、ユーザー原文からの機械抽出だけで決定します（金額と同じ方針）。確認画面での手入力による修正も従来どおり可能です。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.6.0の主な改善</h2>
-      <h3>家計簿API連携クライアントの接続ポート</h3>
-      <ul class="readme-list"><li>別途用意した<code>kakeibo-bridge</code> APIへの既定接続先を<code>http://localhost:8765</code>から<code>http://127.0.0.1:8767</code>へ変更</li><li>ローカルAPI送信の許可ポート<code>LOCAL_API_PORTS</code>を、固定値ではなく<code>KAKEIBO_BRIDGE_PORT</code>と連動する形へ変更</li><li>環境変数<code>KAKEIBO_BRIDGE_PORT</code>で<code>kakeibo-bridge</code> APIのポートを上書きできるよう追加</li></ul>
-      <p><code>8765</code>は同一端末上の別サービスが使用しているため、家計簿ブリッジ専用に<code>8767</code>を割り当てました。</p>
-      <p><code>KAKEIBO_BRIDGE_PORT</code>に<code>1</code>〜<code>65535</code>の範囲外を指定した場合は起動時にエラーになります。ポートが競合している場合の自動振替は行いません。</p>
-      <p>送信先の許可ポート判定は<code>KAKEIBO_BRIDGE_PORT</code>と連動します。<code>KAKEIBO_API_URL</code>で別のポートを指定する場合は、<code>KAKEIBO_BRIDGE_PORT</code>にも同じ値を設定してください。両者が一致しない場合、送信は中止されます。</p>
-      <p>別途用意した<code>kakeibo-bridge</code> APIを<code>8765</code>で稼働させている場合は、bridge側を<code>8767</code>へ移行するか、<code>KAKEIBO_BRIDGE_PORT</code>に実際のポートを設定してください。</p>
-      <h3>この変更の対象外</h3>
-      <p>Biolog API（<code>8766</code>）とBiolog UI（<code>8501</code>）のポートは変更していません。家計簿アプリ、DB、<code>kakeibo-bridge</code>サーバーから先の構成は本リポジトリに含まれず、この変更では定義していません。</p>
-      <p>回帰テストは<code>tests/test_integrations.py</code>の許可ポート判定を<code>8767</code>基準へ更新しています（6件）。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.5系の主な改善</h2>
-      <h3>暗号化インポート／エクスポート</h3>
-      <p>別PCや別のWindowsユーザー環境へ会話履歴を移行するため、パスフレーズ付きの暗号化形式<code>.shiro-export</code>を追加しました。</p>
-      <p>通常の会話履歴は、これまでどおり現在のWindowsユーザーに紐づくDPAPIで暗号化して保存します。<code>.shiro-export</code>は、DPAPI履歴を別環境へ移すための持ち運び用形式です。</p>
-      <p>暗号化には以下を使用します。</p>
-      <ul class="readme-list"><li>scryptによるパスフレーズからの鍵導出</li><li>AES-256-GCMによる認証付き暗号化</li><li>暗号設定を含む外側ヘッダーのAAD認証</li><li>毎回新しく生成されるsaltとnonce</li></ul>
-      <p>パスフレーズ、暗号鍵、復号済みの会話履歴は、設定ファイルやログへ保存しません。暗号化・復号時にも平文の一時ファイルは作成しません。</p>
-      <h3>エクスポート対象</h3>
-      <p>暗号化エクスポートの対象は、DPAPIでディスクへ保存済みの会話履歴だけです。</p>
-      <p>以下はエクスポートできません。</p>
-      <ul class="readme-list"><li>ゲストモードの会話</li><li>まだ保存されていない会話</li><li>保存後にメモリ上で追加・変更された未保存部分</li><li>保存済み添付の実体と添付メタデータ</li></ul>
-      <p><code>.shiro-export</code>をインポートしても添付は復元されません。この形式は会話履歴の持ち運び用であり、添付ファイルのバックアップではありません。</p>
-      <p>「現在の会話のみ」を選択した場合も、保存済みの履歴をディスクから読み直してエクスポートします。</p>
-      <h3>インポート処理</h3>
-      <p><code>.shiro-export</code>をインポートすると、パスフレーズで復号した後、現在のWindowsユーザー用DPAPIで再暗号化して<code>chat_logs</code>へ保存します。</p>
-      <p>保存前に以下を確認します。</p>
-      <ul class="readme-list"><li>ファイル形式とバージョン</li><li>scrypt、salt、nonce、AES-GCM設定</li><li>暗号文の改ざん</li><li>復号後の履歴形式</li><li>会話件数、文字数、入れ子、ファイルサイズなどの上限</li><li>既存履歴との重複</li><li>履歴の保存期間</li></ul>
-      <p>すべての履歴を検証してから保存を開始し、通常の書き込みエラーが発生した場合は、今回追加した履歴を巻き戻します。既存の履歴は変更・上書きしません。</p>
-      <p>重複する会話は、スキップするか複製としてインポートするかを選択できます。</p>
-      <h3>注意事項</h3>
-      <ul class="readme-list"><li><code>.shiro-export</code>のパスフレーズを忘れた場合、履歴を復旧できません。</li><li>弱いパスフレーズは、暗号化ファイルを取得した第三者によるオフライン解析を受ける可能性があります。</li><li>暗号化ファイルとパスフレーズを同じ場所へ保存しないでください。</li><li>通常のDPAPI履歴は、別PCや別のWindowsユーザーでは復号できない可能性があります。</li><li>クラウドストレージなど保存先自体の安全性を、本アプリが保証するものではありません。</li></ul>
-      <h3>v1.5.2の操作画面</h3>
-      <p>v1.5.0では、暗号化エクスポート時にゲスト会話や未保存会話が含まれる可能性がありました。</p>
-      <p>v1.5.1ではエクスポート経路を修正し、DPAPIで保存済みの履歴だけをディスクから読み込んで出力するように変更しました。v1.5.2では、対象範囲を曖昧な「はい／いいえ」で選ばず、ファイルメニューから次のどちらかを直接選択します。</p>
-      <ul class="readme-list"><li>現在の保存済み会話をエクスポート</li><li>保存済みの全会話をエクスポート</li></ul>
-      <p>保存先とパスフレーズは同じ画面で入力します。インポートもファイルとパスフレーズを同じ画面で指定し、重複する会話は「重複をスキップ（推奨）」「重複もコピー」「キャンセル」の明示的なボタンで選びます。</p>
-      <p>エクスポート先は<code>.shiro-export</code>ファイルに限定されます。上書き確認後、実際の書込み前に出力先の作成・削除・変更を検知した場合は、安全のため書込みを中止します。この確認は意図しない上書きの可能性を下げるためのbest-effort対策であり、別プロセスとの完全な排他制御を保証するものではありません。</p>
-      <p>重複確認画面の追加予定件数は確認時点の値です。確認後に既存履歴が変化した場合があるため、完了画面に表示される実際の追加件数とスキップ件数を最終結果として確認してください。</p>
-      <p>v1.5.1のCHANGELOGに記載していた回帰テスト3件は、実際のv1.5.1差分には含まれていませんでした。該当する動作確認はv1.5.2の回帰テストとして追加しています。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.4系の主な改善</h2>
-      <ul class="readme-list"><li>Whisperの品質指標を使い、無音・環境音や高圧縮反復による誤認識の送信を保守的に低減</li><li>停止要求後はLLMワーカーを最大3秒待機し、終了しない場合は操作ロックを維持して再起動を案内</li><li>TTSの世代確認により、古い遅延処理が読み上げ中のマイク抑制を解除する競合を防止</li><li>Biolog送信前に日付・型・有限値・数値範囲を検証し、不正なレコードは全体を拒否</li><li>健康記録・家計簿モードの内部指示文を通常の会話履歴やタイトルへ混入させないよう改善</li><li>Whisper実行モード、VRAM診断ログ、ストリーミングTTS、読み上げ速度設定を追加</li></ul>
-      <p>生成設定のコード既定値と配布テンプレート値は<code>temperature=0.7</code>、<code>max_tokens=1024</code>です。既存のユーザー設定がある場合はそちらが優先され、<code>max_tokens</code>は推論時のVRAM状況により安全のため動的に削減される場合があります。</p>
-      <p>Whisper品質ゲートは誤認識を完全に防止するものではありません。周囲の音で誤作動する場合は、音声検出感度の調整またはマイクの一時停止も併用してください。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>v1.4.2の履歴保護</h2>
-      <ul class="readme-list"><li><code>chat_logs/</code>の会話本文・タイトル・要約を、現在のWindowsユーザー用DPAPIで必須暗号化</li><li>v1.4.1以前の平文履歴は、初回起動時の確認後に検証付きで原子的に移行</li><li>保存期間を無期限・30日・90日・180日・365日から選択可能（既定は無期限、90日を推奨）</li><li>DPAPI保存に失敗した場合は平文へフォールバックせず、UIへ通知</li><li>平文テキスト保存を廃止し、別環境へ移せるパスフレーズ付き暗号化エクスポートを提供</li></ul>
-      <p>暗号化後の履歴はv1.4.1以前では読み込めません。DPAPIはWindowsユーザープロファイルと環境に依存するため、OS再インストール、ユーザープロファイル消失、一部のパスワード管理操作などで復号できなくなる場合があります。</p>
-      <h3>起動できない場合の復旧手順</h3>
-      <p>会話履歴の復号・形式確認・移行に失敗した場合、Shiroは履歴を自動削除・自動移動せず、通常起動を中止します。</p>
-      <ol class="readme-list"><li>元のWindowsユーザーと元のPC環境で起動しているか確認します。DPAPI暗号文は別ユーザーや別環境では復号できない場合があります。</li><li>旧版を含むすべてのShiroを終了し、<code>chat_logs/</code>と対象ファイルのバックアップを確保します。バックアップはアクセス制限された場所に保存し、公開リポジトリや共有クラウドへ置かないでください。</li><li>破損・未対応と表示されたファイルがある場合は、削除せず、<code>chat_logs/</code>外の安全な非公開フォルダへ手動で退避してから再起動します。退避した履歴は一覧に表示されなくなります。</li><li><code>.history_migration.lock</code>が残っている場合は、すべてのShiroが終了していることを確認した場合に限り、<code>chat_logs/.history_migration.lock</code>を手動で削除して再起動します。Shiroの実行中は削除しないでください。</li><li>「Windows DPAPIを利用できません」と表示された場合は、同梱の依存関係と<code>pywin32</code>が利用できるPython環境で起動してください。</li></ol>
-      <p>初回移行中は旧版Shiroを同時起動しないでください。ロックファイルはv1.4.2同士の移行を調整するもので、旧版による平文履歴の新規保存までは防げません。</p>
-      <p>暗号化後の履歴はv1.4.1以前では読み込めません。別PC・別Windowsユーザーへ移す場合は、ファイルメニューの「暗号化エクスポート」を使用してください。</p>
-      <h3>暗号化インポート／エクスポート</h3>
-      <p><code>.shiro-export</code>は、scryptでパスフレーズから鍵を導出し、AES-256-GCMで会話履歴とメタデータを認証付き暗号化する持ち運び用形式です。通常の<code>chat_logs/</code>はWindows DPAPI、持ち運び用ファイルはパスフレーズ暗号化という役割分担です。</p>
-      <ul class="readme-list"><li>パスフレーズは設定・履歴・ログへ保存されません。紛失した場合は復元できません</li><li>出力は人間が直接読めるテキストではありません</li><li>復号した平文を一時ファイルへ保存せず、メモリ内で検証します</li><li>インポート後は現在のWindowsユーザー用DPAPIで再暗号化します</li><li>暗号化ファイルとパスフレーズを同じ場所へ保管しないでください</li><li>Python上の平文・鍵をメモリから完全消去できるとは保証しません</li><li>通常の書込例外では追加ファイルを巻き戻しますが、停電・OS停止に対する完全なトランザクション保証はありません</li><li>既存の平文<code>.txt</code>はインポート対象ではなく、アプリが自動削除することもありません</li></ul>
-    </section>
-
-    <section class="readme-card">
-      <h2>実装構成とテスト</h2>
-      <p><code>LLM_Local_Chat.py</code> をエントリーポイントとし、生成制御は <code>controller.py</code>、LLM実行は <code>llm_service.py</code>、プロンプト構築は <code>prompt_builder.py</code>、履歴管理は <code>session_store.py</code>、音声処理は <code>audio_workers.py</code> に分割されています。</p>
-      <p>回帰テストは標準ライブラリの <code>unittest</code> で実行できます。</p>
-      <p>テストファイルは <code>tests/</code> 配下にまとめてあります（<code>.venv</code> がプロジェクト直下にあるため、素の <code>unittest discover -v</code> を使うと <code>.venv</code> 内の依存パッケージのテストまで収集してしまいます。<code>-s tests</code> で収集範囲を限定し、<code>-t .</code> でプロジェクトルートをトップレベルディレクトリに指定してください）。</p>
-      <pre><code>.\.venv\Scripts\python.exe -m unittest discover -s tests -t . -p "test*.py" -v</code></pre>
-    </section>
-
-    <section class="readme-card">
-      <h2>VRAM安全フィルタ（v1.2.0）</h2>
-      <p>LLM（Gemma 4 E4B、総8B／有効4B）とWhisper mediumを同一GPUで動かす際のVRAM競合を緩和します。</p>
-      <h3>設計思想</h3>
-      <p><strong>「VRAMを管理する」ではなく「VRAMから逃げる」</strong> — OOMの完全防止は不可能です。 この機能は「クラッシュではなく性能劣化」で済ませることを目標としています。</p>
-      <h3>自動フォールバックの仕組み</h3>
-      <div style="overflow-x:auto;"><table><thead><tr><th>状況</th><th>動作</th></tr></thead><tbody><tr><td>LLMロード前の空き容量がGGUFサイズ+予約領域以上</td><td><code>n_gpu_layers=-1</code>で全層GPUオフロードを要求</td></tr><tr><td>Full条件未満でGGUF総レイヤー数を取得できる</td><td>モデルサイズの概算と予約領域から約75%→50%→25%を順に検討</td></tr><tr><td>CUDA非対応、GPU情報取得不能、partial条件も満たさない</td><td><code>n_gpu_layers=0</code>（CPU実行）にフォールバック</td></tr><tr><td>GPUロード時の明示的なVRAM不足、またはロード後の最低予約量不足</td><td>安全に解放して一段低い候補を検討</td></tr><tr><td>Whisperモード<code>auto</code>・空き4096MB以上</td><td>GPU版mediumを使用</td></tr><tr><td>Whisperモード<code>auto</code>・空き2048〜4095MB</td><td>GPU版smallを使用</td></tr><tr><td>Whisperモード<code>auto</code>・空き2048MB未満</td><td>CPU版smallのみで運用</td></tr><tr><td>推論時の実空き容量 &lt; 予約領域（512MBまたは総容量の6%）</td><td><code>自動</code>モードでは旧LLMを解放後、現在より低いoffloadへ再配置して同じ入力を1回だけ継続。安全に再配置できない場合だけエラー表示</td></tr><tr><td>推論時の実空き容量 512〜1024MB</td><td><code>max_tokens</code> を25%に削減</td></tr><tr><td>推論時の実空き容量 1024〜1536MB</td><td><code>max_tokens</code> を50%に削減</td></tr><tr><td>GPU使用率 &gt; 88%</td><td>Whisper を CPU に切替（ヒステリシス付き）</td></tr><tr><td>GPU版Whisperロード済みでGPU使用率 &lt; 70%</td><td>Whisper を GPU に切替復帰</td></tr></tbody></table></div>
-      <h3>DEBUGログの見方</h3>
-      <pre><code>.\.venv\Scripts\python.exe -c "import logging; logging.basicConfig(level=logging.DEBUG); exec(open('LLM_Local_Chat.py').read())"</code></pre>
-      <div style="overflow-x:auto;"><table><thead><tr><th>プレフィックス</th><th>内容</th></tr></thead><tbody><tr><td><code>[Monitor]</code></td><td>VRAM瞬時値・GPU% の収集ログ</td></tr><tr><td><code>[GPU]</code></td><td>CUDAバックエンド対応と要求したGPUレイヤー数</td></tr><tr><td><code>[VRAM]</code></td><td>LLMロード前後と推論直前の総量・使用量・実空き容量</td></tr><tr><td><code>[Whisper]</code></td><td>GPU→CPU / CPU→GPU 切替ログ</td></tr><tr><td><code>[Whisper]</code></td><td>CPU/GPUモデルのロード・スキップ理由</td></tr></tbody></table></div>
-      <h3>既知の限界</h3>
-      <ul class="readme-list"><li>pynvml/nvidia-smi はアロケータ後のスナップショット（TOCTOU あり）</li><li>他プロセスの使用分も総VRAM使用量には反映されますが、プロセス別内訳やロード後の急な確保までは予測できません</li><li>確率的削減が目的であり、OOMの完全防止は保証しない</li></ul>
-      <p>Whisper実行モードは設定画面で<code>自動</code>・<code>GPU small</code>・<code>GPU medium</code>・<code>CPU small</code>から選択でき、次回起動時に反映されます。手動GPU指定でも安全な空き容量を満たさない場合はCPU smallへフォールバックします。</p>
-      <p>生成設定では、希望する<strong>LLM GPUオフロード モード</strong>を選択し、アプリを再起動せず反映できます。実際にロード成功した<strong>GPUオフロード率と配置レイヤー数</strong>（例: <code>76%（32 / 42層・Partial GPU・自動選択）</code>）は別の読み取り専用欄で確認できます。これはLLMレイヤーの配置割合であり、WindowsのGPU使用率ではありません。希望モードだけを設定ファイルへ保存し、実配置のruntime stateは保存しません。</p>
-    </section>
-
-    <section class="readme-card readme-alert">
-      <h2>動作環境</h2>
-      <div style="overflow-x:auto;"><table><thead><tr><th>項目</th><th>要件</th></tr></thead><tbody><tr><td>OS</td><td>Windows 11（64bit）</td></tr><tr><td>Python</td><td>3.12.10（64bit）</td></tr><tr><td>GPU</td><td>NVIDIA GPU推奨（VRAM 8GB以上）／CPUのみでも動作可</td></tr><tr><td>RAM</td><td>8GB以上推奨</td></tr><tr><td>Biolog API（任意）</td><td><code>BIOLOG_URL</code>で指定するローカルAPI（既定値：<code>http://localhost:8766</code>）</td></tr><tr><td>家計簿API連携（任意）</td><td>別途用意したローカルの<code>kakeibo-bridge</code> API（既定値：<code>http://127.0.0.1:8767/api/kakeibo/record</code>）</td></tr></tbody></table></div>
-      <p><strong>Mac・Linuxは非対応です。</strong><br>TTSにWindows SAPI（win32com）を使用しているため、Windows専用となっています。<br>Biologは別プロジェクトです。標準ComposeではAPIの<code>8766</code>とUIの<code>8501</code>を<code>127.0.0.1</code>だけに公開します。認証は実装されていないため、公開範囲を変更する場合はBiolog側のセキュリティ説明を確認してください。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>⚠️ 必ずお読みください</h2>
-      <h3>音声入力について</h3>
-      <p>音声入力は周囲の音（テレビ・エアコン・会話等）を拾うことがあります。 これにより意図しない発話が送信される<strong>ハルシネーション</strong>が発生する場合があります。</p>
-      <p><strong>対処方法：</strong></p>
-      <ul class="readme-list"><li>メニューの「設定」から<strong>音声検出感度（RMS閾値）の数値を上げる</strong>ことで改善できます</li><li>デフォルト値は150です。200〜300程度に上げると誤検知が減少します</li><li>数値が大きいほど感度が低くなります（静かな環境では小さい値を推奨）</li><li>使用しないときはマイクボタンをクリックしてOFFにしてください</li></ul>
-      <h3>免責事項</h3>
-      <ul class="readme-list"><li>本アプリはAIの回答精度を保証しません</li><li>音声認識の誤認識・ハルシネーションにより意図しない操作が行われる場合があります</li><li>重要な情報は必ずご自身で確認してください</li></ul>
-    </section>
-
-    <section class="readme-card readme-alert">
-      <h2>セットアップ</h2>
-      <p><strong>⚠️ 事前準備①：Pythonのインストール</strong><br><strong>Python 3.12.10（64bit）</strong> を必ずインストールしてください。<br><a href="https://www.python.org/downloads/release/python-31210/">https://www.python.org/downloads/release/python-31210/</a></p><p>インストーラー起動時に必ず <strong>「Add Python to PATH」にチェック</strong> を入れてください。<br>チェックを忘れると以降のコマンドがすべて動作しません。</p>
-      <p><strong>Python 3.12の公式サポート予定（2026年7月28日確認）</strong></p>
-      <ul class="readme-list"><li>Python開発元が現在公開している予定では、Python 3.12系列の公式サポートは<strong>2028年10月に終了する予定</strong>です</li><li>Python 3.12系列では、新機能の追加や通常の不具合修正を広く行う期間が終了し、現在は主にセキュリティ上の問題を修正する更新が提供されています</li><li>Python 3.12.10は2025年4月8日に公開され、機能改善や通常の不具合修正を含む最後の3.12版です。公式のWindows・macOS用インストーラーが提供された最後の3.12版でもあります</li><li>2026年7月28日の確認時点では、Python 3.12.13が3.12系列の最新です。ただし、プログラムの元になるソースコードだけが配布され、一般利用者向けのWindows・macOS用インストーラーは提供されていません</li><li>公式サポートが終了しても、Python 3.12.10が直ちに起動できなくなる仕組みではありません。ただし、予定どおり公式サポートが終了した後はPython開発元から安全上の修正が提供されず、OSや依存ライブラリの更新によって将来動かなくなる可能性もあります</li><li>Python 3.12.10のインストーラーが、自動的に3.12.13へ更新されるわけではありません。本アプリでは引き続き3.12.10を動作確認済み環境として案内します。将来Pythonを変更する場合は、本アプリと依存ライブラリの対応状況を確認してください</li></ul>
-      <p>公式情報：</p>
-      <ul class="readme-list"><li><a href="https://devguide.python.org/versions/">Python各系列の対応状況と終了予定（Python Developer's Guide）</a></li><li><a href="https://www.python.org/downloads/release/python-31210/">Python 3.12.10の公開情報（Python.org）</a></li><li><a href="https://www.python.org/downloads/release/python-31213/">Python 3.12.13の公開情報（Python.org）</a></li></ul>
-      <p><strong>⚠️ 事前準備②：Gitのインストール</strong><br>Gitが必要です。以下のURLからインストールしてください。<br><a href="https://git-scm.com/download/win">https://git-scm.com/download/win</a></p><p>インストール時はほぼデフォルト設定のままで問題ありません。<br>ただし「Use a TrueType font in all console windows」という項目は<strong>チェックを外してください</strong>。チェックを入れると日本語が文字化けする場合があります。</p>
-      <p><strong>⚠️ 事前準備③：NVIDIA GPUを使用する場合</strong><br>本リポジトリの<code>requirements.txt</code>は、CUDA 12.4対応のビルド済みwheelを使用する構成です。対応するNVIDIAドライバーが必要です。<br>CUDA Toolkit本体は、ビルド済みwheelだけで動作する環境では常に必須とは限りませんが、ソースからビルドする場合や実行環境によっては必要です。CUDA関連のエラーが出る場合は、使用するwheel・ドライバー・CUDA環境の対応関係を確認してください。<br>CPUのみで使用する場合、CUDA Toolkitは不要です。後述の<code>requirements-cpu.txt</code>を使用してください。</p>
-      <h3>1. リポジトリをクローン</h3>
-      <pre><code>git clone https://github.com/shinosan1/LLM_Local_Chat.git
-cd LLM_Local_Chat</code></pre>
-      <h3>2. 仮想環境の作成（推奨）</h3>
-      <p>依存ライブラリの競合を避けるため、仮想環境の使用を強く推奨します。</p>
-      <pre><code>python -m venv .venv</code></pre>
-      <p>PowerShellの実行ポリシーを変更せず、以降は仮想環境のPythonを直接指定します。</p>
-      <h3>3. 依存ライブラリのインストール</h3>
-      <p><strong>NVIDIA GPU・CUDA 12.4を使用する場合</strong></p>
-      <p><code>requirements.txt</code>は、Windows・NVIDIA GPU・CUDA 12.4向けに、PyTorchと<code>llama-cpp-python 0.3.34</code>を固定した構成です。</p>
-      <pre><code>.\.venv\Scripts\python.exe -m pip install -r requirements.txt --no-cache-dir</code></pre>
-      <p><strong>CPUのみで使用する場合</strong></p>
-      <p><code>requirements-cpu.txt</code>は、Python 3.12・Windows 64bitのCPU環境向けです。PyTorchと<code>llama-cpp-python</code>のCPU版wheelを使用し、CUDA関連パッケージを導入しません。</p>
-      <pre><code>.\.venv\Scripts\python.exe -m pip install -r requirements-cpu.txt --no-cache-dir</code></pre>
-      <p><strong>別のCUDAバージョンを使用する場合：</strong><br>どちらのファイルもそのまま適用せず、<code>torch</code>関連と<code>llama-cpp-python</code>を利用環境に対応する公式配布へ変更してください。</p>
-      <p><strong>Permission Deniedエラーが出る場合：</strong><br><code>--no-cache-dir</code>オプションを付けることで解決できます。管理者権限は不要です。</p>
-      <p><strong>PyAudioのインストールでエラーが出る場合：</strong><br>PythonとPyAudioの対応バージョンを確認し、PyPIで配布されている公式wheelを利用してください。非公式インストーラーを経由した導入は推奨しません。</p>
-      <h3>4. GGUFモデルを用意する</h3>
-      <p><a href="https://huggingface.co/">Hugging Face</a> など信頼できる配布元から、対応する<code>.gguf</code>形式のモデルをダウンロードしてください。保存場所は任意ですが、管理しやすいよう<code>models/</code>フォルダへの配置を推奨します。 動作確認済み：<code>gemma-3-4b-it-q4_k_m.gguf</code>、<code>gemma-4-E4B-it-Q4_K_M.gguf</code></p>
-      <p><strong>⚠️ 初回起動時の注意：</strong><br>起動時マイクを有効にしている場合、音声認識用Whisperモデルが初回ロード時に自動ダウンロードされます。目安はsmallが約0.5GB、mediumが約1.5GBですが、モデルの版により変動します。設定とVRAM状況によっては両方が必要になるため、十分なディスク空き容量を確保してください。ダウンロード時はインターネット接続が必要です。マイク無効時はWhisperをロードしません。</p>
-    </section>
-
-    <section class="readme-card readme-alert">
-      <h2>動作確認済みモデル一覧</h2>
-      <p>本アプリで動作確認済みのGGUFモデルの一覧です。 すべて <a href="https://huggingface.co/">Hugging Face</a> からダウンロードできます。 ファイルは任意の場所に保存できます。管理しやすいよう<code>models/</code>フォルダへの配置を推奨します。</p>
-      <p><strong>⚠️ ダウンロードについて：</strong><br>モデルによってはHugging Faceへのアカウント登録および利用規約への同意が必要です。<br>各モデルのページで確認してからダウンロードしてください。</p>
-      <p><strong>⚠️ 免責：</strong><br>各モデルの利用規約・ライセンスはモデルごとに異なります。<br>ダウンロード前に必ず各モデルのHugging Faceページで利用規約を確認してください。<br>本アプリはモデルの利用に関して一切の責任を負いません。</p>
-      <p><strong>量子化形式の目安：</strong> <code>Q4_K_M</code>は、品質・容量・速度のバランスを取りやすい一般的な候補です。最適な形式はモデルと実行環境により異なります。</p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>モデル名</th><th>パラメータ</th><th>備考</th><th>ダウンロード</th></tr></thead><tbody><tr><td>gemma-3-4b-it-q4_k_m</td><td>4B</td><td>動作確認済み</td><td><a href="https://huggingface.co/lmstudio-community/gemma-3-4b-it-GGUF">リンク</a></td></tr><tr><td>gemma-4-E4B-it-Q4_K_M</td><td>8B（有効4B）</td><td>動作確認済み</td><td><a href="https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF">リンク</a></td></tr><tr><td>phi-3.5-Q8_0</td><td>3.8B</td><td>動作確認済み</td><td><a href="https://huggingface.co/lmstudio-community/Phi-3.5-mini-instruct-GGUF">リンク</a></td></tr><tr><td>LFM2.5-1.2B-Instruct-Q4_K_M</td><td>1.2B</td><td>動作確認済み（起動時に警告が出ますが動作に問題なし）</td><td><a href="https://huggingface.co/ggml-org/LFM2.5-1.2B-JP-GGUF">リンク</a></td></tr></tbody></table></div>
-      <p><strong>リンク切れの場合はHugging Face（https://huggingface.co/）でモデル名を直接検索してください。</strong></p>
-      <h3>5. アバター画像を用意する（任意）</h3>
-      <p>以下の4枚のPNG画像を <code>avatars/</code> フォルダに配置してください：</p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>ファイル名</th><th>内容</th></tr></thead><tbody><tr><td><code>default_avatar.png</code></td><td>通常状態</td></tr><tr><td><code>speaking_avatar.png</code></td><td>口を開けた状態</td></tr><tr><td><code>blink_avatar.png</code></td><td>目を閉じた状態</td></tr><tr><td><code>blink_speaking_avatar.png</code></td><td>目を閉じ口を開けた状態</td></tr></tbody></table></div>
-      <p>画像がない場合は透明画像で代替されます（アバターなしで動作します）。</p>
-      <h3>6. モデルを設定する</h3>
-      <p><code>chat_settings.json</code>がない場合も、アプリはコード既定値で起動を試みます。既定のモデルが見つからない場合は読込エラーが表示されますが、メイン画面の「ファイル」→「設定」を開き、「参照」ボタンから用意したGGUFモデルを選択して適用できます。保存した設定は<code>chat_settings.json</code>へ記録されます。</p>
-      <p>起動前に手動設定したい場合だけ、<code>chat_settings.json.example</code>を<code>chat_settings.json</code>へコピーし、<code>model_path</code>などを編集してください。</p>
-      <p>パーソナライズとVisionは、設定画面ではなく<code>chat_settings.json</code>で設定します。既存の設定ファイルに次のキーがなくても従来どおり起動します。</p>
-      <pre><code>{
-  "system_prompt": "",
-  "user_personalization": "",
-  "response_language": "回答は必ず日本語のみで行ってください。",
-  "reasoning_visibility_instruction": "内部の思考過程、分析、推論、計画は表示せず、ユーザーに見せる最終回答だけを出力してください。",
-  "external_prompt_files": {
-    "system_prompt": "prompts/system.md",
-    "user_personalization": "",
-    "user_profile": "prompts/profile.txt",
-    "instructions": []
-  },
-  "vision_enabled": false,
-  "vision_handler": "gemma4",
-  "vision_projector_path": ""
-}</code></pre>
-      <p>外部promptはUTF-8の<code>.txt</code> / <code>.md</code>に対応し、相対パスはアプリ配置フォルダ基準です。inline system → external system → inline personalization → external personalization → response language → reasoning visibility → external profile/instructionsの順で併用し、完全に同一の文章と同一ファイルだけを重複挿入しません。外部promptの欠損・形式・文字コード・サイズのエラーは警告を表示し、inline設定を含む読める設定だけで起動を継続します。</p>
-      <p>Visionを使う場合は、現在の<code>llama-cpp-python 0.3.34</code>で利用できる<code>gemma4</code>または<code>llava15</code>を指定し、対象モデルに対応するprojector / mmproj GGUFを<code>vision_projector_path</code>へ設定してください。<code>vision_enabled</code>の既定値は<code>false</code>です。</p>
-      <h3>7. 起動</h3>
-      <pre><code>.\.venv\Scripts\python.exe LLM_Local_Chat.py</code></pre>
-      <p><strong>⚠️ 起動時間について</strong><br>起動後、LLMモデルの読み込みに<strong>30秒〜数分</strong>かかります（モデルサイズ・環境によります）。<br>ステータスバーに「⏳ モデル読込中…」と表示されている間はチャットできません。<br>また音声認識（Whisper）の初期化にも別途<strong>数秒〜10秒程度</strong>のタイムラグがあります。<br>マイクアイコンが有効になるまでしばらくお待ちください。</p>
-      <h3>8. 家計簿API連携を使用する場合（任意）</h3>
-      <p>本リポジトリ単体では、家計簿台帳への登録はできません。LLM Local Chat内で取引候補を生成・検証・確認できますが、確認済み候補の送信には、別途用意して起動したローカルの<code>kakeibo-bridge</code> APIが必要です。</p>
-      <ul class="readme-list"><li>必要なPOST endpoint：<code>/api/kakeibo/record</code></li><li>既定接続先：<code>http://127.0.0.1:8767/api/kakeibo/record</code></li><li>ポート：環境変数<code>KAKEIBO_BRIDGE_PORT</code>で変更可能</li><li>非同梱：家計簿アプリ、家計簿DB、家計簿Web UI、家計簿APIサーバー、<code>kakeibo-bridge</code>サーバーおよびそのDocker/Compose定義</li></ul>
-      <p>本リポジトリには、これらの外部コンポーネントの入手・起動スクリプトはありません。家計簿API連携を使用しない場合、通常のチャット機能はこのAPIを必要としません。</p>
-    </section>
-
-    <section class="readme-card readme-alert">
-      <h2>使い方</h2>
-      <h3>基本操作</h3>
-      <p>起動するとメインウィンドウとアバターウィンドウが開きます。 ステータスバーが「✅ 待機中」になったらチャット可能です。</p>
-      <p>テキスト入力欄にメッセージを入力して <code>Enter</code> キーまたは「送信」ボタンで送信します。 <code>Shift + Enter</code> で改行できます。</p>
-      <h3>ファイル添付</h3>
-      <p>入力欄上の「📎 ファイルを添付」から、TXT / MD / JSON / CSVまたはPNG / JPEGを選択できます。本文あり・添付あり、本文だけ、添付だけのいずれも送信できます。本文も添付もない場合は送信しません。添付は通常チャットだけで使用でき、最大8件、画像はそのうち1枚までです。同名でも内容が異なるファイルは内部IDで区別し、<code>data.csv</code>、<code>data.csv (2)</code>のように表示します。</p>
-      <p>添付時点の内容は<code>chat_logs/attachments/&lt;session-id&gt;/</code>以下のアプリ管理領域へ、元ファイル名ではなく内部IDを使ってコピーします。送信後も「チャット添付: ファイル名」の表示が残り、「続けてください」などの後続質問へ同じ内容を1ターン内で重複させず再投入します。新しいチャットを開始しても元チャットの添付は削除されず、別チャットを開けばそのチャット固有の添付へ切り替わります。保存済みチャットを再読込したときとアプリ再起動後にも復元します。</p>
-      <p>保存済み添付は元ファイルとは別コピーです。元ファイルを編集・移動・改名・削除しても自動更新されません。最新版を使う場合は、現在チャットの古い添付を解除して再添付してください。添付は重要ファイルのバックアップシステムではなく、アプリ内添付を唯一の保存場所として利用しないでください。</p>
-      <p>入力欄の「添付解除」は、確認ダイアログで同意した場合に、現在のチャットに紐づく<strong>すべての添付</strong>と対応するアプリ管理領域のコピーを削除します。会話本文とAI回答、元ファイル、別チャットの添付は削除しません。チャット自体を削除した場合は、そのチャット専用の添付も内部ID・セッションIDで削除します。削除した添付は過去チャットから再参照できず、アプリによる復元は保証されません。</p>
-      <p>保存管理の操作経路は、<code>ファイル → 設定 → 保存済み添付ファイル → 選択した添付を削除</code>または<code>保存済み添付ファイルをすべて削除</code>です。一覧ではファイル名、種類、サイズ、紐づくチャット、状態、総件数、合計容量を確認できます。一括削除は<strong>現在のアプリ保存領域で管理される全チャットの保存済み添付</strong>が対象で、通常の会話履歴は残ります。部分失敗時は成功・失敗・スキップ・再試行待ち件数を表示し、完了していないのに「すべて削除しました」とは表示しません。</p>
-      <p>履歴JSONへ直接保存するのは、内部ID、basename、種類、サイズ、SHA-256等の復元用メタデータだけです。元ファイル絶対パス、TXT / MD / JSON / CSV本文、画像bytes、base64、data URIは埋め込みません。ただし、LLMが添付内容やファイル名を回答へ引用・要約した場合、その<strong>AI回答は通常の会話履歴として保存</strong>され、後の要約メモリにも含まれる可能性があります。</p>
-      <p>本アプリはユーザーアカウント単位の添付分離・認証・権限管理を提供しません。同じWindowsアカウント、同一PC、共有フォルダ等で同じアプリデータ保存領域を複数人が使用する場合、一括削除はその保存領域を利用する他のユーザーを含む全チャット添付へ影響する可能性があります。Windowsの別ユーザーであっても同じ保存先を共有する場合は、ユーザー単位の保護を保証しません。ローカルLLMであることだけで、PCへの不正アクセス、マルウェア、同一アカウントの別利用者、アクセス権を持つプロセスから完全に安全になるわけではありません。</p>
-      <p>個人情報、業務機密、パスワード、APIキー、アクセストークン、秘密鍵等を含むファイルは不用意に添付しないでください。TXT / MD / JSON / CSV内のPowerShell、shell、Python、JavaScript等は自動実行せず、LLMへの入力データとして扱います。一方、文書内の「これまでの指示を無視してください」のような文章がprompt injectionとして回答へ影響する可能性はあります。外部から取得した文書を信頼できる命令として扱わず、生成結果を確認せず重要な操作へ利用しないでください。拡張子、UTF-8、ファイルサイズ、画像形式・画素数の検査は異常入力の影響を抑える制限であり、ファイルや回答の安全性を完全には保証しません。</p>
-      <p>テキストは1ファイル1MiB、画像は1ファイル10MiBかつ16メガピクセル以下です。上限超過やUTF-8で読めないテキストは切り捨てずに拒否します。添付がある間は、system prompt・要約・全会話履歴・添付・新規入力・応答予約を合わせてcontextへ収まらない場合、履歴を黙って省略せず警告します。画像入力では4,096画像トークンを事前予約しますが、モデル固有の実トークン数を送信前に完全保証できないため、実行時にcontext超過として拒否される場合があります。</p>
-      <p>保存済み添付はアプリ終了後も残るため、画像や多数の添付を使い続けるとディスク使用量が増えます。自動期限削除、自動容量削減、ごみ箱、自動バックアップ、添付暗号化は提供しません。設定画面の件数・合計容量・個別削除・一括削除を使って管理してください。実体欠損、読込不能、サイズ不一致、保存済みSHA-256との不一致を検出した添付はLLMへ渡さず、警告します。</p>
-      <p><code>.shiro-export</code>には添付実体も添付メタデータも含まれません。インポート後のチャットへ添付は復元されないため、<code>.shiro-export</code>を添付ファイルのバックアップとして使用しないでください。</p>
-      <h3>音声入力</h3>
-      <p>コード上の既定値と<code>chat_settings.json.example</code>では、起動時のマイク・TTS読み上げはともに<strong>OFF</strong>です。「ファイル」→「設定」で次回起動時の状態を変更できます。 マイクボタンをクリックするとONになります。 ONの状態で一定以上の音量を検知すると自動的に録音を開始し、Whisperで文字起こしして送信します。 再度クリックするとOFFに戻ります。</p>
-      <p>起動時マイクを有効にする設定とWhisper実行モードは、次回起動時に反映されます。初回のWhisperダウンロード・ロードには時間がかかる場合があります。<br>TTS読み上げ中はハウリング防止のため音声入力が自動的に抑制されます。</p>
-      <h3>TTS（読み上げ）</h3>
-      <p>AIの返答をWindows SAPIで読み上げます。起動時はOFFがデフォルトです。 メニューからTTSのON/OFFを切り替えられます。 読み上げ中は「停止」ボタンで中断できます（タイミングによっては中断できない場合があります）。</p>
-      <h3>健康記録モード（Biolog連携） — v1.1.0</h3>
-      <p>💪ボタンをクリックすると健康記録モードがONになります。 このモードでは、計測値・食事・活動内容・メモを話しかけると、確認後にBiolog APIへデータをPOSTします。食事ログ、行動ログ、メモだけの登録にも対応します。</p>
-      <p><strong>入力例：</strong></p>
-      <pre><code>体重65kg、体脂肪20%、朝はオートミールを食べた</code></pre>
-      <p><strong>動作結果：</strong></p>
-      <ul class="readme-list"><li>チャットに「✅ Biolog記録: 2026-05-06 体重 65.0kg 食事:朝はオートミールを食べた」と表示</li><li>Biologの健康記録へ保存</li></ul>
-      <p><strong>事前準備：</strong> Biolog側の文書とComposeを確認してAPIを起動し、LLM Local Chatを実行するPCからヘルスチェックへ接続できることを確認してください。 標準ComposeではBiolog APIを<code>127.0.0.1:8766</code>に限定して公開します。</p>
-      <pre><code>curl http://localhost:8766/api/health/health</code></pre>
-      <p><strong>環境変数でエンドポイントを変更できます：</strong></p>
-      <pre><code>$env:BIOLOG_URL = "http://localhost:8766"  # デフォルト
-.\.venv\Scripts\python.exe LLM_Local_Chat.py</code></pre>
-      <p>計測値・食事ログ・行動ログ・メモがすべて空の場合だけ送信しません。<code>食事ログ</code>・<code>行動ログ</code>・<code>メモ</code>を明示した入力は、ユーザー原文から決定的に解析されます。</p>
-      <h3>ゲストモード</h3>
-      <p>「ゲストモード: OFF」ボタンをクリックするとゲストモードがONになります。 ゲストモードがONのとき、会話履歴は<code>chat_logs/</code>へ自動保存されず、ゲスト会話を暗号化エクスポートすることもできません。ただし、実行中のメモリ、標準出力やOS側のログ、連携先APIへ送信したデータまで消去・保護する機能ではありません。 プライベートな会話や一時的な用途に使用してください。 再度クリックすると通常モードに戻り、新しいセッションが開始されます。</p>
-      <h3>チャット履歴</h3>
-      <p>左ペインに過去の会話一覧が表示されます。クリックで読み込めます。 上部の検索欄でタイトル・要約の部分一致検索ができます。 右クリックで個別削除が可能です。 履歴はアプリ配置フォルダ内の<code>chat_logs/</code>へ、DPAPI暗号化されたJSONエンベロープとして保存されます。ファイル名、件数、サイズ、更新日時は暗号化されません。 設定画面で保存期間を選択できます。有限期間を初めて適用するときは削除候補件数を表示し、確認後すぐに削除します。外部バックアップは自動削除されないため、バックアップ側の保持期間も別途管理してください。</p>
-      <h3>要約メモリ</h3>
-      <p>一定ターン数ごとに会話の要約が自動生成され、次の応答に注入されます。 長期会話でもコンテキストが維持されやすくなっています。</p>
-      <h3>設定</h3>
-      <p>メニューから「ファイル」→「設定」を開くと、以下の項目を変更できます。</p>
-      <div style="overflow-x:auto;"><table><thead><tr><th>項目</th><th>内容</th><th>推奨値 / アドバイス</th></tr></thead><tbody><tr><td><strong>モデルファイル</strong></td><td>使用する GGUF モデルのパスを指定します。</td><td>「参照」ボタンから任意の場所にある対応GGUFファイルを選択できます。</td></tr><tr><td><strong>LLM GPUオフロード モード</strong></td><td><code>自動</code>・<code>Full GPU</code>・<code>約75%</code>・<code>約50%</code>・<code>約25%</code>・<code>CPU</code>から希望配置を選びます。</td><td>保存後、旧モデルを解放してからバックグラウンドで再読み込みし、再起動なしで反映します。安全条件を満たさない上位配置は下位へフォールバックします。</td></tr><tr><td><strong>現在の実行状態</strong></td><td>実際にロード成功したGPUオフロード率・配置レイヤー数・Full/Partial/CPUを表示します。</td><td>読み取り専用です。「GPU配置を再評価」は<code>自動</code>モードの配置を現在のVRAMから選び直します。</td></tr><tr><td><strong>コンテキスト長</strong></td><td>AIが一度に記憶・処理できる情報の長さ（n_ctx）です。</td><td>通常は <strong>8192</strong> を推奨。VRAM不足で動作が不安定な場合は数値を下げてください。</td></tr><tr><td><strong>最大返答トークン数</strong></td><td>AIが一度の返答で出力する最大トークン数です。文字数とは一致しません。</td><td>短い会話なら <strong>256〜512</strong>、長文が必要なら <strong>1024</strong> 程度が目安です。VRAM状況により実効値が自動的に削減される場合があります。</td></tr><tr><td><strong>会話の自由度</strong></td><td>AIの回答の多様性を調整します（temperature）。</td><td><strong>0.1〜0.5</strong>: 堅実・正確（事実確認向き）<br><strong>0.7〜1.0</strong>: 標準的（自然な雑談向き）<br><strong>1.2〜1.5</strong>: 独創的（アイデア出し向き）</td></tr><tr><td><strong>音声検出感度</strong></td><td>マイクが音声を拾う際のしきい値（RMS 閾値）です。</td><td><strong>数値が小さいほど高感度</strong>になります。周囲の音で誤作動する場合は <strong>200〜300</strong> 程度に上げてください。</td></tr></tbody></table></div>
-      <h3>アバター</h3>
-      <p>アバターウィンドウはドラッグで自由に移動できます。 右クリックで表示/非表示を切り替えられます。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>よくある質問</h2>
-      <p><strong>Q. OllamaやLM Studioを使わないのはなぜですか？</strong> A. llama.cppをPythonバインディング（llama-cpp-python）から直接呼び出し、LLM推論をローカルで実行するためです。必要な依存ライブラリとモデルを取得済みで、オプションのBiolog・家計簿API連携も別プロセスのローカルAPIへ限定した構成では、通常の会話処理に外部のLLMサービスを使用しません。セットアップ、モデル取得、外部リンクの閲覧にはインターネット接続が必要です。</p>
-      <p><strong>Q. CPUだけでも動きますか？</strong> A. CPU実行へフォールバックできます。CPU専用PCでは、セットアップ時に<code>requirements-cpu.txt</code>を使用してください。応答速度はモデルサイズ、量子化形式、CPU、メモリ帯域、コンテキスト長などに大きく依存し、実用的な速度になるとは一律に保証できません。</p>
-      <p><strong>Q. Whisperのモデルは自動でダウンロードされますか？</strong> A. 起動時マイクを有効にした場合、初回ロード時にWhisperモデルが自動的にダウンロードされます。マイク無効時は、TTSが有効でもWhisperをロードしません。</p>
-      <p><strong>Q. TTSには何を使用していますか？</strong> A. <code>win32com.client.Dispatch("SAPI.SpVoice")</code> により、Windows SAPI5をワーカースレッドから直接制御しています。</p>
-    </section>
-
-    <section class="readme-card readme-alert">
-      <h2>導入・運営責任者の方へ</h2>
-      <p>本アプリを業務環境に導入される際は、以下のセキュリティ上の特性を情報セキュリティ担当者と共有・確認してください。</p>
-      <p>脆弱性を報告する場合は<a href="../SECURITY.md">SECURITY.md</a>を確認し、詳細を公開Issueへ投稿しないでください。</p>
-      <h3>セキュリティ上の特性</h3>
-      <p><strong>確認済みの範囲</strong></p>
-      <ul class="readme-list"><li>LLM推論、Whisper音声認識、Windows SAPI5による音声合成はローカルプロセスで実行されます</li><li>現在のアプリコードでは、外部のLLM APIへ会話内容を送信する処理は確認できません</li><li>Biolog・家計簿API連携は別プロセスのHTTP APIを使用します。現在のアプリコードでは接続先をループバックアドレスに制限し、環境プロキシを使用せずに接続します。家計簿アプリ、DB、<code>kakeibo-bridge</code>サーバーは本リポジトリに含まれず、実際に利用できるかどうかは別途用意したローカルAPIの稼働・ネットワーク設定にも依存します</li></ul>
-      <p><strong>⚠️ 使用するモデルについての注意：</strong><br>GGUFモデルファイル自体が独立して通信や攻撃を行うものではありません。ただし、信頼できない、または破損したファイルがモデル読み込みライブラリの脆弱性を突く可能性があります。信頼できる配布元から取得し、<code>llama.cpp</code>および<code>llama-cpp-python</code>を定期的に更新してください。モデルの仕様・ライセンスも確認してください。</p>
-      <p><strong>導入・運営前に確認すべき点</strong></p>
-      <ul class="readme-list"><li>会話履歴はWindows DPAPIの現在ユーザースコープで暗号化されます。暗号化は同一Windowsユーザーとして動作する別プロセスやマルウェア、実行中メモリ、画面、クリップボード、標準出力を保護しません</li><li>暗号文は原則として同じWindowsユーザープロファイルと当該Windows環境に依存します。OS再インストール、プロファイル消失、管理者による一部のパスワード操作などで復号不能になる可能性があります</li><li>ファイル名、件数、サイズ、更新日時などのメタデータは暗号化されません</li><li><code>.shiro-export</code>はDPAPIとは別のパスフレーズ暗号化形式です。パスフレーズ紛失時は復元できません</li><li>TTSにwin32comによるWindows SAPI5を使用しています</li><li>ゲストモードは<code>chat_logs/</code>への履歴保存を行いませんが、メモリ、標準出力、OS側のログ、連携先APIの保存データは保護対象外です</li><li>Biolog・家計簿APIへ送信済みのデータは会話履歴のDPAPI暗号化や保存期間管理の対象外です</li><li>家計簿API連携クライアントの既定接続先は<code>127.0.0.1:8767</code>です。本リポジトリには家計簿側のサーバー・DB・Docker/Compose定義を含まず、連携先環境の内部構成はこの文書では断定しません</li><li>ループバック限定はAPI認証の代わりではなく、同一端末上の他プロセスからのアクセスを防ぐものではありません</li><li><code>diskcache</code> 5.6.3以下には、キャッシュディレクトリへ書き込める第三者がキャッシュ読込時に任意コードを実行できるCVE-2025-69872が報告され、修正版は公開されていません。現在のアプリコードではディスクキャッシュを有効化する<code>LlamaDiskCache</code>や<code>set_cache</code>の呼び出しを確認できませんが、利用環境の導入バージョンと有効化状況を確認してください。将来有効化する場合は専用キャッシュディレクトリを使い、書き込み権限を利用者本人に限定してください。修正版の公開後は回帰テストを行ったうえで更新してください</li></ul>
-      <h3>推奨事項</h3>
-      <ul class="readme-list"><li>Windowsアカウントを共有せず、利用者ごとに分離してください</li><li>OSドライブとバックアップ媒体でBitLockerなどのボリューム暗号化を有効にしてください</li><li><code>chat_logs/</code>とバックアップ先のアクセス権限を利用者本人と必要な管理者へ限定してください</li><li>OS再インストールやユーザープロファイル変更前に、必要な履歴を管理された保存先へ明示的にエクスポートしてください</li><li>保存期間を設定しても外部バックアップ、連携先API、OSログは自動削除されません。それぞれ独立した保持・削除方針を定めてください</li><li>ゲストモードやDPAPIだけを機密情報の完全な保護策とせず、端末、アカウント、ログ、連携先、バックアップを含めて運用を評価してください</li><li>本アプリの導入・運営に関するリスク判断とアクセス管理は、導入・運営主体が行ってください</li><li>同じ<code>chat_logs/</code>を使用するShiroを複数同時に起動しないでください。同一履歴を同時保存した場合は後から保存した内容で上書きされる可能性があります</li></ul>
-    </section>
-
-    <section class="readme-card">
-      <h2>免責事項</h2>
-      <p>本アプリは個人が学習・研究目的で開発したものです。 動作保証・サポートは一切行っておりません。利用により生じたいかなる損害についても作者は責任を負いません。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>ライセンス</h2>
-      <p>本ソフトウェアは<a href="./LICENSE.html">MIT License</a>で公開しています。利用、複製、変更、結合、公開、配布、サブライセンスおよび販売は、MIT Licenseの条件に従って許可されます。</p>
-      <p>GGUFモデル、音声モデル、依存ライブラリおよび生成物には、それぞれ別のライセンスや利用条件が適用される場合があります。利用者自身で配布元の条件を確認してください。</p>
-      <p>本ソフトウェアは現状有姿で提供され、動作・出力内容・AI回答の正確性を保証しません。詳細な保証の否認は<code>LICENSE</code>を参照してください。</p>
-    </section>
-
-    <section class="readme-card">
-      <h2>関連文書</h2>
-      <ul class="readme-list"><li><a href="./CODE_REFERENCE.html">コード解説</a></li><li><a href="./TERMS_OF_USE.html">利用規約</a></li><li><a href="./LICENSE.html">MIT License</a></li><li><a href="./PRIVACY_POLICY.html">プライバシーポリシー</a></li><li><a href="./DISCLAIMER.html">免責事項</a></li><li><a href="./THIRD_PARTY_LICENSES.html">第三者ソフトウェアおよびライセンス情報</a></li><li><a href="./SHA256.html">SHA-256 ハッシュ値一覧</a></li></ul>
-    </section>
-
-    <section class="readme-card">
-      <p>Copyright &copy; 2026 shinosan1</p>
-      <nav class="doc-nav">
-        <a href="./TERMS_OF_USE.html">利用規約</a>
-        <a href="./PRIVACY_POLICY.html">プライバシーポリシー</a>
-        <a href="./LICENSE.html">ライセンス</a>
-        <a href="./DISCLAIMER.html">免責事項</a>
-        <a href="./THIRD_PARTY_LICENSES.html">サードパーティライセンス</a>
-        <a href="./CODE_REFERENCE.html">コード解説</a>
-        <a href="./SHA256.html">SHA-256</a>
-      </nav>
-    </section>
-  </main>
+<p>v1.6.0以前は、<code>2026/08/16</code> と <code>2026-08-16</code>
+のどちらの形式も日付として認識されず、常に実行日へフォールバックしていました。</p>
+<p>対応する日付形式は次のとおりです。</p>
+<table>
+<thead>
+<tr class="header">
+<th>入力形式</th>
+<th>採用される日付</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>2026/08/16</code></td>
+<td>原文の年月日をそのまま使用</td>
+</tr>
+<tr class="even">
+<td><code>2026-08-16</code></td>
+<td>同上（<code>/</code> 形式と同じ結果）</td>
+</tr>
+<tr class="odd">
+<td><code>2026年8月16日</code></td>
+<td>原文の年月日をそのまま使用</td>
+</tr>
+<tr class="even">
+<td><code>7/17</code></td>
+<td>実行年を補って使用（従来どおり）</td>
+</tr>
+<tr class="odd">
+<td><code>7月17日</code></td>
+<td>実行年を補って使用</td>
+</tr>
+<tr class="even">
+<td>日付表現なし</td>
+<td>実行日を使用（従来どおり）</td>
+</tr>
+</tbody>
+</table>
+<p>実在しない暦日（<code>2026/02/30</code>・<code>2026年2月30日</code>）、範囲外の月（<code>2026/13/01</code>）、
+区切り文字の混在（<code>2026/08-16</code>）は日付として扱わず、実行日へフォールバックします。
+無効な年付き日本語日付の内部を、年なしの月日として再解釈することはありません。</p>
+<p>日付はLLMの出力を使わず、ユーザー原文からの機械抽出だけで決定します（金額と同じ方針）。確認画面での手入力による修正も従来どおり可能です。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v160の主な改善">v1.6.0の主な改善</h2>
+<h3 id="家計簿api連携クライアントの接続ポート">家計簿API連携クライアントの接続ポート</h3>
+<ul class="readme-list">
+<li>別途用意した<code>kakeibo-bridge</code>
+APIへの既定接続先を<code>http://localhost:8765</code>から<code>http://127.0.0.1:8767</code>へ変更</li>
+<li>ローカルAPI送信の許可ポート<code>LOCAL_API_PORTS</code>を、固定値ではなく<code>KAKEIBO_BRIDGE_PORT</code>と連動する形へ変更</li>
+<li>環境変数<code>KAKEIBO_BRIDGE_PORT</code>で<code>kakeibo-bridge</code>
+APIのポートを上書きできるよう追加</li>
+</ul>
+<p><code>8765</code>は同一端末上の別サービスが使用しているため、家計簿ブリッジ専用に<code>8767</code>を割り当てました。</p>
+<p><code>KAKEIBO_BRIDGE_PORT</code>に<code>1</code>〜<code>65535</code>の範囲外を指定した場合は起動時にエラーになります。ポートが競合している場合の自動振替は行いません。</p>
+<p>送信先の許可ポート判定は<code>KAKEIBO_BRIDGE_PORT</code>と連動します。<code>KAKEIBO_API_URL</code>で別のポートを指定する場合は、<code>KAKEIBO_BRIDGE_PORT</code>にも同じ値を設定してください。両者が一致しない場合、送信は中止されます。</p>
+<p>別途用意した<code>kakeibo-bridge</code>
+APIを<code>8765</code>で稼働させている場合は、bridge側を<code>8767</code>へ移行するか、<code>KAKEIBO_BRIDGE_PORT</code>に実際のポートを設定してください。</p>
+<h3 id="この変更の対象外">この変更の対象外</h3>
+<p>Biolog API（<code>8766</code>）とBiolog
+UI（<code>8501</code>）のポートは変更していません。家計簿アプリ、DB、<code>kakeibo-bridge</code>サーバーから先の構成は本リポジトリに含まれず、この変更では定義していません。</p>
+<p>回帰テストは<code>tests/test_integrations.py</code>の許可ポート判定を<code>8767</code>基準へ更新しています（6件）。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v15系の主な改善">v1.5系の主な改善</h2>
+<h3 id="暗号化インポートエクスポート">暗号化インポート／エクスポート</h3>
+<p>別PCや別のWindowsユーザー環境へ会話履歴を移行するため、パスフレーズ付きの暗号化形式<code>.shiro-export</code>を追加しました。</p>
+<p>通常の会話履歴は、これまでどおり現在のWindowsユーザーに紐づくDPAPIで暗号化して保存します。<code>.shiro-export</code>は、DPAPI履歴を別環境へ移すための持ち運び用形式です。</p>
+<p>暗号化には以下を使用します。</p>
+<ul class="readme-list">
+<li>scryptによるパスフレーズからの鍵導出</li>
+<li>AES-256-GCMによる認証付き暗号化</li>
+<li>暗号設定を含む外側ヘッダーのAAD認証</li>
+<li>毎回新しく生成されるsaltとnonce</li>
+</ul>
+<p>パスフレーズ、暗号鍵、復号済みの会話履歴は、設定ファイルやログへ保存しません。暗号化・復号時にも平文の一時ファイルは作成しません。</p>
+<h3 id="エクスポート対象">エクスポート対象</h3>
+<p>暗号化エクスポートの対象は、DPAPIでディスクへ保存済みの会話履歴だけです。</p>
+<p>以下はエクスポートできません。</p>
+<ul class="readme-list">
+<li>ゲストモードの会話</li>
+<li>まだ保存されていない会話</li>
+<li>保存後にメモリ上で追加・変更された未保存部分</li>
+<li>保存済み添付の実体と添付メタデータ</li>
+</ul>
+<p><code>.shiro-export</code>をインポートしても添付は復元されません。この形式は会話履歴の持ち運び用であり、添付ファイルのバックアップではありません。</p>
+<p>「現在の会話のみ」を選択した場合も、保存済みの履歴をディスクから読み直してエクスポートします。</p>
+<h3 id="インポート処理">インポート処理</h3>
+<p><code>.shiro-export</code>をインポートすると、パスフレーズで復号した後、現在のWindowsユーザー用DPAPIで再暗号化して<code>chat_logs</code>へ保存します。</p>
+<p>保存前に以下を確認します。</p>
+<ul class="readme-list">
+<li>ファイル形式とバージョン</li>
+<li>scrypt、salt、nonce、AES-GCM設定</li>
+<li>暗号文の改ざん</li>
+<li>復号後の履歴形式</li>
+<li>会話件数、文字数、入れ子、ファイルサイズなどの上限</li>
+<li>既存履歴との重複</li>
+<li>履歴の保存期間</li>
+</ul>
+<p>すべての履歴を検証してから保存を開始し、通常の書き込みエラーが発生した場合は、今回追加した履歴を巻き戻します。既存の履歴は変更・上書きしません。</p>
+<p>重複する会話は、スキップするか複製としてインポートするかを選択できます。</p>
+<h3 id="注意事項">注意事項</h3>
+<ul class="readme-list">
+<li><code>.shiro-export</code>のパスフレーズを忘れた場合、履歴を復旧できません。</li>
+<li>弱いパスフレーズは、暗号化ファイルを取得した第三者によるオフライン解析を受ける可能性があります。</li>
+<li>暗号化ファイルとパスフレーズを同じ場所へ保存しないでください。</li>
+<li>通常のDPAPI履歴は、別PCや別のWindowsユーザーでは復号できない可能性があります。</li>
+<li>クラウドストレージなど保存先自体の安全性を、本アプリが保証するものではありません。</li>
+</ul>
+<h3 id="v152の操作画面">v1.5.2の操作画面</h3>
+<p>v1.5.0では、暗号化エクスポート時にゲスト会話や未保存会話が含まれる可能性がありました。</p>
+<p>v1.5.1ではエクスポート経路を修正し、DPAPIで保存済みの履歴だけをディスクから読み込んで出力するように変更しました。v1.5.2では、対象範囲を曖昧な「はい／いいえ」で選ばず、ファイルメニューから次のどちらかを直接選択します。</p>
+<ul class="readme-list">
+<li>現在の保存済み会話をエクスポート</li>
+<li>保存済みの全会話をエクスポート</li>
+</ul>
+<p>保存先とパスフレーズは同じ画面で入力します。インポートもファイルとパスフレーズを同じ画面で指定し、重複する会話は「重複をスキップ（推奨）」「重複もコピー」「キャンセル」の明示的なボタンで選びます。</p>
+<p>エクスポート先は<code>.shiro-export</code>ファイルに限定されます。上書き確認後、実際の書込み前に出力先の作成・削除・変更を検知した場合は、安全のため書込みを中止します。この確認は意図しない上書きの可能性を下げるためのbest-effort対策であり、別プロセスとの完全な排他制御を保証するものではありません。</p>
+<p>重複確認画面の追加予定件数は確認時点の値です。確認後に既存履歴が変化した場合があるため、完了画面に表示される実際の追加件数とスキップ件数を最終結果として確認してください。</p>
+<p>v1.5.1のCHANGELOGに記載していた回帰テスト3件は、実際のv1.5.1差分には含まれていませんでした。該当する動作確認はv1.5.2の回帰テストとして追加しています。</p>
+</section>
+<section class="readme-card">
+<h2 id="v14系の主な改善">v1.4系の主な改善</h2>
+<ul class="readme-list">
+<li>Whisperの品質指標を使い、無音・環境音や高圧縮反復による誤認識の送信を保守的に低減</li>
+<li>停止要求後はLLMワーカーを最大3秒待機し、終了しない場合は操作ロックを維持して再起動を案内</li>
+<li>TTSの世代確認により、古い遅延処理が読み上げ中のマイク抑制を解除する競合を防止</li>
+<li>Biolog送信前に日付・型・有限値・数値範囲を検証し、不正なレコードは全体を拒否</li>
+<li>健康記録・家計簿モードの内部指示文を通常の会話履歴やタイトルへ混入させないよう改善</li>
+<li>Whisper実行モード、VRAM診断ログ、ストリーミングTTS、読み上げ速度設定を追加</li>
+</ul>
+<p>生成設定のコード既定値と配布テンプレート値は<code>temperature=0.7</code>、<code>max_tokens=1024</code>です。既存のユーザー設定がある場合はそちらが優先され、<code>max_tokens</code>は推論時のVRAM状況により安全のため動的に削減される場合があります。</p>
+<p>Whisper品質ゲートは誤認識を完全に防止するものではありません。周囲の音で誤作動する場合は、音声検出感度の調整またはマイクの一時停止も併用してください。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v142の履歴保護">v1.4.2の履歴保護</h2>
+<ul class="readme-list">
+<li><code>chat_logs/</code>の会話本文・タイトル・要約を、現在のWindowsユーザー用DPAPIで必須暗号化</li>
+<li>v1.4.1以前の平文履歴は、初回起動時の確認後に検証付きで原子的に移行</li>
+<li>保存期間を無期限・30日・90日・180日・365日から選択可能（既定は無期限、90日を推奨）</li>
+<li>DPAPI保存に失敗した場合は平文へフォールバックせず、UIへ通知</li>
+<li>平文テキスト保存を廃止し、別環境へ移せるパスフレーズ付き暗号化エクスポートを提供</li>
+</ul>
+<p>暗号化後の履歴はv1.4.1以前では読み込めません。DPAPIはWindowsユーザープロファイルと環境に依存するため、OS再インストール、ユーザープロファイル消失、一部のパスワード管理操作などで復号できなくなる場合があります。</p>
+<h3 id="起動できない場合の復旧手順">起動できない場合の復旧手順</h3>
+<p>会話履歴の復号・形式確認・移行に失敗した場合、Shiroは履歴を自動削除・自動移動せず、通常起動を中止します。</p>
+<ol class="readme-list" type="1">
+<li>元のWindowsユーザーと元のPC環境で起動しているか確認します。DPAPI暗号文は別ユーザーや別環境では復号できない場合があります。</li>
+<li>旧版を含むすべてのShiroを終了し、<code>chat_logs/</code>と対象ファイルのバックアップを確保します。バックアップはアクセス制限された場所に保存し、公開リポジトリや共有クラウドへ置かないでください。</li>
+<li>破損・未対応と表示されたファイルがある場合は、削除せず、<code>chat_logs/</code>外の安全な非公開フォルダへ手動で退避してから再起動します。退避した履歴は一覧に表示されなくなります。</li>
+<li><code>.history_migration.lock</code>が残っている場合は、すべてのShiroが終了していることを確認した場合に限り、<code>chat_logs/.history_migration.lock</code>を手動で削除して再起動します。Shiroの実行中は削除しないでください。</li>
+<li>「Windows
+DPAPIを利用できません」と表示された場合は、同梱の依存関係と<code>pywin32</code>が利用できるPython環境で起動してください。</li>
+</ol>
+<p>初回移行中は旧版Shiroを同時起動しないでください。ロックファイルはv1.4.2同士の移行を調整するもので、旧版による平文履歴の新規保存までは防げません。</p>
+<p>暗号化後の履歴はv1.4.1以前では読み込めません。別PC・別Windowsユーザーへ移す場合は、ファイルメニューの「暗号化エクスポート」を使用してください。</p>
+<h3 id="暗号化インポートエクスポート-2">暗号化インポート／エクスポート</h3>
+<p><code>.shiro-export</code>は、scryptでパスフレーズから鍵を導出し、AES-256-GCMで会話履歴とメタデータを認証付き暗号化する持ち運び用形式です。通常の<code>chat_logs/</code>はWindows
+DPAPI、持ち運び用ファイルはパスフレーズ暗号化という役割分担です。</p>
+<ul class="readme-list">
+<li>パスフレーズは設定・履歴・ログへ保存されません。紛失した場合は復元できません</li>
+<li>出力は人間が直接読めるテキストではありません</li>
+<li>復号した平文を一時ファイルへ保存せず、メモリ内で検証します</li>
+<li>インポート後は現在のWindowsユーザー用DPAPIで再暗号化します</li>
+<li>暗号化ファイルとパスフレーズを同じ場所へ保管しないでください</li>
+<li>Python上の平文・鍵をメモリから完全消去できるとは保証しません</li>
+<li>通常の書込例外では追加ファイルを巻き戻しますが、停電・OS停止に対する完全なトランザクション保証はありません</li>
+<li>既存の平文<code>.txt</code>はインポート対象ではなく、アプリが自動削除することもありません</li>
+</ul>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="実装構成とテスト">実装構成とテスト</h2>
+<p><code>LLM_Local_Chat.py</code> をエントリーポイントとし、生成制御は
+<code>controller.py</code>、LLM実行は
+<code>llm_service.py</code>、プロンプト構築は
+<code>prompt_builder.py</code>、履歴管理は
+<code>session_store.py</code>、音声処理は <code>audio_workers.py</code>
+に分割されています。</p>
+<p>回帰テストは標準ライブラリの <code>unittest</code>
+で実行できます。</p>
+<p>テストファイルは <code>tests/</code>
+配下にまとめてあります（<code>.venv</code>
+がプロジェクト直下にあるため、素の <code>unittest discover -v</code>
+を使うと <code>.venv</code>
+内の依存パッケージのテストまで収集してしまいます。<code>-s tests</code>
+で収集範囲を限定し、<code>-t .</code>
+でプロジェクトルートをトップレベルディレクトリに指定してください）。</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span><a aria-hidden="true" tabindex="-1"></a><span class="bu">.</span><span class="dt">\.</span>venv<span class="dt">\S</span>cripts<span class="dt">\p</span>ython.exe <span class="at">-m</span> unittest discover <span class="at">-s</span> tests <span class="at">-t</span> . <span class="at">-p</span> <span class="st">"test*.py"</span> <span class="at">-v</span></span></code></pre></div>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="vram安全フィルタv120">VRAM安全フィルタ（v1.2.0）</h2>
+<p>LLM（Gemma 4 E4B、総8B／有効4B）とWhisper
+mediumを同一GPUで動かす際のVRAM競合を緩和します。</p>
+<h3 id="設計思想">設計思想</h3>
+<p><strong>「VRAMを管理する」ではなく「VRAMから逃げる」</strong> —
+OOMの完全防止は不可能です。
+この機能は「クラッシュではなく性能劣化」で済ませることを目標としています。</p>
+<h3 id="自動フォールバックの仕組み">自動フォールバックの仕組み</h3>
+<table>
+<thead>
+<tr class="header">
+<th>状況</th>
+<th>動作</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>LLMロード前の空き容量がGGUFサイズ+予約領域以上</td>
+<td><code>n_gpu_layers=-1</code>で全層GPUオフロードを要求</td>
+</tr>
+<tr class="even">
+<td>Full条件未満でGGUF総レイヤー数を取得できる</td>
+<td>モデルサイズの概算と予約領域から約75%→50%→25%を順に検討</td>
+</tr>
+<tr class="odd">
+<td>CUDA非対応、GPU情報取得不能、partial条件も満たさない</td>
+<td><code>n_gpu_layers=0</code>（CPU実行）にフォールバック</td>
+</tr>
+<tr class="even">
+<td>GPUロード時の明示的なVRAM不足、またはロード後の最低予約量不足</td>
+<td>安全に解放して一段低い候補を検討</td>
+</tr>
+<tr class="odd">
+<td>Whisperモード<code>auto</code>・空き4096MB以上</td>
+<td>GPU版mediumを使用</td>
+</tr>
+<tr class="even">
+<td>Whisperモード<code>auto</code>・空き2048〜4095MB</td>
+<td>GPU版smallを使用</td>
+</tr>
+<tr class="odd">
+<td>Whisperモード<code>auto</code>・空き2048MB未満</td>
+<td>CPU版smallのみで運用</td>
+</tr>
+<tr class="even">
+<td>推論時の実空き容量 &lt; 予約領域（512MBまたは総容量の6%）</td>
+<td><code>自動</code>モードでは旧LLMを解放後、現在より低いoffloadへ再配置して同じ入力を1回だけ継続。安全に再配置できない場合だけエラー表示</td>
+</tr>
+<tr class="odd">
+<td>推論時の実空き容量 512〜1024MB</td>
+<td><code>max_tokens</code> を25%に削減</td>
+</tr>
+<tr class="even">
+<td>推論時の実空き容量 1024〜1536MB</td>
+<td><code>max_tokens</code> を50%に削減</td>
+</tr>
+<tr class="odd">
+<td>GPU使用率 &gt; 88%</td>
+<td>Whisper を CPU に切替（ヒステリシス付き）</td>
+</tr>
+<tr class="even">
+<td>GPU版Whisperロード済みでGPU使用率 &lt; 70%</td>
+<td>Whisper を GPU に切替復帰</td>
+</tr>
+</tbody>
+</table>
+<h3 id="debugログの見方">DEBUGログの見方</h3>
+<pre><code>.\.venv\Scripts\python.exe -c "import logging; logging.basicConfig(level=logging.DEBUG); exec(open('LLM_Local_Chat.py').read())"</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>プレフィックス</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>[Monitor]</code></td>
+<td>VRAM瞬時値・GPU% の収集ログ</td>
+</tr>
+<tr class="even">
+<td><code>[GPU]</code></td>
+<td>CUDAバックエンド対応と要求したGPUレイヤー数</td>
+</tr>
+<tr class="odd">
+<td><code>[VRAM]</code></td>
+<td>LLMロード前後と推論直前の総量・使用量・実空き容量</td>
+</tr>
+<tr class="even">
+<td><code>[Whisper]</code></td>
+<td>GPU→CPU / CPU→GPU 切替ログ</td>
+</tr>
+<tr class="odd">
+<td><code>[Whisper]</code></td>
+<td>CPU/GPUモデルのロード・スキップ理由</td>
+</tr>
+</tbody>
+</table>
+<h3 id="既知の限界">既知の限界</h3>
+<ul class="readme-list">
+<li>pynvml/nvidia-smi はアロケータ後のスナップショット（TOCTOU
+あり）</li>
+<li>他プロセスの使用分も総VRAM使用量には反映されますが、プロセス別内訳やロード後の急な確保までは予測できません</li>
+<li>確率的削減が目的であり、OOMの完全防止は保証しない</li>
+</ul>
+<p>Whisper実行モードは設定画面で<code>自動</code>・<code>GPU small</code>・<code>GPU medium</code>・<code>CPU small</code>から選択でき、次回起動時に反映されます。手動GPU指定でも安全な空き容量を満たさない場合はCPU
+smallへフォールバックします。</p>
+<p>生成設定では、希望する<strong>LLM GPUオフロード
+モード</strong>を選択し、アプリを再起動せず反映できます。実際にロード成功した<strong>GPUオフロード率と配置レイヤー数</strong>（例:
+<code>76%（32 / 42層・Partial GPU・自動選択）</code>）は別の読み取り専用欄で確認できます。これはLLMレイヤーの配置割合であり、WindowsのGPU使用率ではありません。希望モードだけを設定ファイルへ保存し、実配置のruntime
+stateは保存しません。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="動作環境">動作環境</h2>
+<table>
+<thead>
+<tr class="header">
+<th>項目</th>
+<th>要件</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>OS</td>
+<td>Windows 11（64bit）</td>
+</tr>
+<tr class="even">
+<td>Python</td>
+<td>3.12.10（64bit）</td>
+</tr>
+<tr class="odd">
+<td>GPU</td>
+<td>NVIDIA GPU推奨（VRAM 8GB以上）／CPUのみでも動作可</td>
+</tr>
+<tr class="even">
+<td>RAM</td>
+<td>8GB以上推奨</td>
+</tr>
+<tr class="odd">
+<td>Biolog API（任意）</td>
+<td><code>BIOLOG_URL</code>で指定するローカルAPI（既定値：<code>http://localhost:8766</code>）</td>
+</tr>
+<tr class="even">
+<td>家計簿API連携（任意）</td>
+<td>別途用意したローカルの<code>kakeibo-bridge</code>
+API（既定値：<code>http://127.0.0.1:8767/api/kakeibo/record</code>）</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Mac・Linuxは非対応です。</strong><br/>
+TTSにWindows
+SAPI（win32com）を使用しているため、Windows専用となっています。<br/>
+Biologは別プロジェクトです。標準ComposeではAPIの<code>8766</code>とUIの<code>8501</code>を<code>127.0.0.1</code>だけに公開します。認証は実装されていないため、公開範囲を変更する場合はBiolog側のセキュリティ説明を確認してください。</p>
+</blockquote>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="warning-必ずお読みください">⚠️ 必ずお読みください</h2>
+<h3 id="音声入力について">音声入力について</h3>
+<p>音声入力は周囲の音（テレビ・エアコン・会話等）を拾うことがあります。<br/>
+これにより意図しない発話が送信される<strong>ハルシネーション</strong>が発生する場合があります。</p>
+<p><strong>対処方法：</strong></p>
+<ul class="readme-list">
+<li>メニューの「設定」から<strong>音声検出感度（RMS閾値）の数値を上げる</strong>ことで改善できます</li>
+<li>デフォルト値は150です。200〜300程度に上げると誤検知が減少します</li>
+<li>数値が大きいほど感度が低くなります（静かな環境では小さい値を推奨）</li>
+<li>使用しないときはマイクボタンをクリックしてOFFにしてください</li>
+</ul>
+<h3 id="免責事項">免責事項</h3>
+<ul class="readme-list">
+<li>本アプリはAIの回答精度を保証しません</li>
+<li>音声認識の誤認識・ハルシネーションにより意図しない操作が行われる場合があります</li>
+<li>重要な情報は必ずご自身で確認してください</li>
+</ul>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="セットアップ">セットアップ</h2>
+<blockquote>
+<p><strong>⚠️ 事前準備①：Pythonのインストール</strong><br/>
+<strong>Python 3.12.10（64bit）</strong>
+を必ずインストールしてください。<br/>
+[<a href="https://www.python.org/downloads/release/python-31210/](https://www.python.org/downloads/release/python-31210/)">https://www.python.org/downloads/release/python-31210/](https://www.python.org/downloads/release/python-31210/)</a></p>
+<p>インストーラー起動時に必ず <strong>「Add Python to
+PATH」にチェック</strong> を入れてください。<br/>
+チェックを忘れると以降のコマンドがすべて動作しません。</p>
+</blockquote>
+<h4 id="python-312の公式サポート予定2026年7月28日確認">Python
+3.12の公式サポート予定（2026年7月28日確認）</h4>
+<ul class="readme-list">
+<li>Python開発元が現在公開している予定では、Python
+3.12系列の公式サポートは<strong>2028年10月に終了する予定</strong>です</li>
+<li>Python
+3.12系列では、新機能の追加や通常の不具合修正を広く行う期間が終了し、現在は主にセキュリティ上の問題を修正する更新が提供されています</li>
+<li>Python
+3.12.10は2025年4月8日に公開され、機能改善や通常の不具合修正を含む最後の3.12版です。公式のWindows・macOS用インストーラーが提供された最後の3.12版でもあります</li>
+<li>2026年7月28日の確認時点では、Python
+3.12.13が3.12系列の最新です。ただし、プログラムの元になるソースコードだけが配布され、一般利用者向けのWindows・macOS用インストーラーは提供されていません</li>
+<li>公式サポートが終了しても、Python
+3.12.10が直ちに起動できなくなる仕組みではありません。ただし、予定どおり公式サポートが終了した後はPython開発元から安全上の修正が提供されず、OSや依存ライブラリの更新によって将来動かなくなる可能性もあります</li>
+<li>Python
+3.12.10のインストーラーが、自動的に3.12.13へ更新されるわけではありません。本アプリでは引き続き3.12.10を動作確認済み環境として案内します。将来Pythonを変更する場合は、本アプリと依存ライブラリの対応状況を確認してください</li>
+</ul>
+<p>公式情報：</p>
+<ul class="readme-list">
+<li><a href="https://devguide.python.org/versions/">Python各系列の対応状況と終了予定（Python
+Developer's Guide）</a></li>
+<li><a href="https://www.python.org/downloads/release/python-31210/">Python
+3.12.10の公開情報（Python.org）</a></li>
+<li><a href="https://www.python.org/downloads/release/python-31213/">Python
+3.12.13の公開情報（Python.org）</a></li>
+</ul>
+<blockquote>
+<p><strong>⚠️ 事前準備②：Gitのインストール</strong><br/>
+Gitが必要です。以下のURLからインストールしてください。<br/>
+[<a href="https://git-scm.com/download/win](https://git-scm.com/download/win)">https://git-scm.com/download/win](https://git-scm.com/download/win)</a></p>
+<p>インストール時はほぼデフォルト設定のままで問題ありません。<br/>
+ただし「Use a TrueType font in all console
+windows」という項目は<strong>チェックを外してください</strong>。チェックを入れると日本語が文字化けする場合があります。</p>
+</blockquote>
+<blockquote>
+<p><strong>⚠️ 事前準備③：NVIDIA GPUを使用する場合</strong>
+本リポジトリの<code>requirements.txt</code>は、CUDA
+12.4対応のビルド済みwheelを使用する構成です。対応するNVIDIAドライバーが必要です。
+CUDA
+Toolkit本体は、ビルド済みwheelだけで動作する環境では常に必須とは限りませんが、ソースからビルドする場合や実行環境によっては必要です。CUDA関連のエラーが出る場合は、使用するwheel・ドライバー・CUDA環境の対応関係を確認してください。
+CPUのみで使用する場合、CUDA
+Toolkitは不要です。後述の<code>requirements-cpu.txt</code>を使用してください。</p>
+</blockquote>
+<h3 id="1-リポジトリをクローン">1. リポジトリをクローン</h3>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span><a aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/shinosan1/LLM_Local_Chat.git</span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> LLM_Local_Chat</span></code></pre></div>
+<h3 id="2-仮想環境の作成推奨">2. 仮想環境の作成（推奨）</h3>
+<p>依存ライブラリの競合を避けるため、仮想環境の使用を強く推奨します。</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span><a aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> venv .venv</span></code></pre></div>
+<p>PowerShellの実行ポリシーを変更せず、以降は仮想環境のPythonを直接指定します。</p>
+<h3 id="3-依存ライブラリのインストール">3.
+依存ライブラリのインストール</h3>
+<h4 id="nvidia-gpucuda-124を使用する場合">NVIDIA GPU・CUDA
+12.4を使用する場合</h4>
+<p><code>requirements.txt</code>は、Windows・NVIDIA GPU・CUDA
+12.4向けに、PyTorchと<code>llama-cpp-python 0.3.34</code>を固定した構成です。</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span><a aria-hidden="true" tabindex="-1"></a><span class="bu">.</span><span class="dt">\.</span>venv<span class="dt">\S</span>cripts<span class="dt">\p</span>ython.exe <span class="at">-m</span> pip install <span class="at">-r</span> requirements.txt <span class="at">--no-cache-dir</span></span></code></pre></div>
+<h4 id="cpuのみで使用する場合">CPUのみで使用する場合</h4>
+<p><code>requirements-cpu.txt</code>は、Python 3.12・Windows
+64bitのCPU環境向けです。PyTorchと<code>llama-cpp-python</code>のCPU版wheelを使用し、CUDA関連パッケージを導入しません。</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span><a aria-hidden="true" tabindex="-1"></a><span class="bu">.</span><span class="dt">\.</span>venv<span class="dt">\S</span>cripts<span class="dt">\p</span>ython.exe <span class="at">-m</span> pip install <span class="at">-r</span> requirements-cpu.txt <span class="at">--no-cache-dir</span></span></code></pre></div>
+<blockquote>
+<p><strong>別のCUDAバージョンを使用する場合：</strong>
+どちらのファイルもそのまま適用せず、<code>torch</code>関連と<code>llama-cpp-python</code>を利用環境に対応する公式配布へ変更してください。</p>
+</blockquote>
+<blockquote>
+<p><strong>Permission Deniedエラーが出る場合：</strong><br/>
+<code>--no-cache-dir</code>オプションを付けることで解決できます。管理者権限は不要です。</p>
+</blockquote>
+<blockquote>
+<p><strong>PyAudioのインストールでエラーが出る場合：</strong>
+PythonとPyAudioの対応バージョンを確認し、PyPIで配布されている公式wheelを利用してください。非公式インストーラーを経由した導入は推奨しません。</p>
+</blockquote>
+<h3 id="4-ggufモデルを用意する">4. GGUFモデルを用意する</h3>
+<p><a href="https://huggingface.co/">Hugging Face</a>
+など信頼できる配布元から、対応する<code>.gguf</code>形式のモデルをダウンロードしてください。保存場所は任意ですが、管理しやすいよう<code>models/</code>フォルダへの配置を推奨します。
+動作確認済み：<code>gemma-3-4b-it-q4_k_m.gguf</code>、<code>gemma-4-E4B-it-Q4_K_M.gguf</code></p>
+<blockquote>
+<p><strong>⚠️ 初回起動時の注意：</strong><br/>
+起動時マイクを有効にしている場合、音声認識用Whisperモデルが初回ロード時に自動ダウンロードされます。目安はsmallが約0.5GB、mediumが約1.5GBですが、モデルの版により変動します。設定とVRAM状況によっては両方が必要になるため、十分なディスク空き容量を確保してください。ダウンロード時はインターネット接続が必要です。マイク無効時はWhisperをロードしません。</p>
+</blockquote>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="動作確認済みモデル一覧">動作確認済みモデル一覧</h2>
+<p>本アプリで動作確認済みのGGUFモデルの一覧です。<br/>
+すべて <a href="https://huggingface.co/">Hugging Face</a>
+からダウンロードできます。<br/>
+ファイルは任意の場所に保存できます。管理しやすいよう<code>models/</code>フォルダへの配置を推奨します。</p>
+<blockquote>
+<p><strong>⚠️ ダウンロードについて：</strong><br/>
+モデルによってはHugging
+Faceへのアカウント登録および利用規約への同意が必要です。<br/>
+各モデルのページで確認してからダウンロードしてください。</p>
+</blockquote>
+<blockquote>
+<p><strong>⚠️ 免責：</strong><br/>
+各モデルの利用規約・ライセンスはモデルごとに異なります。<br/>
+ダウンロード前に必ず各モデルのHugging
+Faceページで利用規約を確認してください。<br/>
+本アプリはモデルの利用に関して一切の責任を負いません。</p>
+</blockquote>
+<blockquote>
+<p><strong>量子化形式の目安：</strong>
+<code>Q4_K_M</code>は、品質・容量・速度のバランスを取りやすい一般的な候補です。最適な形式はモデルと実行環境により異なります。</p>
+</blockquote>
+<table>
+<thead>
+<tr class="header">
+<th>モデル名</th>
+<th>パラメータ</th>
+<th>備考</th>
+<th>ダウンロード</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>gemma-3-4b-it-q4_k_m</td>
+<td>4B</td>
+<td>動作確認済み</td>
+<td><a href="https://huggingface.co/lmstudio-community/gemma-3-4b-it-GGUF">リンク</a></td>
+</tr>
+<tr class="even">
+<td>gemma-4-E4B-it-Q4_K_M</td>
+<td>8B（有効4B）</td>
+<td>動作確認済み</td>
+<td><a href="https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF">リンク</a></td>
+</tr>
+<tr class="odd">
+<td>phi-3.5-Q8_0</td>
+<td>3.8B</td>
+<td>動作確認済み</td>
+<td><a href="https://huggingface.co/lmstudio-community/Phi-3.5-mini-instruct-GGUF">リンク</a></td>
+</tr>
+<tr class="even">
+<td>LFM2.5-1.2B-Instruct-Q4_K_M</td>
+<td>1.2B</td>
+<td>動作確認済み（起動時に警告が出ますが動作に問題なし）</td>
+<td><a href="https://huggingface.co/ggml-org/LFM2.5-1.2B-JP-GGUF">リンク</a></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>リンク切れの場合はHugging Face（<a href="https://huggingface.co/）でモデル名を直接検索してください。">https://huggingface.co/）でモデル名を直接検索してください。</a></strong></p>
+</blockquote>
+<h3 id="5-アバター画像を用意する任意">5.
+アバター画像を用意する（任意）</h3>
+<p>以下の4枚のPNG画像を <code>avatars/</code>
+フォルダに配置してください：</p>
+<table>
+<thead>
+<tr class="header">
+<th>ファイル名</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>default_avatar.png</code></td>
+<td>通常状態</td>
+</tr>
+<tr class="even">
+<td><code>speaking_avatar.png</code></td>
+<td>口を開けた状態</td>
+</tr>
+<tr class="odd">
+<td><code>blink_avatar.png</code></td>
+<td>目を閉じた状態</td>
+</tr>
+<tr class="even">
+<td><code>blink_speaking_avatar.png</code></td>
+<td>目を閉じ口を開けた状態</td>
+</tr>
+</tbody>
+</table>
+<p>画像がない場合は透明画像で代替されます（アバターなしで動作します）。</p>
+<h3 id="6-モデルを設定する">6. モデルを設定する</h3>
+<p><code>chat_settings.json</code>がない場合も、アプリはコード既定値で起動を試みます。既定のモデルが見つからない場合は読込エラーが表示されますが、メイン画面の「ファイル」→「設定」を開き、「参照」ボタンから用意したGGUFモデルを選択して適用できます。保存した設定は<code>chat_settings.json</code>へ記録されます。</p>
+<p>起動前に手動設定したい場合だけ、<code>chat_settings.json.example</code>を<code>chat_settings.json</code>へコピーし、<code>model_path</code>などを編集してください。</p>
+<p>パーソナライズとVisionは、設定画面ではなく<code>chat_settings.json</code>で設定します。既存の設定ファイルに次のキーがなくても従来どおり起動します。</p>
+<div class="sourceCode"><pre class="sourceCode json"><code class="sourceCode json"><span><a aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>  <span class="dt">"system_prompt"</span><span class="fu">:</span> <span class="st">""</span><span class="fu">,</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>  <span class="dt">"user_personalization"</span><span class="fu">:</span> <span class="st">""</span><span class="fu">,</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>  <span class="dt">"response_language"</span><span class="fu">:</span> <span class="st">"回答は必ず日本語のみで行ってください。"</span><span class="fu">,</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>  <span class="dt">"reasoning_visibility_instruction"</span><span class="fu">:</span> <span class="st">"内部の思考過程、分析、推論、計画は表示せず、ユーザーに見せる最終回答だけを出力してください。"</span><span class="fu">,</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>  <span class="dt">"external_prompt_files"</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="dt">"system_prompt"</span><span class="fu">:</span> <span class="st">"prompts/system.md"</span><span class="fu">,</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="dt">"user_personalization"</span><span class="fu">:</span> <span class="st">""</span><span class="fu">,</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="dt">"user_profile"</span><span class="fu">:</span> <span class="st">"prompts/profile.txt"</span><span class="fu">,</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>    <span class="dt">"instructions"</span><span class="fu">:</span> <span class="ot">[]</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>  <span class="dt">"vision_enabled"</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>  <span class="dt">"vision_handler"</span><span class="fu">:</span> <span class="st">"gemma4"</span><span class="fu">,</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a>  <span class="dt">"vision_projector_path"</span><span class="fu">:</span> <span class="st">""</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>外部promptはUTF-8の<code>.txt</code> /
+<code>.md</code>に対応し、相対パスはアプリ配置フォルダ基準です。inline
+system → external system → inline personalization → external
+personalization → response language → reasoning visibility → external
+profile/instructionsの順で併用し、完全に同一の文章と同一ファイルだけを重複挿入しません。外部promptの欠損・形式・文字コード・サイズのエラーは警告を表示し、inline設定を含む読める設定だけで起動を継続します。</p>
+<p>Visionを使う場合は、現在の<code>llama-cpp-python 0.3.34</code>で利用できる<code>gemma4</code>または<code>llava15</code>を指定し、対象モデルに対応するprojector
+/ mmproj
+GGUFを<code>vision_projector_path</code>へ設定してください。<code>vision_enabled</code>の既定値は<code>false</code>です。</p>
+<h3 id="7-起動">7. 起動</h3>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span><a aria-hidden="true" tabindex="-1"></a><span class="bu">.</span><span class="dt">\.</span>venv<span class="dt">\S</span>cripts<span class="dt">\p</span>ython.exe LLM_Local_Chat.py</span></code></pre></div>
+<blockquote>
+<p><strong>⚠️ 起動時間について</strong><br/>
+起動後、LLMモデルの読み込みに<strong>30秒〜数分</strong>かかります（モデルサイズ・環境によります）。<br/>
+ステータスバーに「⏳
+モデル読込中…」と表示されている間はチャットできません。<br/>
+また音声認識（Whisper）の初期化にも別途<strong>数秒〜10秒程度</strong>のタイムラグがあります。<br/>
+マイクアイコンが有効になるまでしばらくお待ちください。</p>
+</blockquote>
+<h3 id="8-家計簿api連携を使用する場合任意">8.
+家計簿API連携を使用する場合（任意）</h3>
+<p>本リポジトリ単体では、家計簿台帳への登録はできません。LLM Local
+Chat内で取引候補を生成・検証・確認できますが、確認済み候補の送信には、別途用意して起動したローカルの<code>kakeibo-bridge</code>
+APIが必要です。</p>
+<ul class="readme-list">
+<li>必要なPOST endpoint：<code>/api/kakeibo/record</code></li>
+<li>既定接続先：<code>http://127.0.0.1:8767/api/kakeibo/record</code></li>
+<li>ポート：環境変数<code>KAKEIBO_BRIDGE_PORT</code>で変更可能</li>
+<li>非同梱：家計簿アプリ、家計簿DB、家計簿Web
+UI、家計簿APIサーバー、<code>kakeibo-bridge</code>サーバーおよびそのDocker/Compose定義</li>
+</ul>
+<p>本リポジトリには、これらの外部コンポーネントの入手・起動スクリプトはありません。家計簿API連携を使用しない場合、通常のチャット機能はこのAPIを必要としません。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="使い方">使い方</h2>
+<h3 id="基本操作">基本操作</h3>
+<p>起動するとメインウィンドウとアバターウィンドウが開きます。<br/>
+ステータスバーが「✅ 待機中」になったらチャット可能です。</p>
+<p>テキスト入力欄にメッセージを入力して <code>Enter</code>
+キーまたは「送信」ボタンで送信します。<br/>
+<code>Shift + Enter</code> で改行できます。</p>
+<h3 id="ファイル添付">ファイル添付</h3>
+<p>入力欄上の「📎 ファイルを添付」から、TXT / MD / JSON / CSVまたはPNG /
+JPEGを選択できます。本文あり・添付あり、本文だけ、添付だけのいずれも送信できます。本文も添付もない場合は送信しません。添付は通常チャットだけで使用でき、最大8件、画像はそのうち1枚までです。同名でも内容が異なるファイルは内部IDで区別し、<code>data.csv</code>、<code>data.csv (2)</code>のように表示します。</p>
+<p>添付時点の内容は<code>chat_logs/attachments/&lt;session-id&gt;/</code>以下のアプリ管理領域へ、元ファイル名ではなく内部IDを使ってコピーします。送信後も「チャット添付:
+ファイル名」の表示が残り、「続けてください」などの後続質問へ同じ内容を1ターン内で重複させず再投入します。新しいチャットを開始しても元チャットの添付は削除されず、別チャットを開けばそのチャット固有の添付へ切り替わります。保存済みチャットを再読込したときとアプリ再起動後にも復元します。</p>
+<p>保存済み添付は元ファイルとは別コピーです。元ファイルを編集・移動・改名・削除しても自動更新されません。最新版を使う場合は、現在チャットの古い添付を解除して再添付してください。添付は重要ファイルのバックアップシステムではなく、アプリ内添付を唯一の保存場所として利用しないでください。</p>
+<p>入力欄の「添付解除」は、確認ダイアログで同意した場合に、現在のチャットに紐づく<strong>すべての添付</strong>と対応するアプリ管理領域のコピーを削除します。会話本文とAI回答、元ファイル、別チャットの添付は削除しません。チャット自体を削除した場合は、そのチャット専用の添付も内部ID・セッションIDで削除します。削除した添付は過去チャットから再参照できず、アプリによる復元は保証されません。</p>
+<p>保存管理の操作経路は、<code>ファイル → 設定 → 保存済み添付ファイル → 選択した添付を削除</code>または<code>保存済み添付ファイルをすべて削除</code>です。一覧ではファイル名、種類、サイズ、紐づくチャット、状態、総件数、合計容量を確認できます。一括削除は<strong>現在のアプリ保存領域で管理される全チャットの保存済み添付</strong>が対象で、通常の会話履歴は残ります。部分失敗時は成功・失敗・スキップ・再試行待ち件数を表示し、完了していないのに「すべて削除しました」とは表示しません。</p>
+<p>履歴JSONへ直接保存するのは、内部ID、basename、種類、サイズ、SHA-256等の復元用メタデータだけです。元ファイル絶対パス、TXT
+/ MD / JSON / CSV本文、画像bytes、base64、data
+URIは埋め込みません。ただし、LLMが添付内容やファイル名を回答へ引用・要約した場合、その<strong>AI回答は通常の会話履歴として保存</strong>され、後の要約メモリにも含まれる可能性があります。</p>
+<p>本アプリはユーザーアカウント単位の添付分離・認証・権限管理を提供しません。同じWindowsアカウント、同一PC、共有フォルダ等で同じアプリデータ保存領域を複数人が使用する場合、一括削除はその保存領域を利用する他のユーザーを含む全チャット添付へ影響する可能性があります。Windowsの別ユーザーであっても同じ保存先を共有する場合は、ユーザー単位の保護を保証しません。ローカルLLMであることだけで、PCへの不正アクセス、マルウェア、同一アカウントの別利用者、アクセス権を持つプロセスから完全に安全になるわけではありません。</p>
+<p>個人情報、業務機密、パスワード、APIキー、アクセストークン、秘密鍵等を含むファイルは不用意に添付しないでください。TXT
+/ MD / JSON /
+CSV内のPowerShell、shell、Python、JavaScript等は自動実行せず、LLMへの入力データとして扱います。一方、文書内の「これまでの指示を無視してください」のような文章がprompt
+injectionとして回答へ影響する可能性はあります。外部から取得した文書を信頼できる命令として扱わず、生成結果を確認せず重要な操作へ利用しないでください。拡張子、UTF-8、ファイルサイズ、画像形式・画素数の検査は異常入力の影響を抑える制限であり、ファイルや回答の安全性を完全には保証しません。</p>
+<p>テキストは1ファイル1MiB、画像は1ファイル10MiBかつ16メガピクセル以下です。上限超過やUTF-8で読めないテキストは切り捨てずに拒否します。添付がある間は、system
+prompt・要約・全会話履歴・添付・新規入力・応答予約を合わせてcontextへ収まらない場合、履歴を黙って省略せず警告します。画像入力では4,096画像トークンを事前予約しますが、モデル固有の実トークン数を送信前に完全保証できないため、実行時にcontext超過として拒否される場合があります。</p>
+<p>保存済み添付はアプリ終了後も残るため、画像や多数の添付を使い続けるとディスク使用量が増えます。自動期限削除、自動容量削減、ごみ箱、自動バックアップ、添付暗号化は提供しません。設定画面の件数・合計容量・個別削除・一括削除を使って管理してください。実体欠損、読込不能、サイズ不一致、保存済みSHA-256との不一致を検出した添付はLLMへ渡さず、警告します。</p>
+<p><code>.shiro-export</code>には添付実体も添付メタデータも含まれません。インポート後のチャットへ添付は復元されないため、<code>.shiro-export</code>を添付ファイルのバックアップとして使用しないでください。</p>
+<h3 id="音声入力">音声入力</h3>
+<p>コード上の既定値と<code>chat_settings.json.example</code>では、起動時のマイク・TTS読み上げはともに<strong>OFF</strong>です。「ファイル」→「設定」で次回起動時の状態を変更できます。
+マイクボタンをクリックするとONになります。<br/>
+ONの状態で一定以上の音量を検知すると自動的に録音を開始し、Whisperで文字起こしして送信します。<br/>
+再度クリックするとOFFに戻ります。</p>
+<blockquote>
+<p>起動時マイクを有効にする設定とWhisper実行モードは、次回起動時に反映されます。初回のWhisperダウンロード・ロードには時間がかかる場合があります。
+TTS読み上げ中はハウリング防止のため音声入力が自動的に抑制されます。</p>
+</blockquote>
+<h3 id="tts読み上げ">TTS（読み上げ）</h3>
+<p>AIの返答をWindows
+SAPIで読み上げます。起動時はOFFがデフォルトです。<br/>
+メニューからTTSのON/OFFを切り替えられます。<br/>
+読み上げ中は「停止」ボタンで中断できます（タイミングによっては中断できない場合があります）。</p>
+<h3 id="健康記録モードbiolog連携--v110">健康記録モード（Biolog連携） —
+v1.1.0</h3>
+<p>💪ボタンをクリックすると健康記録モードがONになります。<br/>
+このモードでは、計測値・食事・活動内容・メモを話しかけると、確認後にBiolog
+APIへデータをPOSTします。食事ログ、行動ログ、メモだけの登録にも対応します。</p>
+<p><strong>入力例：</strong></p>
+<pre><code>体重65kg、体脂肪20%、朝はオートミールを食べた</code></pre>
+<p><strong>動作結果：</strong></p>
+<ul class="readme-list">
+<li>チャットに「✅ Biolog記録: 2026-05-06 体重 65.0kg
+食事:朝はオートミールを食べた」と表示</li>
+<li>Biologの健康記録へ保存</li>
+</ul>
+<p><strong>事前準備：</strong>
+Biolog側の文書とComposeを確認してAPIを起動し、LLM Local
+Chatを実行するPCからヘルスチェックへ接続できることを確認してください。
+標準ComposeではBiolog
+APIを<code>127.0.0.1:8766</code>に限定して公開します。</p>
+<div class="sourceCode"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span><a aria-hidden="true" tabindex="-1"></a><span class="fu">curl</span> http<span class="op">://</span>localhost<span class="op">:</span><span class="dv">8766</span><span class="op">/</span>api<span class="op">/</span>health<span class="op">/</span>health</span></code></pre></div>
+<p><strong>環境変数でエンドポイントを変更できます：</strong></p>
+<div class="sourceCode"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span><a aria-hidden="true" tabindex="-1"></a><span class="va">$env</span><span class="op">:</span><span class="va">BIOLOG_URL</span> <span class="op">=</span> <span class="st">"http://localhost:8766"</span>  <span class="co"># デフォルト</span></span>
+<span><a aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\<span class="op">.</span><span class="fu">venv</span>\Scripts\python<span class="op">.</span><span class="fu">exe</span> LLM_Local_Chat<span class="op">.</span><span class="fu">py</span></span></code></pre></div>
+<blockquote>
+<p>計測値・食事ログ・行動ログ・メモがすべて空の場合だけ送信しません。<code>食事ログ</code>・<code>行動ログ</code>・<code>メモ</code>を明示した入力は、ユーザー原文から決定的に解析されます。</p>
+</blockquote>
+<h3 id="ゲストモード">ゲストモード</h3>
+<p>「ゲストモード:
+OFF」ボタンをクリックするとゲストモードがONになります。<br/>
+ゲストモードがONのとき、会話履歴は<code>chat_logs/</code>へ自動保存されず、ゲスト会話を暗号化エクスポートすることもできません。ただし、実行中のメモリ、標準出力やOS側のログ、連携先APIへ送信したデータまで消去・保護する機能ではありません。
+プライベートな会話や一時的な用途に使用してください。<br/>
+再度クリックすると通常モードに戻り、新しいセッションが開始されます。</p>
+<h3 id="チャット履歴">チャット履歴</h3>
+<p>左ペインに過去の会話一覧が表示されます。クリックで読み込めます。<br/>
+上部の検索欄でタイトル・要約の部分一致検索ができます。<br/>
+右クリックで個別削除が可能です。<br/>
+履歴はアプリ配置フォルダ内の<code>chat_logs/</code>へ、DPAPI暗号化されたJSONエンベロープとして保存されます。ファイル名、件数、サイズ、更新日時は暗号化されません。
+設定画面で保存期間を選択できます。有限期間を初めて適用するときは削除候補件数を表示し、確認後すぐに削除します。外部バックアップは自動削除されないため、バックアップ側の保持期間も別途管理してください。</p>
+<h3 id="要約メモリ">要約メモリ</h3>
+<p>一定ターン数ごとに会話の要約が自動生成され、次の応答に注入されます。<br/>
+長期会話でもコンテキストが維持されやすくなっています。</p>
+<h3 id="設定">設定</h3>
+<p>メニューから「ファイル」→「設定」を開くと、以下の項目を変更できます。</p>
+<table>
+<thead>
+<tr class="header">
+<th style="text-align: left;">項目</th>
+<th style="text-align: left;">内容</th>
+<th style="text-align: left;">推奨値 / アドバイス</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;"><strong>モデルファイル</strong></td>
+<td style="text-align: left;">使用する GGUF
+モデルのパスを指定します。</td>
+<td style="text-align: left;">「参照」ボタンから任意の場所にある対応GGUFファイルを選択できます。</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><strong>LLM GPUオフロード
+モード</strong></td>
+<td style="text-align: left;"><code>自動</code>・<code>Full GPU</code>・<code>約75%</code>・<code>約50%</code>・<code>約25%</code>・<code>CPU</code>から希望配置を選びます。</td>
+<td style="text-align: left;">保存後、旧モデルを解放してからバックグラウンドで再読み込みし、再起動なしで反映します。安全条件を満たさない上位配置は下位へフォールバックします。</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><strong>現在の実行状態</strong></td>
+<td style="text-align: left;">実際にロード成功したGPUオフロード率・配置レイヤー数・Full/Partial/CPUを表示します。</td>
+<td style="text-align: left;">読み取り専用です。「GPU配置を再評価」は<code>自動</code>モードの配置を現在のVRAMから選び直します。</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><strong>コンテキスト長</strong></td>
+<td style="text-align: left;">AIが一度に記憶・処理できる情報の長さ（n_ctx）です。</td>
+<td style="text-align: left;">通常は <strong>8192</strong>
+を推奨。VRAM不足で動作が不安定な場合は数値を下げてください。</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><strong>最大返答トークン数</strong></td>
+<td style="text-align: left;">AIが一度の返答で出力する最大トークン数です。文字数とは一致しません。</td>
+<td style="text-align: left;">短い会話なら
+<strong>256〜512</strong>、長文が必要なら <strong>1024</strong>
+程度が目安です。VRAM状況により実効値が自動的に削減される場合があります。</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><strong>会話の自由度</strong></td>
+<td style="text-align: left;">AIの回答の多様性を調整します（temperature）。</td>
+<td style="text-align: left;"><strong>0.1〜0.5</strong>:
+堅実・正確（事実確認向き）<br/><strong>0.7〜1.0</strong>:
+標準的（自然な雑談向き）<br/><strong>1.2〜1.5</strong>:
+独創的（アイデア出し向き）</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><strong>音声検出感度</strong></td>
+<td style="text-align: left;">マイクが音声を拾う際のしきい値（RMS
+閾値）です。</td>
+<td style="text-align: left;"><strong>数値が小さいほど高感度</strong>になります。周囲の音で誤作動する場合は
+<strong>200〜300</strong> 程度に上げてください。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="アバター">アバター</h3>
+<p>アバターウィンドウはドラッグで自由に移動できます。<br/>
+右クリックで表示/非表示を切り替えられます。</p>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="よくある質問">よくある質問</h2>
+<p><strong>Q. OllamaやLM Studioを使わないのはなぜですか？</strong><br/>
+A.
+llama.cppをPythonバインディング（llama-cpp-python）から直接呼び出し、LLM推論をローカルで実行するためです。必要な依存ライブラリとモデルを取得済みで、オプションのBiolog・家計簿API連携も別プロセスのローカルAPIへ限定した構成では、通常の会話処理に外部のLLMサービスを使用しません。セットアップ、モデル取得、外部リンクの閲覧にはインターネット接続が必要です。</p>
+<p><strong>Q. CPUだけでも動きますか？</strong><br/>
+A.
+CPU実行へフォールバックできます。CPU専用PCでは、セットアップ時に<code>requirements-cpu.txt</code>を使用してください。応答速度はモデルサイズ、量子化形式、CPU、メモリ帯域、コンテキスト長などに大きく依存し、実用的な速度になるとは一律に保証できません。</p>
+<p><strong>Q.
+Whisperのモデルは自動でダウンロードされますか？</strong><br/>
+A.
+起動時マイクを有効にした場合、初回ロード時にWhisperモデルが自動的にダウンロードされます。マイク無効時は、TTSが有効でもWhisperをロードしません。</p>
+<p><strong>Q. TTSには何を使用していますか？</strong> A.
+<code>win32com.client.Dispatch("SAPI.SpVoice")</code> により、Windows
+SAPI5をワーカースレッドから直接制御しています。</p>
+<hr/>
+</section>
+<section class="readme-card readme-alert">
+<h2 id="導入運営責任者の方へ">導入・運営責任者の方へ</h2>
+<p>本アプリを業務環境に導入される際は、以下のセキュリティ上の特性を情報セキュリティ担当者と共有・確認してください。</p>
+<p>脆弱性を報告する場合は<a href="../SECURITY.md">SECURITY.md</a>を確認し、詳細を公開Issueへ投稿しないでください。</p>
+<h3 id="セキュリティ上の特性">セキュリティ上の特性</h3>
+<p><strong>確認済みの範囲</strong></p>
+<ul class="readme-list">
+<li>LLM推論、Whisper音声認識、Windows
+SAPI5による音声合成はローカルプロセスで実行されます</li>
+<li>現在のアプリコードでは、外部のLLM
+APIへ会話内容を送信する処理は確認できません</li>
+<li>Biolog・家計簿API連携は別プロセスのHTTP
+APIを使用します。現在のアプリコードでは接続先をループバックアドレスに制限し、環境プロキシを使用せずに接続します。家計簿アプリ、DB、<code>kakeibo-bridge</code>サーバーは本リポジトリに含まれず、実際に利用できるかどうかは別途用意したローカルAPIの稼働・ネットワーク設定にも依存します</li>
+</ul>
+<blockquote>
+<p><strong>⚠️ 使用するモデルについての注意：</strong><br/>
+GGUFモデルファイル自体が独立して通信や攻撃を行うものではありません。ただし、信頼できない、または破損したファイルがモデル読み込みライブラリの脆弱性を突く可能性があります。信頼できる配布元から取得し、<code>llama.cpp</code>および<code>llama-cpp-python</code>を定期的に更新してください。モデルの仕様・ライセンスも確認してください。</p>
+</blockquote>
+<p><strong>導入・運営前に確認すべき点</strong></p>
+<ul class="readme-list">
+<li>会話履歴はWindows
+DPAPIの現在ユーザースコープで暗号化されます。暗号化は同一Windowsユーザーとして動作する別プロセスやマルウェア、実行中メモリ、画面、クリップボード、標準出力を保護しません</li>
+<li>暗号文は原則として同じWindowsユーザープロファイルと当該Windows環境に依存します。OS再インストール、プロファイル消失、管理者による一部のパスワード操作などで復号不能になる可能性があります</li>
+<li>ファイル名、件数、サイズ、更新日時などのメタデータは暗号化されません</li>
+<li><code>.shiro-export</code>はDPAPIとは別のパスフレーズ暗号化形式です。パスフレーズ紛失時は復元できません</li>
+<li>TTSにwin32comによるWindows SAPI5を使用しています</li>
+<li>ゲストモードは<code>chat_logs/</code>への履歴保存を行いませんが、メモリ、標準出力、OS側のログ、連携先APIの保存データは保護対象外です</li>
+<li>Biolog・家計簿APIへ送信済みのデータは会話履歴のDPAPI暗号化や保存期間管理の対象外です</li>
+<li>家計簿API連携クライアントの既定接続先は<code>127.0.0.1:8767</code>です。本リポジトリには家計簿側のサーバー・DB・Docker/Compose定義を含まず、連携先環境の内部構成はこの文書では断定しません</li>
+<li>ループバック限定はAPI認証の代わりではなく、同一端末上の他プロセスからのアクセスを防ぐものではありません</li>
+<li><code>diskcache</code>
+5.6.3以下には、キャッシュディレクトリへ書き込める第三者がキャッシュ読込時に任意コードを実行できるCVE-2025-69872が報告され、修正版は公開されていません。現在のアプリコードではディスクキャッシュを有効化する<code>LlamaDiskCache</code>や<code>set_cache</code>の呼び出しを確認できませんが、利用環境の導入バージョンと有効化状況を確認してください。将来有効化する場合は専用キャッシュディレクトリを使い、書き込み権限を利用者本人に限定してください。修正版の公開後は回帰テストを行ったうえで更新してください</li>
+</ul>
+<h3 id="推奨事項">推奨事項</h3>
+<ul class="readme-list">
+<li>Windowsアカウントを共有せず、利用者ごとに分離してください</li>
+<li>OSドライブとバックアップ媒体でBitLockerなどのボリューム暗号化を有効にしてください</li>
+<li><code>chat_logs/</code>とバックアップ先のアクセス権限を利用者本人と必要な管理者へ限定してください</li>
+<li>OS再インストールやユーザープロファイル変更前に、必要な履歴を管理された保存先へ明示的にエクスポートしてください</li>
+<li>保存期間を設定しても外部バックアップ、連携先API、OSログは自動削除されません。それぞれ独立した保持・削除方針を定めてください</li>
+<li>ゲストモードやDPAPIだけを機密情報の完全な保護策とせず、端末、アカウント、ログ、連携先、バックアップを含めて運用を評価してください</li>
+<li>本アプリの導入・運営に関するリスク判断とアクセス管理は、導入・運営主体が行ってください</li>
+<li>同じ<code>chat_logs/</code>を使用するShiroを複数同時に起動しないでください。同一履歴を同時保存した場合は後から保存した内容で上書きされる可能性があります</li>
+</ul>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="免責事項-2">免責事項</h2>
+<p>本アプリは個人が学習・研究目的で開発したものです。<br/>
+動作保証・サポートは一切行っておりません。利用により生じたいかなる損害についても作者は責任を負いません。</p>
+</section>
+<section class="readme-card">
+<h2 id="ライセンス">ライセンス</h2>
+<p>本ソフトウェアは<a href="./LICENSE.html">MIT
+License</a>で公開しています。利用、複製、変更、結合、公開、配布、サブライセンスおよび販売は、MIT
+Licenseの条件に従って許可されます。</p>
+<p>GGUFモデル、音声モデル、依存ライブラリおよび生成物には、それぞれ別のライセンスや利用条件が適用される場合があります。利用者自身で配布元の条件を確認してください。</p>
+<p>本ソフトウェアは現状有姿で提供され、動作・出力内容・AI回答の正確性を保証しません。詳細な保証の否認は<code>LICENSE</code>を参照してください。</p>
+</section>
+<section class="readme-card">
+<h2 id="関連文書">関連文書</h2>
+<ul class="readme-list">
+<li><a href="./CODE_REFERENCE.html">コード解説</a></li>
+<li><a href="./TERMS_OF_USE.html">利用規約</a></li>
+<li><a href="./LICENSE.html">MIT License</a></li>
+<li><a href="./PRIVACY_POLICY.html">プライバシーポリシー</a></li>
+<li><a href="./DISCLAIMER.html">免責事項</a></li>
+<li><a href="./THIRD_PARTY_LICENSES.html">第三者ソフトウェアおよびライセンス情報</a></li>
+<li><a href="./SHA256.html">SHA-256 ハッシュ値一覧</a></li>
+</ul>
+</section>
+<section class="readme-card">
+<p>Copyright © 2026 shinosan1</p>
+<nav class="doc-nav">
+<a href="./TERMS_OF_USE.html">利用規約</a>
+<a href="./PRIVACY_POLICY.html">プライバシーポリシー</a>
+<a href="./LICENSE.html">ライセンス</a>
+<a href="./DISCLAIMER.html">免責事項</a>
+<a href="./THIRD_PARTY_LICENSES.html">サードパーティライセンス</a>
+<a href="./CODE_REFERENCE.html">コード解説</a>
+<a href="./SHA256.html">SHA-256</a>
+</nav>
+</section>
+</main>
 </body>
 </html>

@@ -1,10 +1,12 @@
 import sys
+import subprocess
 import threading
 import types
 import unittest
 from unittest.mock import patch
 
 from resource_monitor import (
+    ResourceMonitor,
     WhisperController,
     WhisperPool,
     adjust_inference,
@@ -17,6 +19,70 @@ from resource_monitor import (
     select_llm_offload,
     select_whisper_profile,
 )
+
+
+class NvidiaSmiSubprocessTests(unittest.TestCase):
+    def test_init_preserves_command_options_and_hides_the_console(self):
+        monitor = ResourceMonitor.__new__(ResourceMonitor)
+        with patch(
+            "resource_monitor.subprocess.check_output",
+            return_value="8192\n",
+        ) as check_output:
+            monitor._try_nvidia_smi_init()
+
+        self.assertEqual(8192, monitor.vram_total_mb)
+        check_output.assert_called_once_with(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            timeout=3,
+            encoding="utf-8",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+    def test_collection_preserves_command_options_and_hides_the_console(self):
+        monitor = ResourceMonitor.__new__(ResourceMonitor)
+        with patch(
+            "resource_monitor.subprocess.check_output",
+            return_value="1024, 25\n",
+        ) as check_output:
+            result = monitor._collect_nvidia_smi()
+
+        self.assertEqual((1024, 25.0), result)
+        check_output.assert_called_once_with(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.used,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            timeout=3,
+            encoding="utf-8",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+    def test_snapshot_fallback_hides_the_console(self):
+        monitor = ResourceMonitor.__new__(ResourceMonitor)
+        monitor._pynvml_ok = False
+        monitor.vram_total_mb = 8192
+        with patch(
+            "resource_monitor.subprocess.check_output",
+            return_value="8192, 1024\n",
+        ) as check_output:
+            snapshot = monitor.snapshot()
+
+        self.assertEqual(7168, snapshot["free_mb"])
+        check_output.assert_called_once_with(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.total,memory.used",
+                "--format=csv,noheader,nounits",
+            ],
+            timeout=3,
+            encoding="utf-8",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
 
 
 class FakeMonitor:
@@ -69,6 +135,17 @@ class ResourceDecisionTests(unittest.TestCase):
     def test_quarter_limit_below_one_gb_free(self):
         result = adjust_inference(FakeMonitor(8192, 7300), 1024)
         self.assertEqual(result["max_tokens"], 256)
+
+    def test_resource_reduction_never_increases_requested_token_limit(self):
+        for default_max in (1, 128, 255, 256, 1024):
+            with self.subTest(default_max=default_max):
+                result = adjust_inference(
+                    FakeMonitor(8192, 7300), default_max,
+                    delta_gpu_pct=20,
+                )
+                self.assertTrue(result["ok"])
+                self.assertGreaterEqual(result["max_tokens"], 1)
+                self.assertLessEqual(result["max_tokens"], default_max)
 
     def test_cpu_inference_is_not_blocked_by_gpu_usage(self):
         result = adjust_inference(
