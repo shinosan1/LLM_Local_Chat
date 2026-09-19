@@ -6,7 +6,12 @@
 ---
 ## [Unreleased]
 
-現時点で未リリースの変更はありません。
+### 追加
+- `Easy_LLM_Local_Chat.bat` / `Easy_LLM_Local_Chat.ps1` を追加。Python 3.12（64bit）の既存環境を利用し、`.venv`作成、NVIDIA GPU / CPU向けrequirements選択、`--no-cache-dir`での依存導入、導入確認、アプリ起動までを1つのランチャーから実行できるようにした
+- 自動判定を上書きする `-Backend cu124` / `-Backend cpu` を追加。既存`.venv`がPython 3.12（64bit）でない場合は削除せず停止する
+
+### 文書
+- README / HTMLガイドのセットアップ手順を、自動セットアップランチャーを推奨手順、従来のvenv・pip手順を「手動でインストールする場合」として整理
 
 ---
 ## [1.8.2] - 2026-09-05

@@ -917,14 +917,61 @@ Biologは別プロジェクトです。標準ComposeではAPIの<code>8766</code
 </section>
 <section class="readme-card">
 <h2 id="セットアップ">セットアップ</h2>
+<h3
+id="推奨自動セットアップランチャー">推奨：自動セットアップランチャー</h3>
+<p>通常は、同梱の <strong><code>Easy_LLM_Local_Chat.bat</code></strong>
+を使用してください。<br />
+Python 3.12（64bit）の確認、<code>.venv</code> の作成、GPU /
+CPU向け依存ライブラリの選択とインストール、アプリ起動までをまとめて行います。</p>
 <blockquote>
-<p><strong>⚠️ 事前準備①：Pythonのインストール</strong><br/>
+<p><strong>事前準備：Python 3.12.10（64bit）</strong><br />
+Python本体は自動ダウンロードしません。あらかじめ公式配布のPython
+3.12.10（64bit）をインストールしてください。<br />
+<a
+href="https://www.python.org/downloads/release/python-31210/">https://www.python.org/downloads/release/python-31210/</a><br />
+インストール時は <strong>「Add Python to PATH」</strong>
+を有効にすることを推奨します。</p>
+</blockquote>
+<h4 id="使い方">使い方</h4>
+<ol class="readme-list" type="1">
+<li>ZIP版は任意のフォルダへ展開します。Gitで取得した場合はリポジトリルートへ移動します。</li>
+<li><code>Easy_LLM_Local_Chat.bat</code> をダブルクリックします。</li>
+<li>初回だけ <code>.venv</code>
+を作成し、必要な依存ライブラリをインストールします。初回は数GB規模のダウンロードが発生する場合があります。</li>
+<li>セットアップ完了後、そのままLLM Local Chatを起動します。</li>
+<li>2回目以降は、使用するrequirementsファイルに変更がなければ依存ライブラリの再インストールを省略して起動します。</li>
+</ol>
+<p>ランチャーは <code>nvidia-smi.exe</code> でNVIDIA
+GPUを確認できた場合は <code>requirements.txt</code>（CUDA
+12.4）、確認できない場合は <code>requirements-cpu.txt</code>
+を選びます。判定を固定したい場合はコマンドプロンプトまたはPowerShellから次のように実行できます。</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bat"><code class="sourceCode dosbat"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>Easy_LLM_Local_Chat.bat <span class="at">-Backend</span> cu124</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>Easy_LLM_Local_Chat.bat <span class="at">-Backend</span> cpu</span></code></pre></div>
+<p>依存ライブラリの導入には <code>--no-cache-dir</code>
+を使用するため、pip共有キャッシュの権限問題を回避しやすい構成です。管理者権限は不要で、Windows全体のPowerShell実行ポリシーも変更しません。Go、Inno
+Setupなどの追加ビルドツールも使用しません。</p>
+<blockquote>
+<p><strong>既存の<code>.venv</code>について：</strong><br />
+既存の<code>.venv</code>がPython
+3.12（64bit）でない場合、ランチャーは勝手に削除せず停止します。必要に応じて既存環境を退避または削除してから再実行してください。</p>
+</blockquote>
+<blockquote>
+<p><strong>NVIDIA GPUを使用する場合：</strong><br />
+<code>requirements.txt</code>はCUDA
+12.4対応のビルド済みwheelを使用します。対応するNVIDIAドライバーが必要です。自動判定で問題がある場合は
+<code>-Backend cpu</code> でCPU版を選択できます。</p>
+</blockquote>
+<h3 id="手動でインストールする場合">手動でインストールする場合</h3>
+<p>以下は、従来どおり仮想環境と依存ライブラリを自分で管理する場合の手順です。</p>
+<blockquote>
+<p><strong>事前準備①：Pythonのインストール</strong><br />
 <strong>Python 3.12.10（64bit）</strong>
-を必ずインストールしてください。<br/>
-[<a href="https://www.python.org/downloads/release/python-31210/](https://www.python.org/downloads/release/python-31210/)">https://www.python.org/downloads/release/python-31210/](https://www.python.org/downloads/release/python-31210/)</a></p>
-<p>インストーラー起動時に必ず <strong>「Add Python to
-PATH」にチェック</strong> を入れてください。<br/>
-チェックを忘れると以降のコマンドがすべて動作しません。</p>
+をインストールしてください。<br />
+<a
+href="https://www.python.org/downloads/release/python-31210/">https://www.python.org/downloads/release/python-31210/</a></p>
+<p>コマンドから<code>python</code>を使用する場合は、インストーラーの
+<strong>「Add Python to PATH」</strong> を有効にしてください。</p>
 </blockquote>
 <h4 id="python-312の公式サポート予定2026年7月28日確認">Python
 3.12の公式サポート予定（2026年7月28日確認）</h4>
@@ -944,58 +991,55 @@ PATH」にチェック</strong> を入れてください。<br/>
 </ul>
 <p>公式情報：</p>
 <ul class="readme-list">
-<li><a href="https://devguide.python.org/versions/">Python各系列の対応状況と終了予定（Python
+<li><a
+href="https://devguide.python.org/versions/">Python各系列の対応状況と終了予定（Python
 Developer's Guide）</a></li>
-<li><a href="https://www.python.org/downloads/release/python-31210/">Python
+<li><a
+href="https://www.python.org/downloads/release/python-31210/">Python
 3.12.10の公開情報（Python.org）</a></li>
-<li><a href="https://www.python.org/downloads/release/python-31213/">Python
+<li><a
+href="https://www.python.org/downloads/release/python-31213/">Python
 3.12.13の公開情報（Python.org）</a></li>
 </ul>
 <blockquote>
-<p><strong>⚠️ 事前準備②：Gitのインストール</strong><br/>
-Gitが必要です。以下のURLからインストールしてください。<br/>
-[<a href="https://git-scm.com/download/win](https://git-scm.com/download/win)">https://git-scm.com/download/win](https://git-scm.com/download/win)</a></p>
-<p>インストール時はほぼデフォルト設定のままで問題ありません。<br/>
-ただし「Use a TrueType font in all console
-windows」という項目は<strong>チェックを外してください</strong>。チェックを入れると日本語が文字化けする場合があります。</p>
+<p><strong>事前準備②：Git（GitHubからcloneする場合のみ）</strong><br />
+ZIP版を展開して使う場合、Gitは不要です。GitHubからcloneする場合は以下からGitをインストールしてください。<br />
+<a
+href="https://git-scm.com/download/win">https://git-scm.com/download/win</a></p>
 </blockquote>
 <blockquote>
-<p><strong>⚠️ 事前準備③：NVIDIA GPUを使用する場合</strong>
+<p><strong>事前準備③：NVIDIA GPUを使用する場合</strong><br />
 本リポジトリの<code>requirements.txt</code>は、CUDA
-12.4対応のビルド済みwheelを使用する構成です。対応するNVIDIAドライバーが必要です。
+12.4対応のビルド済みwheelを使用する構成です。対応するNVIDIAドライバーが必要です。<br />
 CUDA
-Toolkit本体は、ビルド済みwheelだけで動作する環境では常に必須とは限りませんが、ソースからビルドする場合や実行環境によっては必要です。CUDA関連のエラーが出る場合は、使用するwheel・ドライバー・CUDA環境の対応関係を確認してください。
+Toolkit本体は、ビルド済みwheelだけで動作する環境では常に必須とは限りませんが、ソースからビルドする場合や実行環境によっては必要です。CUDA関連のエラーが出る場合は、使用するwheel・ドライバー・CUDA環境の対応関係を確認してください。<br />
 CPUのみで使用する場合、CUDA
-Toolkitは不要です。後述の<code>requirements-cpu.txt</code>を使用してください。</p>
+Toolkitは不要です。<code>requirements-cpu.txt</code>を使用してください。</p>
 </blockquote>
-<h3 id="1-リポジトリをクローン">1. リポジトリをクローン</h3>
-<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span><a aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/shinosan1/LLM_Local_Chat.git</span>
-<span><a aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> LLM_Local_Chat</span></code></pre></div>
-<h3 id="2-仮想環境の作成推奨">2. 仮想環境の作成（推奨）</h3>
-<p>依存ライブラリの競合を避けるため、仮想環境の使用を強く推奨します。</p>
-<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span><a aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> venv .venv</span></code></pre></div>
+<h4 id="1-リポジトリを取得">1. リポジトリを取得</h4>
+<p>Gitを使用する場合：</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/shinosan1/LLM_Local_Chat.git</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> LLM_Local_Chat</span></code></pre></div>
+<p>ZIP版の場合は展開したフォルダを開いてください。</p>
+<h4 id="2-仮想環境の作成">2. 仮想環境の作成</h4>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> venv .venv</span></code></pre></div>
 <p>PowerShellの実行ポリシーを変更せず、以降は仮想環境のPythonを直接指定します。</p>
-<h3 id="3-依存ライブラリのインストール">3.
-依存ライブラリのインストール</h3>
-<h4 id="nvidia-gpucuda-124を使用する場合">NVIDIA GPU・CUDA
-12.4を使用する場合</h4>
-<p><code>requirements.txt</code>は、Windows・NVIDIA GPU・CUDA
-12.4向けに、PyTorchと<code>llama-cpp-python 0.3.34</code>を固定した構成です。</p>
-<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span><a aria-hidden="true" tabindex="-1"></a><span class="bu">.</span><span class="dt">\.</span>venv<span class="dt">\S</span>cripts<span class="dt">\p</span>ython.exe <span class="at">-m</span> pip install <span class="at">-r</span> requirements.txt <span class="at">--no-cache-dir</span></span></code></pre></div>
-<h4 id="cpuのみで使用する場合">CPUのみで使用する場合</h4>
-<p><code>requirements-cpu.txt</code>は、Python 3.12・Windows
-64bitのCPU環境向けです。PyTorchと<code>llama-cpp-python</code>のCPU版wheelを使用し、CUDA関連パッケージを導入しません。</p>
-<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span><a aria-hidden="true" tabindex="-1"></a><span class="bu">.</span><span class="dt">\.</span>venv<span class="dt">\S</span>cripts<span class="dt">\p</span>ython.exe <span class="at">-m</span> pip install <span class="at">-r</span> requirements-cpu.txt <span class="at">--no-cache-dir</span></span></code></pre></div>
+<h4 id="3-依存ライブラリのインストール">3.
+依存ライブラリのインストール</h4>
+<p>NVIDIA GPU・CUDA 12.4を使用する場合：</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="bu">.</span><span class="dt">\.</span>venv<span class="dt">\S</span>cripts<span class="dt">\p</span>ython.exe <span class="at">-m</span> pip install <span class="at">--no-cache-dir</span> <span class="at">-r</span> requirements.txt</span></code></pre></div>
+<p>CPUのみで使用する場合：</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">.</span><span class="dt">\.</span>venv<span class="dt">\S</span>cripts<span class="dt">\p</span>ython.exe <span class="at">-m</span> pip install <span class="at">--no-cache-dir</span> <span class="at">-r</span> requirements-cpu.txt</span></code></pre></div>
 <blockquote>
-<p><strong>別のCUDAバージョンを使用する場合：</strong>
+<p><strong>別のCUDAバージョンを使用する場合：</strong><br />
 どちらのファイルもそのまま適用せず、<code>torch</code>関連と<code>llama-cpp-python</code>を利用環境に対応する公式配布へ変更してください。</p>
 </blockquote>
 <blockquote>
-<p><strong>Permission Deniedエラーが出る場合：</strong><br/>
-<code>--no-cache-dir</code>オプションを付けることで解決できます。管理者権限は不要です。</p>
-</blockquote>
-<blockquote>
-<p><strong>PyAudioのインストールでエラーが出る場合：</strong>
+<p><strong>PyAudioのインストールでエラーが出る場合：</strong><br />
 PythonとPyAudioの対応バージョンを確認し、PyPIで配布されている公式wheelを利用してください。非公式インストーラーを経由した導入は推奨しません。</p>
 </blockquote>
 <h3 id="4-ggufモデルを用意する">4. GGUFモデルを用意する</h3>
@@ -1003,7 +1047,7 @@ PythonとPyAudioの対応バージョンを確認し、PyPIで配布されてい
 など信頼できる配布元から、対応する<code>.gguf</code>形式のモデルをダウンロードしてください。保存場所は任意ですが、管理しやすいよう<code>models/</code>フォルダへの配置を推奨します。
 動作確認済み：<code>gemma-3-4b-it-q4_k_m.gguf</code>、<code>gemma-4-E4B-it-Q4_K_M.gguf</code></p>
 <blockquote>
-<p><strong>⚠️ 初回起動時の注意：</strong><br/>
+<p><strong>⚠️ 初回起動時の注意：</strong><br />
 起動時マイクを有効にしている場合、音声認識用Whisperモデルが初回ロード時に自動ダウンロードされます。目安はsmallが約0.5GB、mediumが約1.5GBですが、モデルの版により変動します。設定とVRAM状況によっては両方が必要になるため、十分なディスク空き容量を確保してください。ダウンロード時はインターネット接続が必要です。マイク無効時はWhisperをロードしません。</p>
 </blockquote>
 <hr/>
@@ -1129,7 +1173,12 @@ profile/instructionsの順で併用し、完全に同一の文章と同一ファ
 / mmproj
 GGUFを<code>vision_projector_path</code>へ設定してください。<code>vision_enabled</code>の既定値は<code>false</code>です。</p>
 <h3 id="7-起動">7. 起動</h3>
-<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span><a aria-hidden="true" tabindex="-1"></a><span class="bu">.</span><span class="dt">\.</span>venv<span class="dt">\S</span>cripts<span class="dt">\p</span>ython.exe LLM_Local_Chat.py</span></code></pre></div>
+<p>自動セットアップランチャーを使用する場合は、以後も
+<code>Easy_LLM_Local_Chat.bat</code>
+を実行してください。依存関係に変更がなければ、そのままアプリを起動します。</p>
+<p>手動インストールの場合：</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="bu">.</span><span class="dt">\.</span>venv<span class="dt">\S</span>cripts<span class="dt">\p</span>ython.exe LLM_Local_Chat.py</span></code></pre></div>
 <blockquote>
 <p><strong>⚠️ 起動時間について</strong><br/>
 起動後、LLMモデルの読み込みに<strong>30秒〜数分</strong>かかります（モデルサイズ・環境によります）。<br/>

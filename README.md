@@ -572,12 +572,48 @@ Whisper実行モードは設定画面で`自動`・`GPU small`・`GPU medium`・
 
 ## セットアップ
 
-> **⚠️ 事前準備①：Pythonのインストール**  
-> **Python 3.12.10（64bit）** を必ずインストールしてください。  
-> [https://www.python.org/downloads/release/python-31210/](https://www.python.org/downloads/release/python-31210/)  
+### 推奨：自動セットアップランチャー
+
+通常は、同梱の **`Easy_LLM_Local_Chat.bat`** を使用してください。  
+Python 3.12（64bit）の確認、`.venv` の作成、GPU / CPU向け依存ライブラリの選択とインストール、アプリ起動までをまとめて行います。
+
+> **事前準備：Python 3.12.10（64bit）**  
+> Python本体は自動ダウンロードしません。あらかじめ公式配布のPython 3.12.10（64bit）をインストールしてください。  
+> <https://www.python.org/downloads/release/python-31210/>  
+> インストール時は **「Add Python to PATH」** を有効にすることを推奨します。
+
+#### 使い方
+
+1. ZIP版は任意のフォルダへ展開します。Gitで取得した場合はリポジトリルートへ移動します。
+2. `Easy_LLM_Local_Chat.bat` をダブルクリックします。
+3. 初回だけ `.venv` を作成し、必要な依存ライブラリをインストールします。初回は数GB規模のダウンロードが発生する場合があります。
+4. セットアップ完了後、そのままLLM Local Chatを起動します。
+5. 2回目以降は、使用するrequirementsファイルに変更がなければ依存ライブラリの再インストールを省略して起動します。
+
+ランチャーは `nvidia-smi.exe` でNVIDIA GPUを確認できた場合は `requirements.txt`（CUDA 12.4）、確認できない場合は `requirements-cpu.txt` を選びます。判定を固定したい場合はコマンドプロンプトまたはPowerShellから次のように実行できます。
+
+```bat
+Easy_LLM_Local_Chat.bat -Backend cu124
+Easy_LLM_Local_Chat.bat -Backend cpu
+```
+
+依存ライブラリの導入には `--no-cache-dir` を使用するため、pip共有キャッシュの権限問題を回避しやすい構成です。管理者権限は不要で、Windows全体のPowerShell実行ポリシーも変更しません。Go、Inno Setupなどの追加ビルドツールも使用しません。
+
+> **既存の`.venv`について：**  
+> 既存の`.venv`がPython 3.12（64bit）でない場合、ランチャーは勝手に削除せず停止します。必要に応じて既存環境を退避または削除してから再実行してください。
+
+> **NVIDIA GPUを使用する場合：**  
+> `requirements.txt`はCUDA 12.4対応のビルド済みwheelを使用します。対応するNVIDIAドライバーが必要です。自動判定で問題がある場合は `-Backend cpu` でCPU版を選択できます。
+
+### 手動でインストールする場合
+
+以下は、従来どおり仮想環境と依存ライブラリを自分で管理する場合の手順です。
+
+> **事前準備①：Pythonのインストール**  
+> **Python 3.12.10（64bit）** をインストールしてください。  
+> <https://www.python.org/downloads/release/python-31210/>  
 >  
-> インストーラー起動時に必ず **「Add Python to PATH」にチェック** を入れてください。  
-> チェックを忘れると以降のコマンドがすべて動作しません。
+> コマンドから`python`を使用する場合は、インストーラーの **「Add Python to PATH」** を有効にしてください。
 
 #### Python 3.12の公式サポート予定（2026年7月28日確認）
 
@@ -594,27 +630,27 @@ Whisper実行モードは設定画面で`自動`・`GPU small`・`GPU medium`・
 - [Python 3.12.10の公開情報（Python.org）](https://www.python.org/downloads/release/python-31210/)
 - [Python 3.12.13の公開情報（Python.org）](https://www.python.org/downloads/release/python-31213/)
 
-> **⚠️ 事前準備②：Gitのインストール**  
-> Gitが必要です。以下のURLからインストールしてください。  
-> [https://git-scm.com/download/win](https://git-scm.com/download/win)  
->  
-> インストール時はほぼデフォルト設定のままで問題ありません。  
-> ただし「Use a TrueType font in all console windows」という項目は**チェックを外してください**。チェックを入れると日本語が文字化けする場合があります。
+> **事前準備②：Git（GitHubからcloneする場合のみ）**  
+> ZIP版を展開して使う場合、Gitは不要です。GitHubからcloneする場合は以下からGitをインストールしてください。  
+> <https://git-scm.com/download/win>
 
-> **⚠️ 事前準備③：NVIDIA GPUを使用する場合**
-> 本リポジトリの`requirements.txt`は、CUDA 12.4対応のビルド済みwheelを使用する構成です。対応するNVIDIAドライバーが必要です。
-> CUDA Toolkit本体は、ビルド済みwheelだけで動作する環境では常に必須とは限りませんが、ソースからビルドする場合や実行環境によっては必要です。CUDA関連のエラーが出る場合は、使用するwheel・ドライバー・CUDA環境の対応関係を確認してください。
-> CPUのみで使用する場合、CUDA Toolkitは不要です。後述の`requirements-cpu.txt`を使用してください。
+> **事前準備③：NVIDIA GPUを使用する場合**  
+> 本リポジトリの`requirements.txt`は、CUDA 12.4対応のビルド済みwheelを使用する構成です。対応するNVIDIAドライバーが必要です。  
+> CUDA Toolkit本体は、ビルド済みwheelだけで動作する環境では常に必須とは限りませんが、ソースからビルドする場合や実行環境によっては必要です。CUDA関連のエラーが出る場合は、使用するwheel・ドライバー・CUDA環境の対応関係を確認してください。  
+> CPUのみで使用する場合、CUDA Toolkitは不要です。`requirements-cpu.txt`を使用してください。
 
-### 1. リポジトリをクローン
+#### 1. リポジトリを取得
+
+Gitを使用する場合：
 
 ```bash
 git clone https://github.com/shinosan1/LLM_Local_Chat.git
 cd LLM_Local_Chat
 ```
-### 2. 仮想環境の作成（推奨）
 
-依存ライブラリの競合を避けるため、仮想環境の使用を強く推奨します。
+ZIP版の場合は展開したフォルダを開いてください。
+
+#### 2. 仮想環境の作成
 
 ```bash
 python -m venv .venv
@@ -622,31 +658,24 @@ python -m venv .venv
 
 PowerShellの実行ポリシーを変更せず、以降は仮想環境のPythonを直接指定します。
 
-### 3. 依存ライブラリのインストール
+#### 3. 依存ライブラリのインストール
 
-#### NVIDIA GPU・CUDA 12.4を使用する場合
-
-`requirements.txt`は、Windows・NVIDIA GPU・CUDA 12.4向けに、PyTorchと`llama-cpp-python 0.3.34`を固定した構成です。
+NVIDIA GPU・CUDA 12.4を使用する場合：
 
 ```bash
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt --no-cache-dir
+.\.venv\Scripts\python.exe -m pip install --no-cache-dir -r requirements.txt
 ```
 
-#### CPUのみで使用する場合
-
-`requirements-cpu.txt`は、Python 3.12・Windows 64bitのCPU環境向けです。PyTorchと`llama-cpp-python`のCPU版wheelを使用し、CUDA関連パッケージを導入しません。
+CPUのみで使用する場合：
 
 ```bash
-.\.venv\Scripts\python.exe -m pip install -r requirements-cpu.txt --no-cache-dir
+.\.venv\Scripts\python.exe -m pip install --no-cache-dir -r requirements-cpu.txt
 ```
 
-> **別のCUDAバージョンを使用する場合：**
+> **別のCUDAバージョンを使用する場合：**  
 > どちらのファイルもそのまま適用せず、`torch`関連と`llama-cpp-python`を利用環境に対応する公式配布へ変更してください。
 
-> **Permission Deniedエラーが出る場合：**  
-> `--no-cache-dir`オプションを付けることで解決できます。管理者権限は不要です。
-
-> **PyAudioのインストールでエラーが出る場合：**
+> **PyAudioのインストールでエラーが出る場合：**  
 > PythonとPyAudioの対応バージョンを確認し、PyPIで配布されている公式wheelを利用してください。非公式インストーラーを経由した導入は推奨しません。
 
 ### 4. GGUFモデルを用意する
@@ -731,6 +760,10 @@ Visionを使う場合は、現在の`llama-cpp-python 0.3.34`で利用できる`
 
 
 ### 7. 起動
+
+自動セットアップランチャーを使用する場合は、以後も `Easy_LLM_Local_Chat.bat` を実行してください。依存関係に変更がなければ、そのままアプリを起動します。
+
+手動インストールの場合：
 
 ```bash
 .\.venv\Scripts\python.exe LLM_Local_Chat.py

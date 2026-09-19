@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="ja">
 <head>
 <meta charset="utf-8"/>
@@ -27,15 +26,14 @@
 </nav>
 </header>
 <section class="readme-card">
-<p>最終更新: 2026-09-05 対象バージョン: v1.8.2 対象:
-公開リポジトリのルート以下 範囲: <strong>Git管理対象予定 68
-ファイルのうち 67 ファイル</strong></p>
+<h1 id="sha-256-ハッシュ値一覧">SHA-256 ハッシュ値一覧</h1>
+<p>最終更新: 2026-09-18 対象バージョン: v1.8.2 + Unreleased 対象:
+公開リポジトリのルート以下 範囲: <strong>Git管理対象予定 70
+ファイルのうち 69 ファイル</strong></p>
 <p>このファイルは<strong>リポジトリの現行状態に追随して随時更新する一覧</strong>です。日付をファイル名に持たせると「ファイル名の日付と中身の時点がずれる」問題が起きるため、<strong>ファイル名は固定し、時点とバージョンは上の2行で管理</strong>します。特定日のスナップショットを残す運用はしていません。</p>
 <p>配布ファイルの完全性を利用者が確認できるようにするための一覧です。パスはすべて<strong>リポジトリルートからの相対パス</strong>で記載しています。</p>
-<p>Git管理対象予定は68ファイルです。このSHA-256一覧ファイル自身は自己参照を避けるため検証対象から除外し、残る67ファイルについてSHA-256を記録・検証しています。</p>
+<p>Git管理対象予定は70ファイルです。このSHA-256一覧ファイル自身は自己参照を避けるため検証対象から除外し、残る69ファイルについてSHA-256を記録・検証しています。</p>
 <hr/>
-</section>
-<section class="readme-card">
 <h2 id="1-前提">1. 前提</h2>
 <h3 id="対象に含まれないもの">対象に含まれないもの</h3>
 <p>以下は git
@@ -53,12 +51,12 @@
 <code>.pytest_cache/</code></li>
 <li><code>docs/</code>（<code>.gitignore</code>
 がディレクトリ丸ごと除外）</li>
-<li>ローカル環境固有の運用メモと起動スクリプト、過去バージョンのソース</li>
+<li>ローカル環境固有の運用メモと起動スクリプト（公開用<code>Easy_LLM_Local_Chat.*</code>を除く）、過去バージョンのソース</li>
 </ul>
 <h3 id="この一覧自身について">この一覧自身について</h3>
-<p><strong>この一覧ファイル自身は検証対象67件に含まれません。</strong>
+<p><strong>この一覧ファイル自身は検証対象69件に含まれません。</strong>
 自分のSHA-256を自分の中に書くと自己参照になり、内容を更新するたびに記載値と実際の値がずれて確定できないためです。</p>
-<p>この一覧ファイルもGit管理対象であり公開されますが、ハッシュ検証の対象からのみ除外します。検証スクリプト（§4-1）も同じ除外を行うため、<strong>Git管理対象が68件になっても検証対象は67件で安定します。</strong></p>
+<p>この一覧ファイルもGit管理対象であり公開されますが、ハッシュ検証の対象からのみ除外します。検証スクリプト（§4-1）も同じ除外を行うため、<strong>Git管理対象が70件の場合、検証対象は69件です。</strong></p>
 <h3 id="基準となる状態">基準となる状態</h3>
 <table>
 <thead>
@@ -70,7 +68,7 @@
 <tbody>
 <tr class="odd">
 <td>対応リリース</td>
-<td>v1.8.2</td>
+<td>v1.8.2 + Unreleased</td>
 </tr>
 <tr class="even">
 <td>v1.7.0 で追加したファイル</td>
@@ -99,16 +97,21 @@
 <code>models/PLACE_MODELS_HERE.txt</code></td>
 </tr>
 <tr class="odd">
-<td>Git管理対象予定ファイル数</td>
-<td>68（この一覧ファイルを含む）</td>
+<td>Unreleasedで追加したファイル</td>
+<td><code>Easy_LLM_Local_Chat.bat</code> /
+<code>Easy_LLM_Local_Chat.ps1</code></td>
 </tr>
 <tr class="even">
-<td>SHA-256検証対象ファイル数</td>
-<td>67（この一覧ファイルを除く）</td>
+<td>Git管理対象予定ファイル数</td>
+<td>70（この一覧ファイルを含む）</td>
 </tr>
 <tr class="odd">
+<td>SHA-256検証対象ファイル数</td>
+<td>69（この一覧ファイルを除く）</td>
+</tr>
+<tr class="even">
 <td>検証対象の合計サイズ</td>
-<td>2,062,134 バイト</td>
+<td>2,070,982 バイト</td>
 </tr>
 </tbody>
 </table>
@@ -116,15 +119,13 @@
 で追加した3ファイルも Git
 管理対象であり、<strong>この一覧の検証対象に含まれています</strong>。</p>
 <hr/>
-</section>
-<section class="readme-card">
 <h2 id="2-一覧全体の指紋">2. 一覧全体の指紋</h2>
-<p>個別の67件を1つの値で代表させたものです。</p>
-<pre><code>MANIFEST_FINGERPRINT = a956e4fed056e0cf9de5d27b2cc0a3a28c30a8f564d63f068e64561e37f8b1f3</code></pre>
+<p>個別の69件を1つの値で代表させたものです。</p>
+<pre><code>MANIFEST_FINGERPRINT = 12d9f7515cd7a7fb786b2144d5982f448d8b16e23af25da78ac37208c94bdf0b</code></pre>
 <p><strong>定義</strong>（再現に必要なため厳密に記します）:</p>
-<ol class="readme-list" type="1">
+<ol type="1">
 <li>対象は <code>git ls-files</code>
-の一覧に未追跡の新規公開予定4ファイルを加え、削除済みファイルを除いたうえで、<strong>この一覧ファイル自身を除外した67件</strong></li>
+の一覧に未追跡の新規公開予定ファイルを加え、削除済みファイルを除いたうえで、<strong>この一覧ファイル自身を除外した69件</strong></li>
 <li>パス文字列（<code>/</code> 区切り、UTF-8）で昇順ソート</li>
 <li>各行を <code>&lt;sha256小文字16進&gt;</code> + 半角スペース2個 +
 <code>&lt;相対パス&gt;</code> の形式にする</li>
@@ -134,9 +135,7 @@
 <p>行区切りを <code>CRLF</code>
 にしたりソート順を変えると別の値になるため、照合時はこの定義に従ってください。</p>
 <hr/>
-</section>
-<section class="readme-card">
-<h2 id="3-ハッシュ値一覧67件">3. ハッシュ値一覧（67件）</h2>
+<h2 id="3-ハッシュ値一覧69件">3. ハッシュ値一覧（69件）</h2>
 <table>
 <thead>
 <tr class="header">
@@ -158,8 +157,8 @@
 </tr>
 <tr class="odd">
 <td><code>CHANGELOG.md</code></td>
-<td style="text-align: right;">74,849</td>
-<td><code>5f960d60d64d78055506723a4f6aa4f546bdea9e0a04dc7e598846a5c9852b26</code></td>
+<td style="text-align: right;">75,491</td>
+<td><code>902a2c565a9424d0acb4ba8f47c5fce075744147bd087af37ddb0ccf3f377a39</code></td>
 </tr>
 <tr class="even">
 <td><code>CURRENT_SPEC.md</code></td>
@@ -170,6 +169,16 @@
 <td><code>DISCLAIMER.md</code></td>
 <td style="text-align: right;">3,420</td>
 <td><code>dd7c329cb5aa32ff82fcbe864a272e3b807f976ed05d351848d403826a4d27da</code></td>
+</tr>
+<tr class="even">
+<td><code>Easy_LLM_Local_Chat.bat</code></td>
+<td style="text-align: right;">487</td>
+<td><code>8c89bf256b06fe8444a4c9145dd17d70b34d2a5e2318f127a20a74fd1828d96b</code></td>
+</tr>
+<tr class="odd">
+<td><code>Easy_LLM_Local_Chat.ps1</code></td>
+<td style="text-align: right;">5,641</td>
+<td><code>68724ebb1e1a972509782e860663897c1005fe4f7b71968a89decb59cbaacb3d</code></td>
 </tr>
 <tr class="even">
 <td><code>LICENSE</code></td>
@@ -193,8 +202,8 @@
 </tr>
 <tr class="even">
 <td><code>README.md</code></td>
-<td style="text-align: right;">74,895</td>
-<td><code>5f4fa01b1a160c7e783240c721f3813235dca679b394593a3dd1813baa531683</code></td>
+<td style="text-align: right;">76,973</td>
+<td><code>593ebea9174e5afaca6e677786c10eafd13ab278a6d27770c6e6590c061f757d</code></td>
 </tr>
 <tr class="odd">
 <td><code>SECURITY.md</code></td>
@@ -491,90 +500,91 @@
 であり、正しい値です。</li>
 </ul>
 <hr/>
-</section>
-<section class="readme-card">
 <h2 id="4-検証方法">4. 検証方法</h2>
 <h3 id="4-1-一括検証">4-1. 一括検証</h3>
 <p><strong>リポジトリのルートで</strong>次のスクリプトを実行してください。日本語ファイル名を含むGit管理対象全件で動作を確認済みです。</p>
-<div class="sourceCode"><pre class="sourceCode python"><code class="sourceCode python"><span><a aria-hidden="true" tabindex="-1"></a><span class="co"># -*- coding: utf-8 -*-</span></span>
-<span><a aria-hidden="true" tabindex="-1"></a><span class="co">"""Git管理対象予定ファイルのSHA-256を算出する。リポジトリのルートで実行する。</span></span>
-<span><a aria-hidden="true" tabindex="-1"></a></span>
-<span><a aria-hidden="true" tabindex="-1"></a><span class="co">この一覧ファイル自身は自己参照になるため対象から除外する。</span></span>
-<span><a aria-hidden="true" tabindex="-1"></a><span class="co">"""</span></span>
-<span><a aria-hidden="true" tabindex="-1"></a><span class="im">import</span> hashlib, os, subprocess</span>
-<span><a aria-hidden="true" tabindex="-1"></a></span>
-<span><a aria-hidden="true" tabindex="-1"></a>SELF <span class="op">=</span> <span class="st">"SHA256.md"</span></span>
-<span><a aria-hidden="true" tabindex="-1"></a>PENDING_NEW <span class="op">=</span> {</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"attachment_store.py"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"prompt_inputs.py"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"tests/test_attachment_store.py"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"tests/test_prompt_inputs.py"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"TERMS_OF_USE.md"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"PRIVACY_POLICY.md"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"DISCLAIMER.md"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"THIRD_PARTY_LICENSES.md"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>}</span>
-<span><a aria-hidden="true" tabindex="-1"></a></span>
-<span><a aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sha256_of(path):</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    h <span class="op">=</span> hashlib.sha256()</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="cf">with</span> <span class="bu">open</span>(path, <span class="st">"rb"</span>) <span class="im">as</span> f:</span>
-<span><a aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> chunk <span class="kw">in</span> <span class="bu">iter</span>(<span class="kw">lambda</span>: f.read(<span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>), <span class="st">b""</span>):</span>
-<span><a aria-hidden="true" tabindex="-1"></a>            h.update(chunk)</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> h.hexdigest()</span>
-<span><a aria-hidden="true" tabindex="-1"></a></span>
-<span><a aria-hidden="true" tabindex="-1"></a>raw <span class="op">=</span> subprocess.run([<span class="st">"git"</span>, <span class="st">"ls-files"</span>, <span class="st">"-z"</span>],</span>
-<span><a aria-hidden="true" tabindex="-1"></a>                     capture_output<span class="op">=</span><span class="va">True</span>, check<span class="op">=</span><span class="va">True</span>).stdout</span>
-<span><a aria-hidden="true" tabindex="-1"></a>tracked <span class="op">=</span> {</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    p.decode(<span class="st">"utf-8"</span>) <span class="cf">for</span> p <span class="kw">in</span> raw.split(<span class="st">b"</span><span class="ch">\x00</span><span class="st">"</span>) <span class="cf">if</span> p</span>
-<span><a aria-hidden="true" tabindex="-1"></a>}</span>
-<span><a aria-hidden="true" tabindex="-1"></a>RENAMES <span class="op">=</span> {</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"LLMローカル対話型AI.bat"</span>: <span class="st">"LLM_Local_chat_run.bat"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"コード解説_やさしい版.md"</span>: <span class="st">"code_reference.md"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"公開リポジトリ_SHA256一覧.md"</span>: <span class="st">"SHA256.md"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="st">"models/ここにモデルを追加してください.txt"</span>: <span class="st">"models/PLACE_MODELS_HERE.txt"</span>,</span>
-<span><a aria-hidden="true" tabindex="-1"></a>}</span>
-<span><a aria-hidden="true" tabindex="-1"></a>tracked <span class="op">=</span> {RENAMES.get(p, p) <span class="cf">for</span> p <span class="kw">in</span> tracked}</span>
-<span><a aria-hidden="true" tabindex="-1"></a><span class="co"># commit/stageを行わないv1.8.2作業中も、新規公開予定ファイルを検証する。</span></span>
-<span><a aria-hidden="true" tabindex="-1"></a>tracked.update(p <span class="cf">for</span> p <span class="kw">in</span> PENDING_NEW <span class="cf">if</span> os.path.isfile(p))</span>
-<span><a aria-hidden="true" tabindex="-1"></a>tracked <span class="op">=</span> <span class="bu">sorted</span>(p <span class="cf">for</span> p <span class="kw">in</span> tracked <span class="cf">if</span> os.path.isfile(p.replace(<span class="st">"/"</span>, os.sep)))</span>
-<span><a aria-hidden="true" tabindex="-1"></a>targets <span class="op">=</span> [r <span class="cf">for</span> r <span class="kw">in</span> tracked <span class="cf">if</span> r <span class="op">!=</span> SELF]</span>
-<span><a aria-hidden="true" tabindex="-1"></a></span>
-<span><a aria-hidden="true" tabindex="-1"></a>lines <span class="op">=</span> []</span>
-<span><a aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> rel <span class="kw">in</span> targets:</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    local <span class="op">=</span> rel.replace(<span class="st">"/"</span>, os.sep)</span>
-<span><a aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> os.path.isfile(local):</span>
-<span><a aria-hidden="true" tabindex="-1"></a>        lines.append(<span class="ss">f"</span><span class="sc">{</span>sha256_of(local)<span class="sc">}</span><span class="ss">  </span><span class="sc">{</span>rel<span class="sc">}</span><span class="ss">"</span>)</span>
-<span><a aria-hidden="true" tabindex="-1"></a></span>
-<span><a aria-hidden="true" tabindex="-1"></a>manifest <span class="op">=</span> <span class="st">"</span><span class="ch">\n</span><span class="st">"</span>.join(lines) <span class="op">+</span> <span class="st">"</span><span class="ch">\n</span><span class="st">"</span></span>
-<span><a aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"Git管理対象予定: </span><span class="sc">{</span><span class="bu">len</span>(tracked)<span class="sc">}</span><span class="ss"> 件"</span>)</span>
-<span><a aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"検証対象:     </span><span class="sc">{</span><span class="bu">len</span>(lines)<span class="sc">}</span><span class="ss"> 件"</span>)</span>
-<span><a aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"指紋: "</span> <span class="op">+</span> hashlib.sha256(manifest.encode(<span class="st">"utf-8"</span>)).hexdigest())</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># -*- coding: utf-8 -*-</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co">&quot;&quot;&quot;Git管理対象予定ファイルのSHA-256を算出する。リポジトリのルートで実行する。</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co">この一覧ファイル自身は自己参照になるため対象から除外する。</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="co">&quot;&quot;&quot;</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> hashlib, os, subprocess</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>SELF <span class="op">=</span> <span class="st">&quot;SHA256.md&quot;</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>PENDING_NEW <span class="op">=</span> {</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;attachment_store.py&quot;</span>,</span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;prompt_inputs.py&quot;</span>,</span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;tests/test_attachment_store.py&quot;</span>,</span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;tests/test_prompt_inputs.py&quot;</span>,</span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;TERMS_OF_USE.md&quot;</span>,</span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;PRIVACY_POLICY.md&quot;</span>,</span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;DISCLAIMER.md&quot;</span>,</span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;THIRD_PARTY_LICENSES.md&quot;</span>,</span>
+<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Easy_LLM_Local_Chat.ps1&quot;</span>,</span>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Easy_LLM_Local_Chat.bat&quot;</span>,</span>
+<span id="cb2-20"><a href="#cb2-20" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-22"><a href="#cb2-22" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sha256_of(path):</span>
+<span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a>    h <span class="op">=</span> hashlib.sha256()</span>
+<span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">with</span> <span class="bu">open</span>(path, <span class="st">&quot;rb&quot;</span>) <span class="im">as</span> f:</span>
+<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> chunk <span class="kw">in</span> <span class="bu">iter</span>(<span class="kw">lambda</span>: f.read(<span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>), <span class="st">b&quot;&quot;</span>):</span>
+<span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a>            h.update(chunk)</span>
+<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> h.hexdigest()</span>
+<span id="cb2-28"><a href="#cb2-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-29"><a href="#cb2-29" aria-hidden="true" tabindex="-1"></a>raw <span class="op">=</span> subprocess.run([<span class="st">&quot;git&quot;</span>, <span class="st">&quot;ls-files&quot;</span>, <span class="st">&quot;-z&quot;</span>],</span>
+<span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a>                     capture_output<span class="op">=</span><span class="va">True</span>, check<span class="op">=</span><span class="va">True</span>).stdout</span>
+<span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a>tracked <span class="op">=</span> {</span>
+<span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a>    p.decode(<span class="st">&quot;utf-8&quot;</span>) <span class="cf">for</span> p <span class="kw">in</span> raw.split(<span class="st">b&quot;</span><span class="ch">\x00</span><span class="st">&quot;</span>) <span class="cf">if</span> p</span>
+<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a>RENAMES <span class="op">=</span> {</span>
+<span id="cb2-35"><a href="#cb2-35" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;LLMローカル対話型AI.bat&quot;</span>: <span class="st">&quot;LLM_Local_chat_run.bat&quot;</span>,</span>
+<span id="cb2-36"><a href="#cb2-36" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;コード解説_やさしい版.md&quot;</span>: <span class="st">&quot;code_reference.md&quot;</span>,</span>
+<span id="cb2-37"><a href="#cb2-37" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;公開リポジトリ_SHA256一覧.md&quot;</span>: <span class="st">&quot;SHA256.md&quot;</span>,</span>
+<span id="cb2-38"><a href="#cb2-38" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;models/ここにモデルを追加してください.txt&quot;</span>: <span class="st">&quot;models/PLACE_MODELS_HERE.txt&quot;</span>,</span>
+<span id="cb2-39"><a href="#cb2-39" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a>tracked <span class="op">=</span> {RENAMES.get(p, p) <span class="cf">for</span> p <span class="kw">in</span> tracked}</span>
+<span id="cb2-41"><a href="#cb2-41" aria-hidden="true" tabindex="-1"></a><span class="co"># commit/stageを行わないv1.8.2作業中も、新規公開予定ファイルを検証する。</span></span>
+<span id="cb2-42"><a href="#cb2-42" aria-hidden="true" tabindex="-1"></a>tracked.update(p <span class="cf">for</span> p <span class="kw">in</span> PENDING_NEW <span class="cf">if</span> os.path.isfile(p))</span>
+<span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a>tracked <span class="op">=</span> <span class="bu">sorted</span>(p <span class="cf">for</span> p <span class="kw">in</span> tracked <span class="cf">if</span> os.path.isfile(p.replace(<span class="st">&quot;/&quot;</span>, os.sep)))</span>
+<span id="cb2-44"><a href="#cb2-44" aria-hidden="true" tabindex="-1"></a>targets <span class="op">=</span> [r <span class="cf">for</span> r <span class="kw">in</span> tracked <span class="cf">if</span> r <span class="op">!=</span> SELF]</span>
+<span id="cb2-45"><a href="#cb2-45" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-46"><a href="#cb2-46" aria-hidden="true" tabindex="-1"></a>lines <span class="op">=</span> []</span>
+<span id="cb2-47"><a href="#cb2-47" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> rel <span class="kw">in</span> targets:</span>
+<span id="cb2-48"><a href="#cb2-48" aria-hidden="true" tabindex="-1"></a>    local <span class="op">=</span> rel.replace(<span class="st">&quot;/&quot;</span>, os.sep)</span>
+<span id="cb2-49"><a href="#cb2-49" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> os.path.isfile(local):</span>
+<span id="cb2-50"><a href="#cb2-50" aria-hidden="true" tabindex="-1"></a>        lines.append(<span class="ss">f&quot;</span><span class="sc">{</span>sha256_of(local)<span class="sc">}</span><span class="ss">  </span><span class="sc">{</span>rel<span class="sc">}</span><span class="ss">&quot;</span>)</span>
+<span id="cb2-51"><a href="#cb2-51" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-52"><a href="#cb2-52" aria-hidden="true" tabindex="-1"></a>manifest <span class="op">=</span> <span class="st">&quot;</span><span class="ch">\n</span><span class="st">&quot;</span>.join(lines) <span class="op">+</span> <span class="st">&quot;</span><span class="ch">\n</span><span class="st">&quot;</span></span>
+<span id="cb2-53"><a href="#cb2-53" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;Git管理対象予定: </span><span class="sc">{</span><span class="bu">len</span>(tracked)<span class="sc">}</span><span class="ss"> 件&quot;</span>)</span>
+<span id="cb2-54"><a href="#cb2-54" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;検証対象:     </span><span class="sc">{</span><span class="bu">len</span>(lines)<span class="sc">}</span><span class="ss"> 件&quot;</span>)</span>
+<span id="cb2-55"><a href="#cb2-55" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">&quot;指紋: &quot;</span> <span class="op">+</span> hashlib.sha256(manifest.encode(<span class="st">&quot;utf-8&quot;</span>)).hexdigest())</span></code></pre></div>
 <p><code>PYTHONIOENCODING=utf-8</code>
 を付けると出力の文字化けを避けられます。</p>
-<p>期待値: Git管理対象予定 <code>68</code> 件、検証対象 <code>67</code>
+<p>期待値: Git管理対象予定 <code>70</code> 件、検証対象 <code>69</code>
 件、指紋
-<code>a956e4fed056e0cf9de5d27b2cc0a3a28c30a8f564d63f068e64561e37f8b1f3</code></p>
-<p>指紋は検証対象67件のSHA-256だけから生成するため、<strong>この一覧ファイルを編集しても指紋は変わりません。</strong>
-変わるのは67件のいずれかを変更した場合だけです。</p>
+<code>12d9f7515cd7a7fb786b2144d5982f448d8b16e23af25da78ac37208c94bdf0b</code></p>
+<p>指紋は検証対象69件のSHA-256だけから生成するため、<strong>この一覧ファイルを編集しても指紋は変わりません。</strong>
+変わるのは69件のいずれかを変更した場合だけです。</p>
 <h3 id="4-2-個別ファイルの確認">4-2. 個別ファイルの確認</h3>
 <p>1ファイルだけ確認する場合は PowerShell の標準コマンドで足ります。</p>
-<div class="sourceCode"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span><a aria-hidden="true" tabindex="-1"></a>Get-FileHash <span class="op">-</span>LiteralPath <span class="op">.</span>\README<span class="op">.</span><span class="fu">md</span> <span class="op">-</span>Algorithm SHA256</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>Get-FileHash <span class="op">-</span>LiteralPath <span class="op">.</span>\README<span class="op">.</span><span class="fu">md</span> <span class="op">-</span>Algorithm SHA256</span></code></pre></div>
 <h3 id="4-3-warning-使ってはいけない方法">4-3. ⚠️
 使ってはいけない方法</h3>
 <p><code>git ls-files</code> の出力を PowerShell のパイプラインへ流して
 <code>Get-FileHash</code>
 にかける形は<strong>使わないでください。</strong></p>
-<div class="sourceCode"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span><a aria-hidden="true" tabindex="-1"></a><span class="co"># ❌ 誤った結果を出す</span></span>
-<span><a aria-hidden="true" tabindex="-1"></a>git ls-files <span class="op">|</span> <span class="fu">ForEach-Object</span> <span class="op">{</span> <span class="op">(</span>Get-FileHash <span class="op">-</span>LiteralPath <span class="va">$_</span> <span class="op">-</span>Algorithm SHA256<span class="op">).</span><span class="fu">Hash</span> <span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ❌ 誤った結果を出す</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>git ls-files <span class="op">|</span> <span class="fu">ForEach-Object</span> <span class="op">{</span> <span class="op">(</span>Get-FileHash <span class="op">-</span>LiteralPath <span class="va">$_</span> <span class="op">-</span>Algorithm SHA256<span class="op">).</span><span class="fu">Hash</span> <span class="op">}</span></span></code></pre></div>
 <p>現在の公開対象のモデル配置用ファイル名はASCIIです。ただし、この一覧は未追跡の公開予定ファイルも明示的に加え、自己参照を除外する必要があります。単純なパイプラインではその対象定義を再現できないため、4-1
 の手順を使ってください。</p>
 <hr/>
-</section>
-<section class="readme-card">
 <h2 id="5-この一覧が無効になる条件">5. この一覧が無効になる条件</h2>
 <p>以下のいずれかが起きた時点で、一覧は現状と一致しなくなります。</p>
 <ul class="readme-list">
-<li>検証対象67件のいずれかを編集した（1文字でも変わればハッシュは変わる）</li>
+<li>検証対象69件のいずれかを編集した（1文字でも変わればハッシュは変わる）</li>
 <li>検証対象を追加・削除・改名した（件数と指紋が変わる）</li>
 <li>改行コードが変換された（<code>.gitattributes</code> により CRLF↔︎LF
 変換が発生し得る）</li>
@@ -587,8 +597,6 @@
 オブジェクトのハッシュとは一致しません</strong>。GitHub
 からダウンロードした際、改行コードの差でハッシュが一致しないことがあります。</p>
 <hr/>
-</section>
-<section class="readme-card">
 <h2 id="6-版ごとのハッシュ変遷">6. 版ごとのハッシュ変遷</h2>
 <p>同一日に複数回更新したファイルの変遷を記録します。同じサイズでも内容が異なる場合があるため、<strong>サイズ比較ではなくハッシュで照合してください。</strong></p>
 <h3 id="readmemd">README.md</h3>
@@ -642,12 +650,16 @@
 <td style="text-align: right;">73,922</td>
 </tr>
 <tr class="odd">
-<td><strong>v1.8.2 安全性修正・版数反映後（現行）</strong></td>
+<td>v1.8.2 安全性修正・版数反映後</td>
 <td><code>5f4fa01b1a160c7e783240c721f3813235dca679b394593a3dd1813baa531683</code></td>
 <td style="text-align: right;">74,895</td>
 </tr>
 </tbody>
 </table>
+<p>| <strong>Unreleased
+自動セットアップランチャー追記後（現行）</strong> |
+<code>593ebea9174e5afaca6e677786c10eafd13ab278a6d27770c6e6590c061f757d</code>
+| 76,973 |</p>
 <h3 id="current_specmd">CURRENT_SPEC.md</h3>
 <table>
 <thead>
@@ -811,7 +823,7 @@
 <td>73,857</td>
 </tr>
 <tr class="odd">
-<td><strong>v1.8.2 リリース確定後（現行）</strong></td>
+<td>v1.8.2 リリース確定後</td>
 <td><code>5f960d60d64d78055506723a4f6aa4f546bdea9e0a04dc7e598846a5c9852b26</code></td>
 <td>74,849</td>
 </tr>
@@ -820,7 +832,12 @@
 <p>v1.6.0 の日付修正は <code>2026-08-15</code> → <code>2026-08-17</code>
 の1行のみで、<strong>桁数が同じためサイズが変わりませんでした。</strong>
 ハッシュ照合が必要な変更の実例です。</p>
-<h3 id="code_referencemd旧-コード解説_やさしい版md">code_reference.md（旧:
+<p>| <strong>Unreleased
+自動セットアップランチャー追加後（現行）</strong> |
+<code>902a2c565a9424d0acb4ba8f47c5fce075744147bd087af37ddb0ccf3f377a39</code>
+| 75,491 |</p>
+<h3
+id="code_referencemd旧-コード解説_やさしい版md">code_reference.md（旧:
 コード解説_やさしい版.md）</h3>
 <table>
 <thead>
@@ -1055,8 +1072,6 @@
 <code>8765</code> → <code>8767</code>
 の1箇所のみで、レイアウト・デザインは変更していません。</p>
 <hr/>
-</section>
-<section class="readme-card">
 <h2 id="7-更新方法">7. 更新方法</h2>
 <p>このファイルは管理対象予定ファイルの内容が変わるたびに古くなります。更新する場合は
 4-1
