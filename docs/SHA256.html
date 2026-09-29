@@ -34,7 +34,7 @@
 <p>このファイルは<strong>リポジトリの現行状態に追随して随時更新する一覧</strong>です。日付をファイル名に持たせると「ファイル名の日付と中身の時点がずれる」問題が起きるため、<strong>ファイル名は固定し、時点とバージョンは上の2行で管理</strong>します。特定日のスナップショットを残す運用はしていません。</p>
 <p>配布ファイルの完全性を利用者が確認できるようにするための一覧です。パスはすべて<strong>リポジトリルートからの相対パス</strong>で記載しています。</p>
 <p>Git管理対象予定は70ファイルです。このSHA-256一覧ファイル自身は自己参照を避けるため検証対象から除外し、残る69ファイルについてSHA-256を記録・検証しています。</p>
-<p>v1.8.3 + Unreleasedでは、LLM-jp-4.1の回答抽出、LLM・Whisperの実行状態表示、Whisper誤認識の除外、マイク設定の保存順序修正に加え、READMEの構成整理、HTMLガイド同期、CHANGELOG更新を反映した実測値へ更新しました。</p>
+<p>v1.8.3 + Unreleasedでは、LLM-jp-4.1の回答抽出、LLM・Whisperの実行状態表示、Whisper誤認識の除外、マイク設定の保存順序修正に加え、READMEの構成整理、主要用語の解説拡充、コード解説への導線追加、HTMLガイド同期、CHANGELOG更新を反映した実測値へ更新しました。</p>
 
 
 </section>
@@ -102,7 +102,7 @@
 </tr>
 <tr>
 <td>検証対象の合計サイズ</td>
-<td>2,055,900 バイト</td>
+<td>2,060,714 バイト</td>
 </tr>
 </tbody>
 </table>
@@ -113,7 +113,7 @@
 <section class="readme-card">
 <h2 id="2-一覧全体の指紋">2. 一覧全体の指紋</h2>
 <p>個別の69件を1つの値で代表させたものです。</p>
-<pre><code>MANIFEST_FINGERPRINT = 1c1479c296fe8acb61a79267f28f705463b270eaf8c6f5761109d40dbd019283
+<pre><code>MANIFEST_FINGERPRINT = e3e2485571f8e5802598b9d137bd6a69e3252dc42d8fb1c3c269570373e41c65
 </code></pre>
 <p><strong>定義</strong>（再現に必要なため厳密に記します）:</p>
 <ol class="readme-list">
@@ -150,8 +150,8 @@
 </tr>
 <tr>
 <td><code>CHANGELOG.md</code></td>
-<td style="text-align:right">76,461</td>
-<td><code>42099eb60426e223d793be6e025c979ecd068b24298d1518932963f5c5e2495c</code></td>
+<td style="text-align:right">76,875</td>
+<td><code>6324c1a29917bbf1461384a219aa9ecc2cf6c39993aaea09c9c1d893a9e2325c</code></td>
 </tr>
 <tr>
 <td><code>CURRENT_SPEC.md</code></td>
@@ -195,8 +195,8 @@
 </tr>
 <tr>
 <td><code>README.md</code></td>
-<td style="text-align:right">46,835</td>
-<td><code>605baa0ce1a13f99943227397ebb4dc8e46b31d1f0b25a4df087c24bda3b9608</code></td>
+<td style="text-align:right">51,235</td>
+<td><code>b84ec3429bdda17cd114ad71a3955124ccaf0af6800777b5e7664e1313951923</code></td>
 </tr>
 <tr>
 <td><code>SECURITY.md</code></td>
@@ -645,9 +645,9 @@ git ls-files | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256)
 <td style="text-align:right">76,973</td>
 </tr>
 <tr>
-<td><strong>v1.8.3 + Unreleased README構成整理後（現行）</strong></td>
-<td><code>605baa0ce1a13f99943227397ebb4dc8e46b31d1f0b25a4df087c24bda3b9608</code></td>
-<td style="text-align:right">46,835</td>
+<td><strong>v1.8.3 + Unreleased 主要用語解説・導線拡充後（現行）</strong></td>
+<td><code>b84ec3429bdda17cd114ad71a3955124ccaf0af6800777b5e7664e1313951923</code></td>
+<td style="text-align:right">51,235</td>
 </tr>
 </tbody>
 </table>
@@ -824,9 +824,9 @@ git ls-files | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256)
 <td>75,491</td>
 </tr>
 <tr>
-<td><strong>v1.8.3 + Unreleased 文書整理・HTMLガイド同期後（現行）</strong></td>
-<td><code>42099eb60426e223d793be6e025c979ecd068b24298d1518932963f5c5e2495c</code></td>
-<td>76,461</td>
+<td><strong>v1.8.3 + Unreleased 文書整理・主要用語解説拡充後（現行）</strong></td>
+<td><code>6324c1a29917bbf1461384a219aa9ecc2cf6c39993aaea09c9c1d893a9e2325c</code></td>
+<td>76,875</td>
 </tr>
 </tbody>
 </table>

@@ -56,69 +56,40 @@
 </section>
 <section class="readme-card">
 <h2 id="重要な用語">重要な用語</h2>
+<p>READMEでは、このアプリを使うときに特に目にしやすい用語だけを簡潔に説明します。</p>
 <table>
-<thead>
-<tr>
-<th>用語</th>
-<th>説明</th>
-</tr>
-</thead>
+<thead><tr><th>用語</th><th>説明</th></tr></thead>
 <tbody>
-<tr>
-<td><strong>ローカルLLM</strong></td>
-<td>PC上で直接実行する大規模言語モデルです。本アプリでは <code>llama-cpp-python</code> からGGUFモデルを読み込みます。</td>
-</tr>
-<tr>
-<td><strong>GGUF</strong></td>
-<td><code>llama.cpp</code> 系で利用されるモデルファイル形式です。本リポジトリにはモデル本体を同梱していないため、利用者が別途用意します。</td>
-</tr>
-<tr>
-<td><strong>量子化（Quantization）</strong></td>
-<td>モデルの重みを低いビット数で表現し、ファイル容量やRAM・VRAM使用量を抑える方式です。<code>Q4_K_M</code>、<code>Q8_0</code>などが量子化形式の例です。</td>
-</tr>
-<tr>
-<td><strong>コンテキスト長（n_ctx）</strong></td>
-<td>モデルが1回の推論で参照できる入力・履歴・添付・応答予約を含む情報量の上限です。</td>
-</tr>
-<tr>
-<td><strong>トークン</strong></td>
-<td>LLMが文章を処理するときの単位です。文字数とは一致しません。</td>
-</tr>
-<tr>
-<td><strong>GPUオフロード / GPU Layers</strong></td>
-<td>モデルのレイヤーをGPUへ配置して推論を高速化する仕組みです。本アプリではFull GPU、部分オフロード、CPUを切り替えられます。</td>
-</tr>
-<tr>
-<td><strong>VRAM</strong></td>
-<td>GPU専用メモリです。モデル、コンテキスト、Whisperなどが同時に使用するため、不足するとGPU配置の縮小やCPUへのフォールバックが発生します。</td>
-</tr>
-<tr>
-<td><strong>Whisper</strong></td>
-<td>音声を文字へ変換する音声認識モデルです。本アプリではマイク入力の文字起こしに使用します。</td>
-</tr>
-<tr>
-<td><strong>TTS / Windows SAPI5</strong></td>
-<td>Text-to-Speech（音声読み上げ）の仕組みです。本アプリではWindows SAPI5を使用します。</td>
-</tr>
-<tr>
-<td><strong>System Prompt / Persona</strong></td>
-<td>AIの基本的な応答方針や役割を指定する設定です。<code>chat_settings.json</code>や外部promptファイルから設定できます。</td>
-</tr>
-<tr>
-<td><strong>Vision / projector / mmproj</strong></td>
-<td>画像入力を扱うための機能と補助モデルです。Vision対応モデルと対応するprojector / mmprojの設定が必要です。</td>
-</tr>
-<tr>
-<td><strong>DPAPI</strong></td>
-<td>Windowsが提供する暗号化機構です。本アプリでは通常の会話履歴を現在のWindowsユーザースコープで暗号化して保存します。</td>
-</tr>
-<tr>
-<td><strong><code>.shiro-export</code></strong></td>
-<td>会話履歴を別環境へ持ち出すためのパスフレーズ暗号化エクスポート形式です。保存済み添付ファイル本体は含みません。</td>
-</tr>
+<tr><td><strong>Python</strong></td><td>本アプリのプログラム本体を動かすために使っているプログラミング言語です。LLM Local ChatはPython 3.12系を前提にしており、各種ライブラリ（他のプログラムから利用できる機能部品）もPythonから利用します。</td></tr>
+<tr><td><strong>LLM / モデル</strong></td><td>LLMは「大規模言語モデル」の略で、文章を処理して応答を生成するAIモデルです。本アプリでは、利用者が用意したモデルファイルをPC上で読み込み、チャットの応答生成に使います。</td></tr>
+<tr><td><strong>ローカルLLM</strong></td><td>インターネット上の生成AIサービスへ会話を送るのではなく、自分のPC上でLLMを実行する方式です。本アプリの通常のLLM推論はローカルで行います。</td></tr>
+<tr><td><strong>推論（Inference）</strong></td><td>読み込んだモデルへ入力を渡し、そのモデルから応答を生成する処理です。このREADMEで「LLM推論」と書いている場合は、主にチャットの回答を生成する処理を指します。</td></tr>
+<tr><td><strong>プロンプト（Prompt）</strong></td><td>LLMへ渡す指示や入力文のことです。利用者の入力だけでなく、System Prompt、会話履歴、要約、添付内容などが組み合わされてモデルへ渡される場合があります。</td></tr>
+<tr><td><strong>GGUF</strong></td><td><code>llama.cpp</code> 系で利用されるモデルファイル形式です。本リポジトリにはGGUFモデル本体を同梱していないため、利用者が別途用意します。</td></tr>
+<tr><td><strong>量子化（Quantization）</strong></td><td>モデルの重みを少ないビット数で表現し、モデル容量やRAM・VRAM使用量を抑える方式です。<code>Q4_K_M</code>、<code>Q8_0</code>などが量子化形式の例です。</td></tr>
+<tr><td><strong>llama.cpp</strong></td><td>GGUF形式のLLMをCPUやGPUで実行するための推論エンジンです。本アプリでは<code>llama-cpp-python</code>を介して利用します。</td></tr>
+<tr><td><strong>llama-cpp-python</strong></td><td>Pythonから<code>llama.cpp</code>を利用するためのライブラリです。本アプリはこれを通してGGUFモデルを読み込み、LLMへ入力を渡して応答を生成します。</td></tr>
+<tr><td><strong>CPU</strong></td><td>PCの汎用的な計算処理を担当するプロセッサです。本アプリはGPUを使えない場合やGPUメモリが不足した場合、LLMやWhisperの処理をCPU側で行うことがあります。</td></tr>
+<tr><td><strong>RAM</strong></td><td>Windowsやアプリが使用するPC本体側のメモリです。モデルをCPUで動かす場合や各種処理で使用され、容量が不足すると動作が遅くなったり処理を続けにくくなったりします。</td></tr>
+<tr><td><strong>GPU</strong></td><td>もともとは画像処理向けのプロセッサですが、LLMの大量計算にも向いています。対応するNVIDIA GPUを使うと、CPUだけで実行するより生成が速くなる場合があります。</td></tr>
+<tr><td><strong>VRAM</strong></td><td>GPU専用メモリです。GPUへ配置したモデル、生成処理、Whisperなどが使用します。不足するとGPU配置を減らしたりCPUへ切り替えたりする場合があります。</td></tr>
+<tr><td><strong>CUDA</strong></td><td>NVIDIA GPUを汎用計算に利用するための基盤です。本アプリのGPU向け構成では、CUDA対応の<code>llama-cpp-python</code>などを利用します。</td></tr>
+<tr><td><strong>コンテキスト / コンテキスト長 (<code>n_ctx</code>)</strong></td><td>コンテキストは、LLMがその生成時に参照する会話履歴、今回の入力、system prompt、添付内容などをまとめた情報です。コンテキスト長は、それらと生成予定分を含めて1回の推論で扱える量の上限です。</td></tr>
+<tr><td><strong>トークン</strong></td><td>LLMが文章を分割して処理する単位です。1トークン＝1文字ではなく、日本語や英語、記号などによって分割のされ方が変わります。コンテキスト長や生成上限も主にトークン数で管理されます。</td></tr>
+<tr><td><strong>GPUオフロード / GPU Layers</strong></td><td>モデル内部のレイヤーの一部または全部をGPUへ配置して処理することです。本アプリではFull GPU、約75%・50%・25%の部分オフロード、CPUを選択できます。GPUへ多く配置するほど一般に高速化しやすい一方、より多くのVRAMを使います。</td></tr>
+<tr><td><strong>フォールバック</strong></td><td>希望した方法で処理できない場合に、安全に別の方法へ切り替えることです。本アプリでは、VRAM不足などに応じてGPU配置を減らしたりCPUへ切り替えたりする経路があります。</td></tr>
+<tr><td><strong>API</strong></td><td>アプリ同士が決められた形式でデータをやり取りするための窓口です。本アプリではBiologや<code>kakeibo-bridge</code>など、別プロセスで動くローカルサービスとの連携にAPIを使用します。</td></tr>
+<tr><td><strong>POST</strong></td><td>APIへデータを送信するときに使われる方法の1つです。本アプリでは、利用者が内容を確認した後に健康記録や家計簿候補をローカルAPIへPOSTします。</td></tr>
+<tr><td><strong>Whisper</strong></td><td>音声を文字へ変換する音声認識モデルです。本アプリではマイク入力の文字起こしに使用します。設定や空きVRAMに応じてCPUまたはGPUを利用します。</td></tr>
+<tr><td><strong>TTS / Windows SAPI5</strong></td><td>TTSはText-to-Speechの略で、文章を音声として読み上げる仕組みです。本アプリではWindowsのSAPI5を利用します。</td></tr>
+<tr><td><strong>System Prompt / Persona</strong></td><td>AIの基本的な応答方針、役割、話し方などを指定する情報です。<code>chat_settings.json</code>や外部promptファイルから設定できます。</td></tr>
+<tr><td><strong>Vision / projector / mmproj</strong></td><td>画像入力をLLMで扱うための機能と補助モデルです。Vision対応モデルを使用し、対応するprojector / mmprojを設定した場合に画像を扱えます。</td></tr>
+<tr><td><strong>DPAPI</strong></td><td>Windowsが提供するデータ保護機構です。本アプリでは通常の会話履歴を現在のWindowsユーザースコープで暗号化して保存します。</td></tr>
+<tr><td><strong><code>.shiro-export</code></strong></td><td>会話履歴を別環境へ持ち出すためのパスフレーズ付き暗号化エクスポート形式です。保存済み添付ファイル本体は含みません。</td></tr>
 </tbody>
 </table>
-
+<h3 id="もっと詳しく知りたい方へ">もっと詳しく知りたい方へ</h3>
+<p>このREADMEでは、利用時に特に重要な用語だけを説明しています。LLMの読み込み、コンテキスト、GPU / VRAM、Whisper、API連携、暗号化、各ファイルの役割などをさらに詳しく知りたい場合は、<strong><a href="./CODE_REFERENCE.html">コード解説（やさしい版）</a></strong>を参照してください。</p>
 
 </section>
 <section class="readme-card">

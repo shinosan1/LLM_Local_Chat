@@ -13,6 +13,7 @@
 ### 文書
 - README / HTMLガイドのセットアップ手順を、自動セットアップランチャーを推奨手順、従来のvenv・pip手順を「手動でインストールする場合」として整理
 - README / `docs/README.html` の詳細なバージョン別変更履歴を本CHANGELOGへ集約。主な機能の直後に「重要な用語」を追加し、動作環境、セットアップ、使い方、VRAM安全フィルタ、FAQ、実装・テスト情報の順に再構成。バージョン情報はCHANGELOGへの参照形式へ変更
+- README / `docs/README.html` の「重要な用語」を、Python、LLM/モデル、CPU/RAM/GPU/VRAM、CUDA、`llama.cpp` / `llama-cpp-python`、コンテキスト、GPUオフロード、API/POST、フォールバックなど利用時に必要な主要語へ拡充。詳細説明は `docs/code_reference.md` / `docs/CODE_REFERENCE.html` の「コード解説（やさしい版）」へ誘導する構成に整理
 
 ---
 ## [1.8.3] - 2026-09-29
