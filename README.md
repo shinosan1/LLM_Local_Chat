@@ -6,7 +6,7 @@
 ローカル処理を重視した構成です。機密情報を扱う業務環境へ導入する場合は、端末のアクセス制御、Windowsユーザープロファイル、ディスク暗号化、Dockerポート、依存ライブラリ、バックアップ方法を含め、組織の情報セキュリティ担当者による事前評価を行ってください。
 
 ![Python](https://img.shields.io/badge/Python-3.12.10-blue)
-![Version](https://img.shields.io/badge/Version-1.8.2-green)
+![Version](https://img.shields.io/badge/Version-1.8.3-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
@@ -30,6 +30,16 @@
 - **家計簿API連携（オプション）** — ユーザー入力から最大10件の取引候補を生成し、1件ずつ確認したうえで、別途用意したローカルの`kakeibo-bridge` APIへ1件ずつPOSTします。家計簿アプリ、家計簿DB、`kakeibo-bridge`サーバー実装は本リポジトリに含まれません
 - **VRAM安全フィルタ** — LLM・Whisper 同時動作時のVRAM枯渇によるクラッシュを確率的に削減（v1.2.0）
 - **LLM GPUオフロード切替** — 自動・Full GPU・約75%・約50%・約25%・CPUを設定画面から選び、アプリを再起動せずモデルを安全に再読み込みします
+
+---
+## v1.8.3 LLM-jp・音声設定の修正
+
+リリース日: 2026-09-29
+
+- LLM-jp-4.1-8b-thinkingのHarmony形式から`final`回答だけをストリーミング表示し、`analysis`や特殊トークンを画面・会話履歴へ混入させないようにしました。既存のGemma系モデルの生成経路は変更していません。
+- 生成設定に、LLMの実際のGPU配置と現在動作しているWhisperモデルを表示し、ロード完了後も表示を更新します。
+- Whisperの誤認識例「視聴ありがとうございます」を既存の動画由来フレーズ除外対象へ追加しました。
+- アプリ終了時はマイクを停止する前のON/OFF状態を保存し、次回起動時に意図せずOFFへ戻る問題を修正しました。
 
 ---
 ## v1.8.2 安全性修正
@@ -528,7 +538,7 @@ LLM（Gemma 4 E4B、総8B／有効4B）とWhisper mediumを同一GPUで動かす
 - 他プロセスの使用分も総VRAM使用量には反映されますが、プロセス別内訳やロード後の急な確保までは予測できません
 - 確率的削減が目的であり、OOMの完全防止は保証しない
 
-Whisper実行モードは設定画面で`自動`・`GPU small`・`GPU medium`・`CPU small`から選択でき、次回起動時に反映されます。手動GPU指定でも安全な空き容量を満たさない場合はCPU smallへフォールバックします。
+Whisper実行モードは設定画面で`自動`・`GPU small`・`GPU medium`・`CPU small`から選択でき、次回起動時に反映されます。手動GPU指定でも安全な空き容量を満たさない場合はCPU smallへフォールバックします。実際に使用中のモデルは、生成設定の「現在のWhisperモデル」で確認できます。
 
 生成設定では、希望する**LLM GPUオフロード モード**を選択し、アプリを再起動せず反映できます。実際にロード成功した**GPUオフロード率と配置レイヤー数**（例: `76%（32 / 42層・Partial GPU・自動選択）`）は別の読み取り専用欄で確認できます。これはLLMレイヤーの配置割合であり、WindowsのGPU使用率ではありません。希望モードだけを設定ファイルへ保存し、実配置のruntime stateは保存しません。
 

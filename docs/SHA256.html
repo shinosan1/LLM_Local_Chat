@@ -27,12 +27,13 @@
 </header>
 <section class="readme-card">
 <h1 id="sha-256-ハッシュ値一覧">SHA-256 ハッシュ値一覧</h1>
-<p>最終更新: 2026-09-18 対象バージョン: v1.8.2 + Unreleased 対象:
+<p>最終更新: 2026-09-29 対象バージョン: v1.8.3 + Unreleased 対象:
 公開リポジトリのルート以下 範囲: <strong>Git管理対象予定 70
 ファイルのうち 69 ファイル</strong></p>
 <p>このファイルは<strong>リポジトリの現行状態に追随して随時更新する一覧</strong>です。日付をファイル名に持たせると「ファイル名の日付と中身の時点がずれる」問題が起きるため、<strong>ファイル名は固定し、時点とバージョンは上の2行で管理</strong>します。特定日のスナップショットを残す運用はしていません。</p>
 <p>配布ファイルの完全性を利用者が確認できるようにするための一覧です。パスはすべて<strong>リポジトリルートからの相対パス</strong>で記載しています。</p>
 <p>Git管理対象予定は70ファイルです。このSHA-256一覧ファイル自身は自己参照を避けるため検証対象から除外し、残る69ファイルについてSHA-256を記録・検証しています。</p>
+<p>v1.8.3では、LLM-jp-4.1の回答抽出、LLM・Whisperの実行状態表示、Whisper誤認識の除外、マイク設定の保存順序修正を反映したファイルの実測値を更新しました。</p>
 <hr/>
 <h2 id="1-前提">1. 前提</h2>
 <h3 id="対象に含まれないもの">対象に含まれないもの</h3>
@@ -68,7 +69,7 @@
 <tbody>
 <tr class="odd">
 <td>対応リリース</td>
-<td>v1.8.2 + Unreleased</td>
+<td>v1.8.3 + Unreleased</td>
 </tr>
 <tr class="even">
 <td>v1.7.0 で追加したファイル</td>
@@ -111,7 +112,7 @@
 </tr>
 <tr class="even">
 <td>検証対象の合計サイズ</td>
-<td>2,070,982 バイト</td>
+<td>2,086,592 バイト</td>
 </tr>
 </tbody>
 </table>
@@ -121,7 +122,7 @@
 <hr/>
 <h2 id="2-一覧全体の指紋">2. 一覧全体の指紋</h2>
 <p>個別の69件を1つの値で代表させたものです。</p>
-<pre><code>MANIFEST_FINGERPRINT = 12d9f7515cd7a7fb786b2144d5982f448d8b16e23af25da78ac37208c94bdf0b</code></pre>
+<pre><code>MANIFEST_FINGERPRINT = e511f88c69ce501ddf1da2f7f94bb685231d38f370b1e41155248feba7a29305</code></pre>
 <p><strong>定義</strong>（再現に必要なため厳密に記します）:</p>
 <ol type="1">
 <li>対象は <code>git ls-files</code>
@@ -157,8 +158,8 @@
 </tr>
 <tr class="odd">
 <td><code>CHANGELOG.md</code></td>
-<td style="text-align: right;">75,491</td>
-<td><code>902a2c565a9424d0acb4ba8f47c5fce075744147bd087af37ddb0ccf3f377a39</code></td>
+<td style="text-align: right;">76,117</td>
+<td><code>f3da3008d014df0d62880f39bc257957a8a772017a2d20536ef51353ea77f5bb</code></td>
 </tr>
 <tr class="even">
 <td><code>CURRENT_SPEC.md</code></td>
@@ -187,8 +188,8 @@
 </tr>
 <tr class="odd">
 <td><code>LLM_Local_Chat.py</code></td>
-<td style="text-align: right;">205,778</td>
-<td><code>3846811172ef21c9a59a78129feddc9caf0e326efc12534d57cdc533bfcaa108</code></td>
+<td style="text-align: right;">207,504</td>
+<td><code>2154145c718a1763e94e0125df7d85d37909a43b8010dd8bd80e71e3328dde46</code></td>
 </tr>
 <tr class="even">
 <td><code>LLM_Local_chat_run.bat</code></td>
@@ -202,8 +203,8 @@
 </tr>
 <tr class="even">
 <td><code>README.md</code></td>
-<td style="text-align: right;">76,973</td>
-<td><code>593ebea9174e5afaca6e677786c10eafd13ab278a6d27770c6e6590c061f757d</code></td>
+<td style="text-align: right;">77,871</td>
+<td><code>5556699daa726d293ed3b172b82a964457ccd90af1d14f91fcbb444a0e36f7c4</code></td>
 </tr>
 <tr class="odd">
 <td><code>SECURITY.md</code></td>
@@ -237,8 +238,8 @@
 </tr>
 <tr class="odd">
 <td><code>audio_workers.py</code></td>
-<td style="text-align: right;">33,529</td>
-<td><code>7df48d403457032bb09a9c826a93924771936af22a6416535b8f89c03d6c4731</code></td>
+<td style="text-align: right;">33,573</td>
+<td><code>e9acd1b2f8ef53d9f913cd69019eb7bdc0cd5a13c4f70ef5543b15ff580d8dbd</code></td>
 </tr>
 <tr class="even">
 <td><code>avatars/blink_avatar.png</code></td>
@@ -317,8 +318,8 @@
 </tr>
 <tr class="odd">
 <td><code>llm_service.py</code></td>
-<td style="text-align: right;">6,830</td>
-<td><code>fa9aee658822e46482852b7cca83c6a0b88e20855c2f6ebe889e2108892d9ce0</code></td>
+<td style="text-align: right;">11,789</td>
+<td><code>e6d18c7cf627ec20a2244202ce0d72e9ad8732227383cbbec6d14f1559977e9f</code></td>
 </tr>
 <tr class="even">
 <td><code>models/PLACE_MODELS_HERE.txt</code></td>
@@ -377,8 +378,8 @@
 </tr>
 <tr class="odd">
 <td><code>tests/test_app_gpu_startup.py</code></td>
-<td style="text-align: right;">34,178</td>
-<td><code>8c8f8e9f1b2caeabacb755653d184af9df5fe5768b9c3221b37f878479a0bd8e</code></td>
+<td style="text-align: right;">36,523</td>
+<td><code>26f2117ec5142585ad4d2233994b8cc0eae4ffaeff4599f99dfc897ecdd9634f</code></td>
 </tr>
 <tr class="even">
 <td><code>tests/test_atomic_io.py</code></td>
@@ -442,13 +443,13 @@
 </tr>
 <tr class="even">
 <td><code>tests/test_lifecycle.py</code></td>
-<td style="text-align: right;">35,736</td>
-<td><code>10c25ffdb7c5aeeda0bbe9023a98689d84249c2c2e24b0a62cace371c04a14b0</code></td>
+<td style="text-align: right;">35,897</td>
+<td><code>ed4bcf94da0c1fa3106b663b0b0081582bcb4b1597a8018f6488057b3c945145</code></td>
 </tr>
 <tr class="odd">
 <td><code>tests/test_llm_concurrency.py</code></td>
-<td style="text-align: right;">60,144</td>
-<td><code>723836552d7cce1fc554de9955ba20e3822494c26d9e420a827f699b43508b20</code></td>
+<td style="text-align: right;">64,995</td>
+<td><code>0fb7ae1ad613f0af703b03991c82dcd69da25a45b9a26f4f1ff6a9aaf315682d</code></td>
 </tr>
 <tr class="even">
 <td><code>tests/test_llm_metrics.py</code></td>
@@ -544,7 +545,7 @@ class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a hr
 <span id="cb2-38"><a href="#cb2-38" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;models/ここにモデルを追加してください.txt&quot;</span>: <span class="st">&quot;models/PLACE_MODELS_HERE.txt&quot;</span>,</span>
 <span id="cb2-39"><a href="#cb2-39" aria-hidden="true" tabindex="-1"></a>}</span>
 <span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a>tracked <span class="op">=</span> {RENAMES.get(p, p) <span class="cf">for</span> p <span class="kw">in</span> tracked}</span>
-<span id="cb2-41"><a href="#cb2-41" aria-hidden="true" tabindex="-1"></a><span class="co"># commit/stageを行わないv1.8.2作業中も、新規公開予定ファイルを検証する。</span></span>
+<span id="cb2-41"><a href="#cb2-41" aria-hidden="true" tabindex="-1"></a><span class="co"># commit/stageを行わない作業中も、新規公開予定ファイルを検証する。</span></span>
 <span id="cb2-42"><a href="#cb2-42" aria-hidden="true" tabindex="-1"></a>tracked.update(p <span class="cf">for</span> p <span class="kw">in</span> PENDING_NEW <span class="cf">if</span> os.path.isfile(p))</span>
 <span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a>tracked <span class="op">=</span> <span class="bu">sorted</span>(p <span class="cf">for</span> p <span class="kw">in</span> tracked <span class="cf">if</span> os.path.isfile(p.replace(<span class="st">&quot;/&quot;</span>, os.sep)))</span>
 <span id="cb2-44"><a href="#cb2-44" aria-hidden="true" tabindex="-1"></a>targets <span class="op">=</span> [r <span class="cf">for</span> r <span class="kw">in</span> tracked <span class="cf">if</span> r <span class="op">!=</span> SELF]</span>
@@ -563,7 +564,7 @@ class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a hr
 を付けると出力の文字化けを避けられます。</p>
 <p>期待値: Git管理対象予定 <code>70</code> 件、検証対象 <code>69</code>
 件、指紋
-<code>12d9f7515cd7a7fb786b2144d5982f448d8b16e23af25da78ac37208c94bdf0b</code></p>
+<code>e511f88c69ce501ddf1da2f7f94bb685231d38f370b1e41155248feba7a29305</code></p>
 <p>指紋は検証対象69件のSHA-256だけから生成するため、<strong>この一覧ファイルを編集しても指紋は変わりません。</strong>
 変わるのは69件のいずれかを変更した場合だけです。</p>
 <h3 id="4-2-個別ファイルの確認">4-2. 個別ファイルの確認</h3>
@@ -654,12 +655,18 @@ class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb4-
 <td><code>5f4fa01b1a160c7e783240c721f3813235dca679b394593a3dd1813baa531683</code></td>
 <td style="text-align: right;">74,895</td>
 </tr>
+<tr class="even">
+<td>Unreleased 自動セットアップランチャー追記後</td>
+<td><code>593ebea9174e5afaca6e677786c10eafd13ab278a6d27770c6e6590c061f757d</code></td>
+<td style="text-align: right;">76,973</td>
+</tr>
+<tr class="odd">
+<td><strong>v1.8.3 LLM-jp・音声設定の修正反映後（現行）</strong></td>
+<td><code>5556699daa726d293ed3b172b82a964457ccd90af1d14f91fcbb444a0e36f7c4</code></td>
+<td style="text-align: right;">77,871</td>
+</tr>
 </tbody>
 </table>
-<p>| <strong>Unreleased
-自動セットアップランチャー追記後（現行）</strong> |
-<code>593ebea9174e5afaca6e677786c10eafd13ab278a6d27770c6e6590c061f757d</code>
-| 76,973 |</p>
 <h3 id="current_specmd">CURRENT_SPEC.md</h3>
 <table>
 <thead>
@@ -827,15 +834,21 @@ class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb4-
 <td><code>5f960d60d64d78055506723a4f6aa4f546bdea9e0a04dc7e598846a5c9852b26</code></td>
 <td>74,849</td>
 </tr>
+<tr class="even">
+<td>Unreleased 自動セットアップランチャー追加後</td>
+<td><code>902a2c565a9424d0acb4ba8f47c5fce075744147bd087af37ddb0ccf3f377a39</code></td>
+<td>75,491</td>
+</tr>
+<tr class="odd">
+<td><strong>v1.8.3 修正履歴反映後（現行）</strong></td>
+<td><code>f3da3008d014df0d62880f39bc257957a8a772017a2d20536ef51353ea77f5bb</code></td>
+<td>76,117</td>
+</tr>
 </tbody>
 </table>
 <p>v1.6.0 の日付修正は <code>2026-08-15</code> → <code>2026-08-17</code>
 の1行のみで、<strong>桁数が同じためサイズが変わりませんでした。</strong>
 ハッシュ照合が必要な変更の実例です。</p>
-<p>| <strong>Unreleased
-自動セットアップランチャー追加後（現行）</strong> |
-<code>902a2c565a9424d0acb4ba8f47c5fce075744147bd087af37ddb0ccf3f377a39</code>
-| 75,491 |</p>
 <h3
 id="code_referencemd旧-コード解説_やさしい版md">code_reference.md（旧:
 コード解説_やさしい版.md）</h3>

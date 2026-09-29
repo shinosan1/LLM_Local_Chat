@@ -35,7 +35,7 @@ APIを任意で利用します。</strong></p>
 <p>詳しい実装の解説は <a href="./CODE_REFERENCE.html">コード解説</a>
 を参照してください。</p>
 <hr/>
-<p><code>Python 3.12.10</code> <code>Version 1.8.2</code> <code>Platform: Windows</code> <code>License: MIT</code></p>
+<p><code>Python 3.12.10</code> <code>Version 1.8.3</code> <code>Platform: Windows</code> <code>License: MIT</code></p>
 </section>
 <section class="readme-card">
 <h2 id="主な機能">主な機能</h2>
@@ -61,6 +61,17 @@ APIへ1件ずつPOSTします。家計簿アプリ、家計簿DB、<code>kakeibo
 同時動作時のVRAM枯渇によるクラッシュを確率的に削減（v1.2.0）</li>
 <li><strong>LLM GPUオフロード切替</strong> — 自動・Full
 GPU・約75%・約50%・約25%・CPUを設定画面から選び、アプリを再起動せずモデルを安全に再読み込みします</li>
+</ul>
+<hr/>
+</section>
+<section class="readme-card">
+<h2 id="v183-llm-jp音声設定の修正">v1.8.3 LLM-jp・音声設定の修正</h2>
+<p>リリース日: 2026-09-29</p>
+<ul class="readme-list">
+<li>LLM-jp-4.1-8b-thinkingのHarmony形式から<code>final</code>回答だけをストリーミング表示し、<code>analysis</code>や特殊トークンを画面・会話履歴へ混入させないようにしました。既存のGemma系モデルの生成経路は変更していません。</li>
+<li>生成設定に、LLMの実際のGPU配置と現在動作しているWhisperモデルを表示し、ロード完了後も表示を更新します。</li>
+<li>Whisperの誤認識例「視聴ありがとうございます」を既存の動画由来フレーズ除外対象へ追加しました。</li>
+<li>アプリ終了時はマイクを停止する前のON/OFF状態を保存し、次回起動時に意図せずOFFへ戻る問題を修正しました。</li>
 </ul>
 <hr/>
 </section>
@@ -843,7 +854,7 @@ OOMの完全防止は不可能です。
 <li>確率的削減が目的であり、OOMの完全防止は保証しない</li>
 </ul>
 <p>Whisper実行モードは設定画面で<code>自動</code>・<code>GPU small</code>・<code>GPU medium</code>・<code>CPU small</code>から選択でき、次回起動時に反映されます。手動GPU指定でも安全な空き容量を満たさない場合はCPU
-smallへフォールバックします。</p>
+smallへフォールバックします。実際に使用中のモデルは、生成設定の「現在のWhisperモデル」で確認できます。</p>
 <p>生成設定では、希望する<strong>LLM GPUオフロード
 モード</strong>を選択し、アプリを再起動せず反映できます。実際にロード成功した<strong>GPUオフロード率と配置レイヤー数</strong>（例:
 <code>76%（32 / 42層・Partial GPU・自動選択）</code>）は別の読み取り専用欄で確認できます。これはLLMレイヤーの配置割合であり、WindowsのGPU使用率ではありません。希望モードだけを設定ファイルへ保存し、実配置のruntime

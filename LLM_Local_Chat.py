@@ -158,7 +158,7 @@ if sys.platform == "win32":
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.8.2"
+APP_VERSION = "1.8.3"
 
 
 def app_path(*parts: str) -> str:
@@ -1832,11 +1832,13 @@ class SettingsDialog(tk.Toplevel):
         offload_menu.grid(row=1, column=1, sticky="ew", **P)
 
         lbl(2, "現在の実行状態:")
-        tk.Label(
+        self._offload_status_label = tk.Label(
             self,
             text=format_llm_offload_state(offload_state),
             bg=C["bg_main"], fg=C["fg_main"],
-        ).grid(row=2, column=1, columnspan=2, sticky="w", **P)
+        )
+        self._offload_status_label.grid(
+            row=2, column=1, columnspan=2, sticky="w", **P)
         tk.Label(
             self,
             text=(
@@ -1898,8 +1900,15 @@ class SettingsDialog(tk.Toplevel):
             bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
         ).grid(row=9, column=2, sticky="w", **P)
 
+        lbl(10, "現在のWhisperモデル:")
+        self._whisper_status_label = tk.Label(
+            self, text="未読込", bg=C["bg_main"], fg=C["fg_main"],
+        )
+        self._whisper_status_label.grid(
+            row=10, column=1, columnspan=2, sticky="w", **P)
+
         # 会話履歴の保存期間
-        lbl(10, "会話履歴の保存期間:")
+        lbl(11, "会話履歴の保存期間:")
         retention_labels = {
             0: "無期限",
             30: "30日",
@@ -1918,7 +1927,7 @@ class SettingsDialog(tk.Toplevel):
             activebackground=C["accent"], bd=0,
         )
         retention_menu["menu"].config(bg=C["bg_input"], fg=C["fg_main"])
-        retention_menu.grid(row=10, column=1, sticky="ew", **P)
+        retention_menu.grid(row=11, column=1, sticky="ew", **P)
         self._retention_labels = retention_labels
 
         # 起動時マイクON/OFF
@@ -1928,7 +1937,7 @@ class SettingsDialog(tk.Toplevel):
             variable=self.v_mic,
             bg=C["bg_main"], fg=C["fg_main"],
             selectcolor=C["bg_input"], activebackground=C["bg_main"],
-        ).grid(row=11, column=0, columnspan=3, sticky="w", padx=16, pady=4)
+        ).grid(row=12, column=0, columnspan=3, sticky="w", padx=16, pady=4)
 
         # 起動時TTS ON/OFF
         self.v_tts = BooleanVar(value=cfg.get("tts_enabled", False))
@@ -1937,13 +1946,13 @@ class SettingsDialog(tk.Toplevel):
             variable=self.v_tts,
             bg=C["bg_main"], fg=C["fg_main"],
             selectcolor=C["bg_input"], activebackground=C["bg_main"],
-        ).grid(row=12, column=0, columnspan=3, sticky="w", padx=16, pady=4)
+        ).grid(row=13, column=0, columnspan=3, sticky="w", padx=16, pady=4)
 
         tk.Label(
             self,
             text="※ 体感速度はWindowsの音声エンジンによって異なります",
             bg=C["bg_main"], fg=C["fg_sub"], font=FONT_SMALL,
-        ).grid(row=13, column=0, columnspan=3, sticky="w", padx=16, pady=(2, 4))
+        ).grid(row=14, column=0, columnspan=3, sticky="w", padx=16, pady=(2, 4))
 
         # 保存済み添付管理
         if manage_attachments is not None:
@@ -1955,11 +1964,11 @@ class SettingsDialog(tk.Toplevel):
                     manage_attachments),
             )
             self._manage_attachments_button.grid(
-                row=14, column=0, columnspan=3, pady=(8, 0))
+                row=15, column=0, columnspan=3, pady=(8, 0))
 
         # ボタン
         bf = tk.Frame(self, bg=C["bg_main"])
-        bf.grid(row=15, column=0, columnspan=3, pady=16)
+        bf.grid(row=16, column=0, columnspan=3, pady=16)
         tk.Button(
             bf, text="保存して適用",
             bg=C["accent"], fg="white", bd=0, padx=16,
@@ -1980,6 +1989,14 @@ class SettingsDialog(tk.Toplevel):
         self.update_idletasks()
         self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
         self.grab_set()
+
+    def set_offload_status(self, state: dict | None, *, loading: bool) -> None:
+        self._offload_status_label.config(
+            text="読み込み中…" if loading else format_llm_offload_state(state)
+        )
+
+    def set_whisper_status(self, status: str) -> None:
+        self._whisper_status_label.config(text=status)
 
     def _open_attachment_manager(self, callback) -> None:
         try:
@@ -2916,6 +2933,9 @@ class ChatApp:
             return
         self._active_reload_job = None
         self._llm_loading = False
+        dialog = getattr(self, "_settings_dialog", None)
+        if dialog is not None and dialog.winfo_exists():
+            dialog.set_offload_status(self._llm_offload_state, loading=False)
         if not self._closing:
             self._set_reload_controls(not self._ctrl.is_busy())
             self._update_status()
@@ -3040,6 +3060,7 @@ class ChatApp:
 
     def _on_whisper_ready(self, wm) -> None:
         self._whisper_model = wm
+        self._refresh_settings_whisper_status()
         if wm is None:
             print("[Whisper] ロード無効 → 音声認識は無効")
             self._status_set("⚠ Whisper ロード無効（音声認識無効）")
@@ -4524,6 +4545,15 @@ class ChatApp:
             parent=self.root,
         )
 
+    def _refresh_settings_whisper_status(self) -> None:
+        dialog = getattr(self, "_settings_dialog", None)
+        if dialog is None or not hasattr(dialog, "set_whisper_status"):
+            return
+        status_label = getattr(self._deps.whisper_pool, "status_label", None)
+        dialog.set_whisper_status(
+            status_label() if callable(status_label) else "不明"
+        )
+
     def _open_settings(self) -> None:
         dlg = SettingsDialog(
             self.root,
@@ -4545,7 +4575,17 @@ class ChatApp:
             offload_state=deepcopy(self._llm_offload_state),
             manage_attachments=self._open_saved_attachments,
         )
-        self.root.wait_window(dlg)
+        self._settings_dialog = dlg
+        self._refresh_settings_whisper_status()
+        if hasattr(dlg, "set_offload_status"):
+            dlg.set_offload_status(
+                self._llm_offload_state,
+                loading=getattr(self, "_llm_loading", False),
+            )
+        try:
+            self.root.wait_window(dlg)
+        finally:
+            self._settings_dialog = None
         if dlg.result is None:
             return
 
@@ -4796,6 +4836,7 @@ class ChatApp:
         self._status_var.set(msg)
 
     def _update_status(self) -> None:
+        self._refresh_settings_whisper_status()
         if self._llm_loading or self.llm is None:
             # LLMロード中でもマイク状態だけ反映する
             if self._voice:
@@ -4868,8 +4909,8 @@ class ChatApp:
         self._ctrl.begin_shutdown()
         self._integrations.begin_closing()
         if self._voice:
-            self._voice.stop()
             self._cfg["mic_enabled"] = self._voice.enabled
+            self._voice.stop()
         self._cfg["tts_enabled"] = self.tts.enabled
         save_settings(self._cfg)
         self.tts.terminate()

@@ -478,6 +478,9 @@ class OffloadStateUiTests(unittest.TestCase):
                 captured["offload_state"] = offload_state
                 captured["manage_attachments"] = manage_attachments
 
+            def set_whisper_status(self, status):
+                captured["whisper_status"] = status
+
         app = ChatApp.__new__(ChatApp)
         app.root = types.SimpleNamespace(wait_window=lambda _dlg: None)
         app._model_path = "model.gguf"
@@ -494,12 +497,18 @@ class OffloadStateUiTests(unittest.TestCase):
         app._llm_offload_state = {
             "mode": "partial", "n_gpu_layers": 32, "total_layers": 42,
         }
+        app._deps = types.SimpleNamespace(
+            whisper_pool=types.SimpleNamespace(
+                status_label=lambda: "CPU small",
+            ),
+        )
         with patch.object(LLM_Local_Chat, "SettingsDialog", FakeDialog):
             app._open_settings()
         self.assertNotIn("llm_offload_state", captured["cfg"])
         self.assertEqual(captured["cfg"]["llm_gpu_offload_mode"], "auto")
         self.assertEqual(captured["offload_state"]["n_gpu_layers"], 32)
         self.assertTrue(callable(captured["manage_attachments"]))
+        self.assertEqual(captured["whisper_status"], "CPU small")
         self.assertNotIn("llm_offload_state", app._cfg)
 
     def test_settings_manual_mode_transitions_request_hot_reload_without_restart(self):
@@ -569,6 +578,56 @@ class OffloadStateUiTests(unittest.TestCase):
 
 
 class OffloadRuntimeLifecycleTests(unittest.TestCase):
+    def test_open_settings_tracks_whisper_runtime_model(self):
+        shown = []
+        runtime = {"status": "未読込"}
+
+        class Dialog:
+            def set_whisper_status(self, status):
+                shown.append(status)
+
+        app = ChatApp.__new__(ChatApp)
+        app._settings_dialog = Dialog()
+        app._deps = types.SimpleNamespace(
+            whisper_pool=types.SimpleNamespace(
+                status_label=lambda: runtime["status"],
+            ),
+        )
+        app._llm_loading = True
+        app.llm = None
+        app._voice = None
+
+        app._update_status()
+        runtime["status"] = "GPU medium"
+        app._update_status()
+
+        self.assertEqual(shown, ["未読込", "GPU medium"])
+
+    def test_reload_completion_updates_open_settings_status(self):
+        shown = []
+
+        class Dialog:
+            def winfo_exists(self):
+                return True
+
+            def set_offload_status(self, state, *, loading):
+                shown.append((state, loading))
+
+        app = ChatApp.__new__(ChatApp)
+        app._closing = True
+        app._llm_loading = True
+        app._llm_offload_state = {
+            "mode": "full", "n_gpu_layers": -1, "total_layers": 32,
+        }
+        app._settings_dialog = Dialog()
+        job = {}
+        app._active_reload_job = job
+
+        app._finish_reload_on_main(job)
+
+        self.assertFalse(app._llm_loading)
+        self.assertEqual(shown, [(app._llm_offload_state, False)])
+
     def test_reload_detach_failure_preserves_runtime_state(self):
         old_model = _FakeModel()
         old_state = {"mode": "partial", "n_gpu_layers": 32, "total_layers": 42}
@@ -917,9 +976,19 @@ class SettingsAndAttachmentThemeTests(unittest.TestCase):
         try:
             dialog.deiconify()
             root.update()
+            dialog.set_offload_status(None, loading=True)
+            self.assertEqual(dialog._offload_status_label.cget("text"), "読み込み中…")
+            dialog.set_offload_status({
+                "mode": "full", "n_gpu_layers": -1, "total_layers": 32,
+            }, loading=False)
+            self.assertIn("100%", dialog._offload_status_label.cget("text"))
             self.assertEqual(
                 dialog.v_whisper_mode.get(),
                 WHISPER_MODE_LABELS["gpu_medium"],
+            )
+            dialog.set_whisper_status("CPU small")
+            self.assertEqual(
+                dialog._whisper_status_label.cget("text"), "CPU small",
             )
             self.assertGreaterEqual(
                 dialog._whisper_menu.winfo_width(),

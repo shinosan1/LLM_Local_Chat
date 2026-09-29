@@ -850,10 +850,15 @@ class ShutdownTests(unittest.TestCase):
             "prepare_event": prepare_event,
             "accept_event": accept_event,
         }
+
+        def stop_voice(voice):
+            voice.enabled = False
+            voice.stopped = True
+
         app._cfg = {}
         app._voice = type("Voice", (), {
             "enabled": True,
-            "stop": lambda self: setattr(self, "stopped", True),
+            "stop": stop_voice,
         })()
         app.tts = type("TTS", (), {
             "enabled": True,
@@ -884,6 +889,8 @@ class ShutdownTests(unittest.TestCase):
         self.assertEqual(app._attachments, [])
         self.assertTrue(app._ctrl.shutdown)
         self.assertTrue(app._voice.stopped)
+        self.assertFalse(app._voice.enabled)
+        self.assertTrue(app._cfg["mic_enabled"])
         self.assertTrue(app.tts.terminated)
         self.assertTrue(app._deps.res_monitor.stopped)
         self.assertTrue(prepare_event.is_set())

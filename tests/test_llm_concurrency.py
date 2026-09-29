@@ -11,7 +11,7 @@ from controller import (
     LeadingJsonFilter,
     TokenCostCache,
 )
-from llm_service import LLMService
+from llm_service import HarmonyFinalStream, LLMService, _uses_llm_jp_41_thinking
 from prompt_inputs import Attachment
 
 
@@ -255,6 +255,130 @@ def _wait_until(predicate, timeout=1):
 
 
 class LLMServiceConcurrencyTests(unittest.TestCase):
+    def test_llm_jp_summary_only_returns_final_for_session_storage(self):
+        class FakeLLM:
+            model_path = "models/llm-jp-4.1-8b-thinking-Q4_K_M.gguf"
+
+            def reset(self):
+                pass
+
+            def create_chat_completion(self, **kwargs):
+                return {"choices": [{"message": {"content": (
+                    "<|channel|>analysis<|message|>private notes<|end|>"
+                    "<|start|>assistant<|channel|>final<|message|>"
+                    "会話の要約です。<|return|>"
+                )}}]}
+
+        service = LLMService(FakeLLM())
+        completed = threading.Event()
+        result = []
+        self.assertTrue(service.summarize(
+            "要約して", lambda summary: (result.append(summary), completed.set()),
+            lambda error: (result.append(error), completed.set()),
+        ))
+        self.assertTrue(completed.wait(2))
+        self.assertEqual(result, ["会話の要約です。"])
+
+    def test_llm_jp_model_detection_uses_gguf_name(self):
+        class Model:
+            model_path = "models/Q4_K_M.gguf"
+            metadata = {"general.name": "Llm Jp 4.1 8b Thinking"}
+
+        self.assertTrue(_uses_llm_jp_41_thinking(Model()))
+
+    def test_llm_jp_harmony_stream_only_emits_final_and_saves_final(self):
+        answer = "はじめまして、シロと申します。今日はどのようなお手伝いをさせていただけますか？"
+        raw = (
+            "<|channel|> analysis<|message|> Internal reasoning."
+            "<|end|><|start|>assistant<|channel|>final<|message|>"
+            + " " + answer + "<|return|>"
+        )
+
+        class FakeLLM:
+            model_path = "models/llm-jp-4.1-8b-thinking-Q4_K_M.gguf"
+
+            def reset(self):
+                pass
+
+            def tokenize(self, text, add_bos=False):
+                return list(text)
+
+            def create_chat_completion(self, **kwargs):
+                self.assert_stream = kwargs["stream"]
+                for char in raw:
+                    yield {"choices": [{"delta": {"content": char}}]}
+
+        app = _App()
+        ctrl = _controller(app)
+        ctrl._llm_service = LLMService(FakeLLM())
+        generation = ctrl._begin_operation("generating")
+        displayed = []
+        snapshots = []
+        errors = []
+        completed = threading.Event()
+
+        def on_token(token):
+            displayed.append(token)
+            ctrl._on_stream_token(token, generation)
+            snapshots.append("".join(displayed))
+
+        def on_done(reply):
+            ctrl._on_llm_done("はじめまして", reply, generation)
+            completed.set()
+
+        def on_error(error):
+            errors.append(error)
+            completed.set()
+
+        self.assertTrue(ctrl._llm_service.generate(
+            messages=[{"role": "user", "content": "はじめまして"}],
+            max_tokens=1024, temperature=0.7,
+            on_token=on_token, on_done=on_done, on_error=on_error,
+        ))
+        self.assertTrue(completed.wait(2))
+        self.assertEqual(errors, [])
+        self.assertTrue(all("<|" not in value for value in snapshots))
+        self.assertTrue(all("reasoning" not in value for value in snapshots))
+        self.assertEqual("".join(displayed), answer)
+        self.assertEqual(app._current_session["history"], [
+            {"user": "はじめまして", "assistant": answer}
+        ])
+        self.assertEqual(app.saved, 1)
+
+    def test_harmony_final_stream_suppresses_incomplete_control_tokens(self):
+        stream = HarmonyFinalStream()
+        self.assertEqual(stream.feed("<|channel|>analysis<|message|>secret"), "")
+        self.assertEqual(stream.feed("<|end|><|start|>assistant<|channel|>final<|message|>回答<"), "回答")
+        self.assertEqual(stream.feed("|return|>"), "")
+        self.assertEqual(stream.finish(), "")
+
+    def test_non_llm_jp_stream_keeps_content_unchanged(self):
+        class FakeGemma:
+            model_path = "models/gemma-4-E4B-Q4_K_M.gguf"
+
+            def reset(self):
+                pass
+
+            def tokenize(self, text, add_bos=False):
+                return list(text)
+
+            def create_chat_completion(self, **kwargs):
+                yield {"choices": [{"delta": {"content": "通常回答です。"}}]}
+
+        service = LLMService(FakeGemma())
+        done = threading.Event()
+        tokens = []
+        replies = []
+        self.assertTrue(service.generate(
+            messages=[], max_tokens=100, temperature=0.7,
+            on_token=tokens.append,
+            on_done=lambda reply: (replies.append(reply), done.set()),
+            on_error=self.fail,
+        ))
+        self.assertTrue(done.wait(2))
+        self.assertEqual(tokens, ["通常回答です。"])
+        self.assertEqual(replies, ["通常回答です。"])
+
     def test_summary_cannot_start_while_generation_is_running(self):
         llm = _BlockingLLM()
         service = LLMService(llm)
