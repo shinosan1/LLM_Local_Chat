@@ -781,6 +781,7 @@ class WhisperPool:
         self._ctrl      = WhisperController()
         self.loaded_profile = "not_loaded"
         self.active_model_name = "unknown"
+        self.load_error_type = None
         self._transcribe_lock = threading.Lock()
         self._reload_pause = threading.Event()
 
@@ -796,9 +797,19 @@ class WhisperPool:
             self._load_unlocked(monitor, mode)
 
     def _load_unlocked(self, monitor: ResourceMonitor, mode: str) -> None:
-        import whisper as _whisper
-
-        self._cpu_model = _whisper.load_model("small", device="cpu")
+        self.load_error_type = None
+        try:
+            import whisper as _whisper
+            self._cpu_model = _whisper.load_model("small", device="cpu")
+        except Exception as exc:
+            self._cpu_model = None
+            self._gpu_model = None
+            self._ctrl.gpu_available = False
+            self._ctrl.state = "cpu"
+            self.loaded_profile = "load_failed"
+            self.active_model_name = "unknown"
+            self.load_error_type = type(exc).__name__
+            raise
         self.loaded_profile = "cpu_small"
         self.active_model_name = "small"
         print("[Whisper] CPU small loaded")
@@ -918,6 +929,8 @@ class WhisperPool:
         return self._ctrl.consume_delta_gpu_pct()
 
     def status_label(self) -> str:
+        if self.loaded_profile == "load_failed":
+            return "読込失敗"
         if self._ctrl.uses_gpu() and self._gpu_model is not None:
             return f"GPU {self.loaded_profile.removeprefix('gpu_')}"
         if self._cpu_model is not None:

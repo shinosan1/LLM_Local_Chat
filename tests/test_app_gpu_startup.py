@@ -576,6 +576,37 @@ class OffloadStateUiTests(unittest.TestCase):
         self.assertEqual(requested, ["cpu", "auto", "75", "50", "cpu"])
         self.assertEqual(app._llm_gpu_offload_mode, "cpu")
 
+    def test_whisper_load_failure_is_reported_back_to_ui(self):
+        reported = []
+
+        class ImmediateThread:
+            def __init__(self, target, daemon=True):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        pool = types.SimpleNamespace(
+            _cpu_model=None,
+            load=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("load failed")
+            ),
+        )
+        app = ChatApp.__new__(ChatApp)
+        app._cfg = {"mic_enabled": True, "whisper_mode": "auto"}
+        app._deps = types.SimpleNamespace(
+            whisper_pool=pool,
+            res_monitor=object(),
+        )
+        app._post_ui = lambda callback: (callback(), True)[1]
+        app._on_whisper_load_failed = lambda error_type: reported.append(error_type)
+
+        with patch("LLM_Local_Chat.threading.Thread", ImmediateThread):
+            app._load_whisper_async()
+
+        self.assertEqual(reported, ["RuntimeError"])
+
+
 
 class OffloadRuntimeLifecycleTests(unittest.TestCase):
     def test_open_settings_tracks_whisper_runtime_model(self):

@@ -173,6 +173,73 @@ class MicrophoneReadLoggingTests(unittest.TestCase):
         self.assertIsNone(self.voice._mic_read_error_last_log)
 
 
+class MicrophoneInitializationFailureTests(unittest.TestCase):
+    def _voice(self):
+        voice = VoiceRecognizer.__new__(VoiceRecognizer)
+        voice._enabled = threading.Event()
+        voice._enabled.set()
+        voice._active = True
+        voice._available = True
+        voice._recognition_generation = 0
+        voice._flush_request = False
+        voice.on_unavailable = None
+        return voice
+
+    def test_missing_pyaudio_disables_runtime_and_notifies(self):
+        voice = self._voice()
+        notified = []
+        voice.on_unavailable = lambda: notified.append(True)
+
+        with (
+            patch("audio_workers.time.sleep", return_value=None),
+            patch("audio_workers._PYAUDIO_AVAILABLE", False),
+        ):
+            voice._loop()
+
+        self.assertFalse(voice.enabled)
+        self.assertFalse(voice.available)
+        self.assertFalse(voice._active)
+        self.assertEqual(notified, [True])
+
+    def test_input_open_failure_disables_runtime_and_terminates_pyaudio(self):
+        voice = self._voice()
+        notified = []
+        voice.on_unavailable = lambda: notified.append(True)
+
+        class FakePyAudio:
+            def __init__(self):
+                self.terminated = False
+
+            def get_default_input_device_info(self):
+                return {
+                    "index": 0,
+                    "name": "fake",
+                    "maxInputChannels": 1,
+                    "defaultSampleRate": 16000,
+                }
+
+            def open(self, **_kwargs):
+                raise OSError("device unavailable")
+
+            def terminate(self):
+                self.terminated = True
+
+        fake_pa = FakePyAudio()
+        fake_module = type("FakePyAudioModule", (), {"PyAudio": lambda: fake_pa})
+        with (
+            patch("audio_workers.time.sleep", return_value=None),
+            patch("audio_workers._PYAUDIO_AVAILABLE", True),
+            patch("audio_workers.pyaudio", fake_module),
+        ):
+            voice._loop()
+
+        self.assertFalse(voice.enabled)
+        self.assertFalse(voice.available)
+        self.assertFalse(voice._active)
+        self.assertTrue(fake_pa.terminated)
+        self.assertEqual(notified, [True])
+
+
 class VadPrerollTests(unittest.TestCase):
     """VADプリロール(_wait_for_speech_onset)が、VAD_SPEECH_CHUNKSとは独立に
     最低0.75秒分のリングバッファを保持し、発話確定前の低RMSチャンクも

@@ -158,7 +158,7 @@ if sys.platform == "win32":
 #  ■ 基本設定
 # ═══════════════════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.8.3"
+APP_VERSION = "1.8.4"
 
 
 def app_path(*parts: str) -> str:
@@ -2459,6 +2459,7 @@ class ChatApp:
         self._llm_offload_state: dict | None = None
         self._whisper_model           = None   # バックグラウンドでロード
         self._whisper_load_skipped    = False  # 起動時にWhisperロードをスキップしたか
+        self._whisper_load_failed     = False  # Whisperロードが失敗したか
         self._whisper_load_started    = False  # LLM準備後に初回だけロードする
         self._llm_load_generation     = 0
         self._llm_load_active         = threading.Event()
@@ -3040,10 +3041,18 @@ class ChatApp:
         
         def _worker() -> None:
             # MODIFIED: WhisperPool が GPU+CPU 両ロードを管理（VRAMベースで判断）
-            self._deps.whisper_pool.load(
-                self._deps.res_monitor,
-                mode=self._cfg.get("whisper_mode", "auto"),
-            )
+            try:
+                self._deps.whisper_pool.load(
+                    self._deps.res_monitor,
+                    mode=self._cfg.get("whisper_mode", "auto"),
+                )
+            except Exception as exc:
+                error_type = type(exc).__name__
+                print(f"[Whisper] load failed: {error_type}")
+                self._post_ui(
+                    lambda et=error_type: self._on_whisper_load_failed(et)
+                )
+                return
             wm = (
                 self._deps.whisper_pool
                 if self._deps.whisper_pool._cpu_model is not None
@@ -3056,6 +3065,21 @@ class ChatApp:
     def _on_whisper_skipped(self) -> None:
         self._whisper_model = None
         self._update_status()
+        self._queue_initial_greeting()
+
+    def _on_whisper_load_failed(self, error_type: str) -> None:
+        self._whisper_model = None
+        self._whisper_load_failed = True
+        self._refresh_settings_whisper_status()
+        self._btn_mic.config(fg=C["mic_off"], text="🎤")
+        self._status_set("⚠ Whisper読込失敗（音声認識無効）")
+        messagebox.showwarning(
+            "Whisper読込エラー",
+            "Whisperモデルの読み込みに失敗したため、音声認識を無効化しました。\n"
+            "ネットワーク、空き容量、Whisperキャッシュを確認して再起動してください。\n\n"
+            f"エラー種別: {error_type}",
+            parent=self.root,
+        )
         self._queue_initial_greeting()
 
     def _on_whisper_ready(self, wm) -> None:
@@ -3073,6 +3097,7 @@ class ChatApp:
                 lambda tx=t: self._voice_input(tx)),
             vad_threshold=self._vad_thresh,
             res_monitor=self._deps.res_monitor,
+            on_unavailable=lambda: self._post_ui(self._on_voice_unavailable),
         )
         voice.on_text_generation = lambda text, generation, source=voice: (
             self._post_ui(
@@ -3798,6 +3823,12 @@ class ChatApp:
     # ══════════════════════════════════════════════
     #  マイク UI
     # ══════════════════════════════════════════════
+    def _on_voice_unavailable(self) -> None:
+        if self._voice is None:
+            return
+        self._btn_mic.config(fg=C["mic_off"], text="🎤")
+        self._update_status()
+
     def _mic_idle(self) -> None:
         if self._voice and self._voice.enabled:
             self._btn_mic.config(fg=C["mic_on"], text="🎤")
@@ -3838,7 +3869,12 @@ class ChatApp:
 
     def _toggle_mic(self) -> None:
         if self._voice is None:
-            if self._whisper_load_skipped:
+            if getattr(self, "_whisper_load_failed", False):
+                messagebox.showinfo(
+                    "音声認識",
+                    "Whisperモデルの読み込みに失敗しているため、音声認識は利用できません。\n"
+                    "状態を確認してアプリを再起動してください。")
+            elif self._whisper_load_skipped:
                 messagebox.showinfo(
                     "音声認識",
                     "音声認識は起動時に読み込まれていません。\n"
@@ -3847,6 +3883,12 @@ class ChatApp:
             else:
                 messagebox.showinfo(
                     "音声認識", "Whisper モデルを読み込んでいます。\nしばらくお待ちください。")
+            return
+        if not getattr(self._voice, "available", True):
+            messagebox.showinfo(
+                "音声認識",
+                "マイク入力デバイスを初期化できなかったため、現在は利用できません。\n"
+                "マイクの接続やWindowsの入力設定を確認してアプリを再起動してください。")
             return
         self._voice.enabled = not self._voice.enabled
         self._btn_mic.config(
@@ -4840,13 +4882,21 @@ class ChatApp:
         if self._llm_loading or self.llm is None:
             # LLMロード中でもマイク状態だけ反映する
             if self._voice:
-                mic = "マイクON" if self._voice.enabled else "マイクOFF"
+                mic = (
+                    "マイク利用不可"
+                    if not getattr(self._voice, "available", True)
+                    else ("マイクON" if self._voice.enabled else "マイクOFF")
+                )
                 self._status_var.set(
                     f"⏳ モデル読込中… | {mic}")
             return
         mic_stat = "マイク無効"
         if self._voice:
-            mic_stat = "マイクON" if self._voice.enabled else "マイクOFF"
+            mic_stat = (
+                "マイク利用不可"
+                if not getattr(self._voice, "available", True)
+                else ("マイクON" if self._voice.enabled else "マイクOFF")
+            )
         status_label = getattr(self._deps.whisper_pool, "status_label", None)
         whisper_stat = status_label() if status_label else "不明"
         think = (
@@ -4909,7 +4959,10 @@ class ChatApp:
         self._ctrl.begin_shutdown()
         self._integrations.begin_closing()
         if self._voice:
-            self._cfg["mic_enabled"] = self._voice.enabled
+            # 初期化失敗でランタイムがOFFになっただけの場合は、
+            # 利用者が保存した「起動時マイクON」設定を勝手にOFFへ上書きしない。
+            if getattr(self._voice, "available", True):
+                self._cfg["mic_enabled"] = self._voice.enabled
             self._voice.stop()
         self._cfg["tts_enabled"] = self.tts.enabled
         save_settings(self._cfg)

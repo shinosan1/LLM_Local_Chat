@@ -430,12 +430,15 @@ class VoiceRecognizer:
         on_text,
         vad_threshold: int = DEFAULT_VAD_RMS,
         res_monitor=None,
+        on_unavailable=None,
     ) -> None:
         # 1. まず属性を初期化する
         self.whisper_model = whisper_model
         self.on_text = on_text
         self.vad_threshold = vad_threshold
         self.res_monitor = res_monitor
+        self.on_unavailable = on_unavailable
+        self._available = whisper_model is not None
 
         # 2. スレッド制御用のフラグを定義（★ここが重要）
         self._enabled = threading.Event()
@@ -465,14 +468,29 @@ class VoiceRecognizer:
     def enabled(self) -> bool:
         return self._enabled.is_set()
 
+    @property
+    def available(self) -> bool:
+        return getattr(self, "_available", True)
+
     @enabled.setter
     def enabled(self, v: bool) -> None:
         if v:
+            if not self.available:
+                self._enabled.clear()
+                return
             self._flush_request = True  # 復帰時にバッファをフラッシュ
             self._enabled.set()
         else:
             self._recognition_generation += 1
             self._enabled.clear()
+
+    def _mark_unavailable(self) -> None:
+        """マイク初期化不能をランタイム状態へ反映し、UIへ通知する。"""
+        self._available = False
+        self._active = False
+        self._recognition_generation += 1
+        self._enabled.clear()
+        self._fire(getattr(self, "on_unavailable", None))
 
     def is_recognition_current(self, generation: int) -> bool:
         """指定した録音世代が、現在も送信可能かを返す。"""
@@ -565,8 +583,14 @@ class VoiceRecognizer:
         time.sleep(2.0)
         if not _PYAUDIO_AVAILABLE:
             print("[マイク初期化エラー] pyaudio 未インストール  (音声認識は無効になります)")
+            self._mark_unavailable()
             return
-        pa = pyaudio.PyAudio()
+        try:
+            pa = pyaudio.PyAudio()
+        except Exception as e:
+            print(f"[マイク初期化エラー] {type(e).__name__}  (音声認識は無効になります)")
+            self._mark_unavailable()
+            return
         try:
             device = pa.get_default_input_device_info()
             print(
@@ -588,7 +612,10 @@ class VoiceRecognizer:
             )
         except Exception as e:
             print(f"[マイク初期化エラー] {e}  (音声認識は無効になります)")
-            pa.terminate()
+            try:
+                pa.terminate()
+            finally:
+                self._mark_unavailable()
             return
 
         try:

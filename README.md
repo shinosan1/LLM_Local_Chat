@@ -6,7 +6,7 @@
 ローカル処理を重視した構成です。機密情報を扱う業務環境へ導入する場合は、端末のアクセス制御、Windowsユーザープロファイル、ディスク暗号化、Dockerポート、依存ライブラリ、バックアップ方法を含め、組織の情報セキュリティ担当者による事前評価を行ってください。
 
 ![Python](https://img.shields.io/badge/Python-3.12.10-blue)
-![Version](https://img.shields.io/badge/Version-1.8.3-green)
+![Version](https://img.shields.io/badge/Version-1.8.4-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
@@ -68,7 +68,7 @@ READMEでは、このアプリを使うときに特に目にしやすい用語�
 
 ### もっと詳しく知りたい方へ
 
-このREADMEでは、利用時に特に重要な用語だけを説明しています。LLMの読み込み、コンテキスト、GPU / VRAM、Whisper、API連携、暗号化、各ファイルの役割などをさらに詳しく知りたい場合は、**[コード解説（やさしい版）](docs/code_reference.md)** を参照してください。ブラウザで読むための **[HTML版](docs/CODE_REFERENCE.html)** もあります。
+このREADMEでは、利用時に特に重要な用語だけを説明しています。LLMの読み込み、コンテキスト、GPU / VRAM、Whisper、API連携、暗号化、各ファイルの役割などをさらに詳しく知りたい場合は、**[コード解説（やさしい版）](docs/code_reference.md)** を参照してください。
 
 ---
 
@@ -596,5 +596,5 @@ GGUFモデル、音声モデル、依存ライブラリおよび生成物には�
 
 ## バージョン情報
 
-現在のアプリバージョンは **v1.8.3** です。
+現在のアプリバージョンは **v1.8.4** です。
 最新の変更内容と過去バージョンの詳細は [CHANGELOG.md](CHANGELOG.md) を参照してください。

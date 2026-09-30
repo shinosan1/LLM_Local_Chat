@@ -898,6 +898,53 @@ class ShutdownTests(unittest.TestCase):
         root.callbacks.pop(0)()
         self.assertTrue(root.destroyed)
 
+    def test_close_preserves_saved_mic_preference_when_runtime_is_unavailable(self):
+        root = _Root()
+        app = ChatApp.__new__(ChatApp)
+        app.root = root
+        app._closing = False
+        app._attachments = []
+        app.llm = None
+        app._llm_load_generation = 0
+        app._llm_load_active = threading.Event()
+        app._active_reload_job = None
+        app._cfg = {"mic_enabled": True}
+        app._voice = type("Voice", (), {
+            "enabled": False,
+            "available": False,
+            "stop": lambda self: setattr(self, "stopped", True),
+        })()
+        app.tts = type("TTS", (), {
+            "enabled": False,
+            "terminate": lambda self: None,
+        })()
+        service = type("Service", (), {
+            "is_running": lambda self: False,
+            "detach_llm": lambda self: None,
+        })()
+        app._ctrl = type("Ctrl", (), {
+            "_llm_service": service,
+            "begin_shutdown": lambda self: None,
+        })()
+        app._integrations = type("Bridge", (), {
+            "begin_closing": lambda self: None,
+            "pending_operations": lambda self: [],
+        })()
+        app._save_now = lambda **_kwargs: True
+        app._deps = type("Deps", (), {
+            "res_monitor": type("Monitor", (), {
+                "stop": lambda self: None,
+            })(),
+        })()
+
+        with patch("LLM_Local_Chat.save_settings") as save:
+            app._on_close()
+
+        self.assertTrue(app._cfg["mic_enabled"])
+        self.assertTrue(app._voice.stopped)
+        save.assert_called_once()
+
+
 
 class HistoryStartupFailureTests(unittest.TestCase):
     def test_unreported_crypto_error_shows_once_and_stops_monitor(self):

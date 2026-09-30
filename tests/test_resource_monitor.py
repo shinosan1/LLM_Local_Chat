@@ -509,6 +509,24 @@ class WhisperPolicyTests(unittest.TestCase):
         self.assertEqual(pool.loaded_profile, "cpu_small")
         self.assertFalse(pool._ctrl.gpu_available)
 
+
+    def test_cpu_load_failure_marks_failed_status_and_reraises(self):
+        module = types.SimpleNamespace(
+            load_model=lambda _name, device=None: (_ for _ in ()).throw(
+                RuntimeError("model cache unavailable")
+            )
+        )
+        pool = WhisperPool()
+        with patch.dict(sys.modules, {"whisper": module}):
+            with self.assertRaises(RuntimeError):
+                pool.load(FakeMonitor())
+
+        self.assertIsNone(pool._cpu_model)
+        self.assertIsNone(pool._gpu_model)
+        self.assertEqual(pool.loaded_profile, "load_failed")
+        self.assertEqual(pool.load_error_type, "RuntimeError")
+        self.assertEqual(pool.status_label(), "読込失敗")
+
     def test_invalid_mode_normalizes_to_auto(self):
         for value in (None, "", "small", True, 1):
             with self.subTest(value=value):
